@@ -1,0 +1,121 @@
+@import 'tailwindcss';
+
+/*
+ * ACCENT PAR MARQUE (navigation v2, 12/07/2026) : ces trois tokens sont dans
+ * un @theme NON-inline pour que les utilitaires (bg-brand-green…) référencent
+ * var(--color-brand-green) — surchargée par html[data-brand] plus bas.
+ * CASANOOV = vert (défaut), CAZEBOO = #38A0AD, SICAAN = #DC9083.
+ */
+@theme {
+  --color-brand-green: #5d9228;
+  --color-brand-green-light: #e8f2dc;
+  --color-brand-green-hover: #4e7d22;
+}
+
+html[data-brand='cazeboo'] {
+  --color-brand-green: #38a0ad;
+  --color-brand-green-light: #e0f4f6;
+  --color-brand-green-hover: #2e8a95;
+}
+
+html[data-brand='sicaan'] {
+  --color-brand-green: #dc9083;
+  --color-brand-green-light: #fbece9;
+  --color-brand-green-hover: #c67a6e;
+}
+
+@theme inline {
+  --color-brand-red: #d84150;
+  --color-brand-red-light: #fde8ea;
+  --color-brand-teal: #38a0ad;
+  --color-brand-teal-light: #e0f4f6;
+  --color-brand-teal-hover: #2e8a95;
+
+  /* Semantic Colors */
+  --color-background: #e8eaed;
+  --color-surface: #f1f3f5;
+  --color-border: #e5e7eb;
+  --color-text-primary: #1f2937;
+  --color-text-secondary: #6b7280;
+  --color-text-disabled: #9ca3af;
+
+  /* Border Radius */
+  --radius-sm: 8px;
+  --radius-default: 12px;
+  --radius-lg: 16px;
+
+  /* Shadows (Apple-like) */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-default: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.1);
+
+  /* ATTENTION : ne jamais définir de --spacing-xs/sm/md/lg/xl/2xl ici.
+     En Tailwind v4, ces noms écrasent les tailles des classes max-w-*, w-*, etc.
+     (bug du 11/07/2026 : max-w-2xl valait 48px → toute l'interface « compressée »). */
+
+  /* Typography */
+  --font-sans: var(--font-titillium), -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Animation d'apparition (équivalent CSS du fade-in framer-motion de HoorTRADS) */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out both;
+}
+
+/* Pastilles de sous-navigation (page Génération, 13/07/2026) */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 7px 15px;
+  color: var(--color-text-secondary);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.pill:hover {
+  border-color: #d5d9de;
+}
+.pill-tag,
+.pill-tag-teal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 7px 15px;
+}
+.pill-tag {
+  color: var(--color-brand-green);
+  background: var(--color-brand-green-light);
+  border: 1px solid var(--color-brand-green);
+}
+.pill-tag-teal {
+  color: var(--color-brand-teal);
+  background: var(--color-brand-teal-light);
+  border: 1px solid var(--color-brand-teal);
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

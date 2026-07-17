@@ -1,0 +1,45 @@
+# Dépendances et builds
+node_modules/
+.next/
+out/
+coverage/
+
+# Environnement — jamais commité
+.env.local
+.env*.local
+
+# Données locales (base SQLite, artefacts de génération, rapports du Lab)
+data/
+
+# Réglages personnels Claude Code
+.claude/settings.local.json
+
+# ── PRIVÉ — ne part JAMAIS sur GitHub ──────────────────────────
+# Journal, réflexions, cadrages, passations, présentations
+docs/
+# Brief stratégique et moodboards
+Brief/
+# Maquettes de travail
+maquettes/
+# Standards et docs internes
+baseDocs/
+# Prompts métier (savoir-faire)
+Prompt System/
+# Assets produits (moodboards, PSD, images de travail)
+Assets/
+# Outils du labo (prompts métier + clé API locale dans cle-api.js)
+outils/
+# Scripts de debug/labo (chemins internes en dur)
+scripts/
+# ───────────────────────────────────────────────────────────────
+
+# Divers
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+
+# Fichiers de travail Adobe (assets sources, trop lourds pour git)
+Assets/Sources.psd
+
+# Modèles IA téléchargés (trop lourds pour git, > 100 Mo)
+models/
