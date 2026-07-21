@@ -4,6 +4,11 @@ import sharp from 'sharp'
 import type Database from 'better-sqlite3'
 import { getDb } from '@/lib/db'
 import { getServerRoot } from '@/lib/db/settings'
+import {
+  beginScanProgress,
+  endScanProgress,
+  tickScanProgress,
+} from '@/lib/catalogue/scanProgress'
 import { parseSizeFromProductName } from '@/lib/productName'
 import { detectColoris, colorisDef } from '@/lib/images/coloris'
 import {
@@ -434,6 +439,9 @@ export async function runCatalogScan(
   )
   const readSummary = db.prepare('SELECT summary FROM catalog_products WHERE server_path = ?')
 
+  // Énumération PRÉALABLE des gammes (readdir rapides) : donne le total à la
+  // barre de progression du bouton « Actualiser » avant le scan lui-même.
+  const plan: { brand: string; family: string; gammes: { name: string; dir: string }[] }[] = []
   for (const { brand, families } of SCAN_BRANDS) {
     for (const family of families) {
       const familyDir = path.join(serverRoot, brand, 'PRODUITS', family)
@@ -447,6 +455,13 @@ export async function runCatalogScan(
           gammes.push({ name: entry.name.trim(), dir: path.join(familyDir, entry.name) })
         }
       }
+      plan.push({ brand, family, gammes })
+    }
+  }
+
+  beginScanProgress(plan.reduce((n, f) => n + f.gammes.length, 0))
+  try {
+    for (const { brand, family, gammes } of plan) {
       // Le scan (réseau) se fait HORS transaction ; seule l'écriture locale est groupée.
       const rows: Record<string, string>[] = []
       for (const g of gammes) {
@@ -466,12 +481,15 @@ export async function runCatalogScan(
           summary: JSON.stringify(summary),
           newRefs: JSON.stringify(newRefs),
         })
+        tickScanProgress()
       }
       db.transaction(() => {
         for (const row of rows) upsert.run(row)
       })()
       scanned += rows.length
     }
+  } finally {
+    endScanProgress()
   }
 
   return { scanned, errors, durationMs: Date.now() - started }

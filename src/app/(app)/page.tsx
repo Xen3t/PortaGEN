@@ -84,9 +84,7 @@ export default function AccueilPage() {
     return () => clearInterval(timer)
   }, [])
 
-  if (!data) return <p className="text-sm text-text-secondary">Chargement…</p>
-
-  if (data.brand !== 'casanoov') {
+  if (data && data.brand !== 'casanoov') {
     return (
       <div className="bg-white rounded-[12px] border border-border shadow-sm p-10 text-center max-w-2xl mx-auto">
         <p className="font-bold text-lg mb-1">PortaGEN {data.brand.toUpperCase()} arrive bientôt</p>
@@ -100,15 +98,19 @@ export default function AccueilPage() {
 
   // Plus de « X à valider » (décision Mathias 13/07/2026) : pas validé =
   // simplement ignoré. Les notifications ne gardent que les échecs.
-  const failed = data.jobs.filter((j) => j.status === 'error')
+  const failed = data ? data.jobs.filter((j) => j.status === 'error') : []
 
   return (
     <div className="grid gap-4">
       {/* Sessions rouvrables : directes ET lancements de gamme (sessions-v2,
           validée le 13/07/2026). 3 max sur l'accueil (demande Mathias) —
-          masqué tant qu'il n'y en a aucune. */}
+          masqué tant qu'il n'y en a aucune. Monté SANS attendre /api/accueil :
+          les deux appels partent en parallèle, les cartes arrivent plus vite. */}
       <SessionCards limit={3} hideWhenEmpty allLink />
 
+      {!data ? (
+        <p className="text-sm text-text-secondary">Chargement…</p>
+      ) : (
       <div className="grid grid-cols-[1.6fr_1fr] max-md:grid-cols-1 gap-4 items-start">
       <section className="bg-white rounded-[12px] border border-border shadow-sm p-5">
         <h2 className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-3">
@@ -180,6 +182,7 @@ export default function AccueilPage() {
         )}
       </section>
       </div>
+      )}
     </div>
   )
 }

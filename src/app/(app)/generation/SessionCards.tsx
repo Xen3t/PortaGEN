@@ -35,6 +35,12 @@ const MOTEUR_LABELS: Record<string, string> = {
   portillon: 'Portillon',
 }
 
+// Dernière liste reçue, gardée en mémoire tant que l'onglet vit (une entrée par
+// limite demandée : 3 sur l'accueil, 200 sur « Toutes les sessions »). En
+// revenant sur la page, les cartes s'affichent immédiatement depuis ce cache
+// pendant que la liste fraîche se recharge en arrière-plan.
+const lastLoaded = new Map<number, SessionSummary[]>()
+
 function art(p: string, w?: number): string {
   const base = `/api/artifacts?p=${encodeURIComponent(p)}`
   return w ? `${base}&w=${w}` : base
@@ -60,7 +66,9 @@ export default function SessionCards({
   /** false sur la page « Toutes les sessions » : le titre de la page suffit. */
   showTitle?: boolean
 }) {
-  const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
+  const [sessions, setSessions] = useState<SessionSummary[] | null>(
+    () => lastLoaded.get(limit) ?? null
+  )
 
   useEffect(() => {
     let alive = true
@@ -68,7 +76,10 @@ export default function SessionCards({
       fetch(`/api/generation/sessions?limit=${limit}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          if (alive && Array.isArray(d?.sessions)) setSessions(d.sessions)
+          if (Array.isArray(d?.sessions)) {
+            lastLoaded.set(limit, d.sessions)
+            if (alive) setSessions(d.sessions)
+          }
         })
         .catch(() => {})
     load()
@@ -93,7 +104,11 @@ export default function SessionCards({
         method: 'DELETE',
       })
       if (res.ok) {
-        setSessions((cur) => (cur ?? []).filter((x) => x.batchId !== s.batchId))
+        setSessions((cur) => {
+          const next = (cur ?? []).filter((x) => x.batchId !== s.batchId)
+          lastLoaded.set(limit, next)
+          return next
+        })
         setConfirm(null)
       } else {
         setConfirm({ id: s.batchId, state: 'error' })

@@ -17,11 +17,46 @@ import {
  * Accueil du Catalogue (navigation v2) : les grandes catégories DE LA MARQUE
  * ACTIVE (choisie via le logo). Les marques sans moteur affichent « bientôt ».
  */
+
+type ScanProgress = { actif: boolean; fait: number; total: number; demarreA: number | null }
+
+function dureeRestante(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000))
+  if (s < 60) return `~${s} s`
+  return `~${Math.round(s / 60)} min`
+}
+
+/** Libellé du bouton pendant le scan : avancement + temps restant estimé. */
+function scanLabel(p: ScanProgress | null): string {
+  if (!p || p.total === 0 || p.fait === 0 || !p.demarreA) return 'Consultation du serveur…'
+  const restant = ((Date.now() - p.demarreA) / p.fait) * (p.total - p.fait)
+  return `Scan ${p.fait}/${p.total} — reste ${dureeRestante(restant)}`
+}
+
 export default function CataloguePage() {
   const [products, setProducts] = useState<ProductLight[] | null>(null)
   const [brand, setBrand] = useState<string>('casanoov')
   const [scanning, setScanning] = useState(false)
+  const [progress, setProgress] = useState<ScanProgress | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+
+  // Pendant le scan : interroge la progression chaque seconde pour animer la
+  // barre du bouton et rafraîchir l'estimation du temps restant.
+  useEffect(() => {
+    if (!scanning) {
+      setProgress(null)
+      return
+    }
+    const timer = setInterval(() => {
+      fetch('/api/catalogue/progression', { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((p: ScanProgress) => {
+          if (p?.actif) setProgress(p)
+        })
+        .catch(() => undefined)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [scanning])
 
   useEffect(() => {
     fetchCatalogue().then(
@@ -81,9 +116,19 @@ export default function CataloguePage() {
           onClick={rescan}
           disabled={scanning}
           title="Relit tout le serveur (plusieurs minutes)"
-          className="text-sm font-semibold text-brand-green bg-brand-green-light rounded-full px-4 py-2 hover:bg-brand-green hover:text-white transition-colors disabled:opacity-50"
+          className="relative overflow-hidden text-sm font-semibold text-brand-green bg-brand-green-light rounded-full px-4 py-2 hover:bg-brand-green hover:text-white transition-colors disabled:pointer-events-none"
         >
-          {scanning ? 'Consultation du serveur…' : '↻ Actualiser depuis le serveur'}
+          {/* Barre de progression : remplissage DANS le bouton, jamais plus large que lui. */}
+          {scanning && progress && progress.total > 0 && (
+            <span
+              aria-hidden
+              className="absolute inset-y-0 left-0 bg-brand-green/25 transition-[width] duration-700"
+              style={{ width: `${Math.min(100, (progress.fait / progress.total) * 100)}%` }}
+            />
+          )}
+          <span className="relative">
+            {scanning ? scanLabel(progress) : '↻ Actualiser depuis le serveur'}
+          </span>
         </button>
       </div>
 
