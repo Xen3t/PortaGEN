@@ -4,6 +4,7 @@ import sharp from 'sharp'
 import { config } from '@/lib/config'
 import { getDb } from '@/lib/db'
 import { generateImage, type ImageSize } from '@/lib/genai/client'
+import { marquerImageIa } from '@/lib/images/marquage'
 import { NATIVE_DIMS } from '@/lib/pipeline/nativeFormats'
 
 /**
@@ -97,6 +98,8 @@ export async function runMesFixStep(opts: MesFixOptions): Promise<{ deliveryPath
       .jpeg(config.deliveryJpeg)
       .toBuffer()
     fs.writeFileSync(deliveryAbs, delivery)
+    // Le réencodage sharp repart de zéro côté métadonnées → on re-marque le livrable.
+    await marquerImageIa(deliveryAbs, db)
     const deliveryPath = path.relative(config.rootDir, deliveryAbs)
 
     db.prepare(

@@ -9,6 +9,9 @@ import { getDb, type JobRow } from '@/lib/db'
  * cracher six lignes quand un lot de six MES se termine. L'état « lu » est géré
  * côté client (repère du dernier id vu en localStorage) : pas de colonne en base,
  * la cloche reste un simple miroir des jobs récents.
+ *
+ * Extension 20/07/2026 (demande Mathias) : les DÉCORS générés (Bibliothèque et
+ * page produit) remontent aussi — une notification par décor terminé ou en échec.
  */
 
 export interface UserNotification {
@@ -24,6 +27,8 @@ export interface UserNotification {
   kind: 'ok' | 'partial' | 'error'
   message: string
   at: string
+  /** 'catalogue' → clic = page produit ; 'decor' → clic = Bibliothèque. */
+  source: 'catalogue' | 'decor'
 }
 
 interface Payload {
@@ -103,7 +108,8 @@ export function listUserNotifications(
     // (la page produit le montre déjà en direct).
     if (row.status === 'queued' || row.status === 'running') group.pending = true
 
-    const isFinal = row.type === 'integration' || row.type === 'marketplace'
+    const isFinal =
+      row.type === 'integration' || row.type === 'pose-fusion' || row.type === 'marketplace'
     group.cells.set(`${coloris}|${w}x${h}|${format}`, {
       format,
       status: row.status,
@@ -164,6 +170,47 @@ export function listUserNotifications(
       kind,
       message,
       at: group.at,
+      source: 'catalogue',
+    })
+  }
+
+  // Décors générés (Bibliothèque et page produit) — un job = une notification.
+  // Les essais du Lab moteur n'apparaissent jamais ; un lot de N tirages donne
+  // N lignes (borné à 4 par lancement, acceptable en v1).
+  const decorRows = db
+    .prepare(
+      `SELECT * FROM jobs
+       WHERE created_by = ? AND type = 'decor' AND status IN ('done', 'error')
+         AND json_extract(payload, '$.lab') IS NULL
+       ORDER BY id DESC LIMIT ?`
+    )
+    .all(username, limit) as JobRow[]
+  for (const row of decorRows) {
+    let payload: { name?: unknown; slug?: unknown; nameSuffix?: unknown } = {}
+    try {
+      payload = row.payload ? JSON.parse(row.payload) : {}
+    } catch {
+      continue
+    }
+    const base =
+      (typeof payload.name === 'string' && payload.name.trim()) ||
+      (typeof payload.slug === 'string' && payload.slug) ||
+      'Décor'
+    const name = base + (typeof payload.nameSuffix === 'string' ? payload.nameSuffix : '')
+    const ok = row.status === 'done'
+    out.push({
+      id: row.id,
+      batchId: `decor-${row.id}`,
+      productId: 0,
+      productName: name,
+      colorisList: [],
+      siteDone: 0,
+      marketplaceDone: 0,
+      errorCount: ok ? 0 : 1,
+      kind: ok ? 'ok' : 'error',
+      message: ok ? 'décor prêt — à valider dans la Bibliothèque' : 'échec de génération du décor',
+      at: row.updated_at ?? row.created_at,
+      source: 'decor',
     })
   }
 

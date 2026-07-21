@@ -671,7 +671,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
   }
 
   // Décor gardé/validé dans le studio → le choisir comme décor par défaut du coloris.
-  async function pickGeneratedDecor(filePath: string) {
+  async function pickGeneratedDecor(decorId: number) {
     setStudioJobs(null)
     try {
       const d = await fetch('/api/decors').then((r) => (r.ok ? r.json() : null))
@@ -679,7 +679,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
       const active = (d.decors as DecorEntry[]).filter((x) => x.status === 'actif')
       setDecors(active)
       setIsAdmin(d.role === 'admin')
-      const found = active.find((x) => x.file_path === filePath)
+      const found = active.find((x) => x.id === decorId)
       if (found) setDraft((prev) => (prev ? { ...prev, decorId: found.id } : prev))
     } catch {
       // rechargement échoué : le décor reste choisissable manuellement dans la grille
@@ -2098,7 +2098,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
             loadDecors()
           }}
           onChanged={loadDecors}
-          onUse={(fp) => void pickGeneratedDecor(fp)}
+          onUse={(id) => void pickGeneratedDecor(id)}
         />
       )}
 

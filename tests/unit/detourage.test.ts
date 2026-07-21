@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import sharp from 'sharp'
 import { classifyView, isUsableFace } from '@/lib/catalogue/parse'
 import { serverPngUsable } from '@/lib/catalogue/detourageQueue'
+import { hasRealTransparency } from '@/lib/images/detourage'
 
 describe('classification des vues (détourage, chantier 2)', () => {
   it('reconnaît une vraie face', () => {
@@ -36,5 +38,39 @@ describe('classification des vues (détourage, chantier 2)', () => {
     expect(serverPngUsable('Png/7_VOGEL300B140_BACK.png')).toBe(false)
     expect(serverPngUsable('Png/VOGEL_400B140_FRONT_LEFT.png')).toBe(false)
     expect(serverPngUsable(null)).toBe(false)
+  })
+})
+
+describe('hasRealTransparency (pré-vol pose-fusion 20/07/2026)', () => {
+  it('détecte un PNG déjà détouré — y compris un alpha fantôme partiel', async () => {
+    const detoure = await sharp({
+      create: { width: 40, height: 40, channels: 4, background: { r: 30, g: 30, b: 30, alpha: 0 } },
+    })
+      .png()
+      .toBuffer()
+    expect(await hasRealTransparency(detoure)).toBe(true)
+    // Fantômes seuls (alpha ~40 %) = transparence réelle aussi : jamais re-détouré.
+    const fantome = await sharp({
+      create: { width: 40, height: 40, channels: 4, background: { r: 250, g: 250, b: 250, alpha: 0.4 } },
+    })
+      .png()
+      .toBuffer()
+    expect(await hasRealTransparency(fantome)).toBe(true)
+  })
+
+  it('un visuel opaque (photo à détourer) → false', async () => {
+    const jpg = await sharp({
+      create: { width: 40, height: 40, channels: 3, background: { r: 240, g: 240, b: 240 } },
+    })
+      .jpeg()
+      .toBuffer()
+    expect(await hasRealTransparency(jpg)).toBe(false)
+    // PNG avec canal alpha mais entièrement opaque : rien de détouré → false.
+    const pngOpaque = await sharp({
+      create: { width: 40, height: 40, channels: 4, background: { r: 20, g: 20, b: 20, alpha: 1 } },
+    })
+      .png()
+      .toBuffer()
+    expect(await hasRealTransparency(pngOpaque)).toBe(false)
   })
 })

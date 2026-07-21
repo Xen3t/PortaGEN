@@ -60,6 +60,7 @@ const PROMPTS_MARKETPLACE: { name: string; label: string }[] = [
   { name: 'marketplace-extension', label: 'Extension des bords (outpainting Nano)' },
 ]
 const promptsIntegration = (produit: string): { name: string; label: string }[] => [
+  { name: 'pose-fusion', label: `Pose + fusion du ${produit} (stuc + lumière, produit déjà posé)` },
   { name: 'integration-simple', label: `Intégration du ${produit} (méthode simple)` },
   { name: 'integration', label: `Intégration du ${produit} (méthode verrouillée)` },
 ]
@@ -332,6 +333,13 @@ export default function MoteursPage() {
       body.corridorWidthCm = Math.min(800, Math.max(100, Math.round(reglages.corridorWidthCm || 100)))
     } else {
       delete body.corridorWidthCm
+    }
+    if (reglages.integrationMethod === 'pose-fusion') {
+      body.poseDebordPct = Math.min(10, Math.max(0, Number(reglages.poseDebordPct) || 0))
+      body.poseSeuilAlpha = Math.min(255, Math.max(1, Math.round(reglages.poseSeuilAlpha || 200)))
+    } else {
+      delete body.poseDebordPct
+      delete body.poseSeuilAlpha
     }
     const res = await fetch(`/api/moteurs/${selected}/reglages`, {
       method: 'PATCH',
@@ -849,6 +857,9 @@ export default function MoteursPage() {
                     <Seg
                       value={reglages?.integrationMethod ?? 'simple'}
                       options={[
+                        // « Pose + fusion » (chantier 17/07/2026) : le code pose le produit
+                        // au pixel près, UN appel Nano fait stuc + lumière/ombres.
+                        { value: 'pose-fusion', label: 'Pose + fusion' },
                         { value: 'simple', label: 'Simple' },
                         // « Verrouillée » = ex-« rectangle » (renommage Mathias 13/07/2026) :
                         // décor verrouillé au pixel autour du portail + contrôles.
@@ -861,6 +872,41 @@ export default function MoteursPage() {
                       disabled={!reglages}
                     />
                   </div>
+                  {reglages?.integrationMethod === 'pose-fusion' && (
+                    <>
+                      <div>
+                        <FieldLabel>Débord sur les piliers</FieldLabel>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={0}
+                            max={10}
+                            step={0.1}
+                            value={reglages.poseDebordPct}
+                            onChange={(e) => setField('poseDebordPct', Number(e.target.value) || 0)}
+                            title="Débordement du produit sur chaque pilier, en % de la largeur"
+                            className="w-24 border border-border bg-white rounded-[8px] px-3 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                          />
+                          <span className="text-xs text-text-disabled">% par côté (2 % validé le 17/07)</span>
+                        </div>
+                      </div>
+                      <div>
+                        <FieldLabel>Seuil alpha du nettoyage</FieldLabel>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={255}
+                            value={reglages.poseSeuilAlpha}
+                            onChange={(e) => setField('poseSeuilAlpha', Number(e.target.value) || 0)}
+                            title="Alpha minimal conservé au nettoyage du PNG produit"
+                            className="w-24 border border-border bg-white rounded-[8px] px-3 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                          />
+                          <span className="text-xs text-text-disabled">1-255 · retire les pixels fantômes (200 validé)</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
                   <div>
                     <FieldLabel>Ombres portées</FieldLabel>
                     <Seg

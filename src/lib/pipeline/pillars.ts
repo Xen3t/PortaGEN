@@ -5,6 +5,7 @@ import { config } from '@/lib/config'
 import { getDb } from '@/lib/db'
 import { getActivePrompt } from '@/lib/db/prompts'
 import { generateImage, type ImageSize } from '@/lib/genai/client'
+import { marquerImageIa } from '@/lib/images/marquage'
 import { DEFAULT_PARAMS, type GabaritParams, type SizeCm } from '@/lib/geometry'
 import { overlayGabaritOnDecor, gabaritMask } from '@/lib/images/gabarits'
 import { whiteLineBands, horizontalEdgeProfile, bandPatternShift } from '@/lib/images/analyze'
@@ -241,6 +242,8 @@ export async function runPillarsStep(opts: PillarsStepOptions): Promise<PillarsS
     }
     const compositePath = path.join(dir, `4-finale-${stamp}.png`)
     fs.writeFileSync(compositePath, finalImage)
+    // Composite sharp (métadonnées reparties de zéro) → on re-marque l'image finale.
+    await marquerImageIa(compositePath)
 
     const result: PillarsStepResult = {
       jobId,

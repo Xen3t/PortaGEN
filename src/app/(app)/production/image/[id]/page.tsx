@@ -139,12 +139,14 @@ export default function ImageDetailPage() {
   const r = job.result ?? {}
   const isPillars = job.type === 'pillars'
   const isIntegration = job.type === 'integration'
+  // « pose-fusion » (chantier 17/07/2026) : un seul job = MES finale.
+  const isPoseFusion = job.type === 'pose-fusion'
   const isDecorJob = job.type === 'decor' || job.type === 'decor-fix'
   const size = (job.payload?.size as { w: number; h: number } | undefined) ?? undefined
   const sizeLabel = size ? `${size.w}×${size.h}` : ''
   const title = isPillars
     ? `Décor + maçonnerie ${sizeLabel}`
-    : isIntegration
+    : isIntegration || isPoseFusion
       ? `Image finale ${sizeLabel}`
       : job.type === 'decor-fix'
         ? 'Correction de décor'
@@ -153,9 +155,11 @@ export default function ImageDetailPage() {
   // Méthode « simple » : pas de composite, la sortie brute du modèle est l'image finale.
   const finalImage = isIntegration
     ? (r.compositePath ?? r.rawOutputPath ?? r.deliveryPath)
-    : isPillars
-      ? r.compositePath
-      : r.imagePath
+    : isPoseFusion
+      ? (r.rawOutputPath ?? r.deliveryPath)
+      : isPillars
+        ? r.compositePath
+        : r.imagePath
 
   const pillarInfo =
     (r.productPillars as {
@@ -188,10 +192,16 @@ export default function ImageDetailPage() {
             { label: '5 · Composite final (natif)', path: r.compositePath },
             { label: '6 · Livraison 2000×1330', path: r.deliveryPath },
           ]
-      : [
-          { label: 'CANNY envoyé', path: r.cannySentPath },
-          { label: 'Décor généré', path: r.imagePath },
-        ]
+      : isPoseFusion
+        ? [
+            { label: '1 · Entrée envoyée (décor + aplats + produit posé)', path: r.posedInputPath },
+            { label: '2 · Sortie brute Nano Banana (image finale)', path: r.rawOutputPath },
+            { label: '3 · Livraison 2000×1330', path: r.deliveryPath },
+          ]
+        : [
+            { label: 'CANNY envoyé', path: r.cannySentPath },
+            { label: 'Décor généré', path: r.imagePath },
+          ]
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -603,7 +613,7 @@ export default function ImageDetailPage() {
             load()
           }}
           onChanged={load}
-          onUse={(fp) => router.push(`/creer?decor=${encodeURIComponent(fp)}`)}
+          onUse={(id) => router.push(`/generation?decor=${id}`)}
         />
       )}
 

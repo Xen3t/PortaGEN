@@ -66,7 +66,10 @@ export function listProductGenerations(
     } catch {
       result = null
     }
-    const isFinal = row.type === 'integration' || row.type === 'marketplace'
+    // « pose-fusion » (chantier 17/07/2026) produit la MES finale en un seul job :
+    // même rôle que l'intégration pour la grille.
+    const isFinal =
+      row.type === 'integration' || row.type === 'pose-fusion' || row.type === 'marketplace'
     const deliveryPath =
       isFinal && row.status === 'done' && typeof result?.deliveryPath === 'string'
         ? result.deliveryPath
@@ -77,7 +80,7 @@ export function listProductGenerations(
       coloris,
       format,
       stage:
-        row.type === 'integration'
+        row.type === 'integration' || row.type === 'pose-fusion'
           ? 'integration'
           : row.type === 'marketplace'
             ? 'marketplace'

@@ -100,8 +100,17 @@ export interface MoteurReglages {
   corridorWidthCm: number
   /** Masquage de la sortie Piliers ('off' = rendu brut, décision 11/07/2026). */
   masking: 'off' | 'pixel-lock'
-  /** Méthode d'intégration du portail ('simple' = défaut, décision 11/07/2026). */
-  integrationMethod: 'simple' | 'rectangle' | 'pose-directe'
+  /**
+   * Méthode d'intégration du portail. 'pose-fusion' (chantier du 17/07/2026,
+   * docs/CADRAGE-POSE-FUSION-JANUS-2026-07-17.md) : le code pose le produit au
+   * pixel près, un seul appel Nano fait stuc + lumière/ombres. 'simple' reste le
+   * défaut tant que la migration JANUS n'est pas validée par Mathias.
+   */
+  integrationMethod: 'simple' | 'rectangle' | 'pose-directe' | 'pose-fusion'
+  /** Pose-fusion : débordement du produit sur les piliers, % de la largeur PAR CÔTÉ. */
+  poseDebordPct: number
+  /** Pose-fusion : alpha minimal conservé au nettoyage du PNG produit (0-255). */
+  poseSeuilAlpha: number
   /** Ombres portées à l'intégration (méthodes rectangle / pose-directe). */
   shadows: 'auto' | 'off'
   /**
@@ -123,6 +132,8 @@ export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
   corridorWidthCm: 400,
   masking: 'off',
   integrationMethod: 'simple',
+  poseDebordPct: 2,
+  poseSeuilAlpha: 200,
   shadows: 'auto',
   marketplace: 'choix',
   livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
@@ -172,8 +183,20 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
     'simple',
     'rectangle',
     'pose-directe',
+    'pose-fusion',
   ] as const)
   if (integrationMethod) out.integrationMethod = integrationMethod
+  // Débordement en % avec décimales (mesuré à 3,5 %, ramené à 2 % par Mathias le 17/07).
+  if (
+    typeof src.poseDebordPct === 'number' &&
+    Number.isFinite(src.poseDebordPct) &&
+    src.poseDebordPct >= 0 &&
+    src.poseDebordPct <= 10
+  ) {
+    out.poseDebordPct = Math.round(src.poseDebordPct * 10) / 10
+  }
+  const poseSeuilAlpha = num(src.poseSeuilAlpha, 1, 255)
+  if (poseSeuilAlpha !== undefined) out.poseSeuilAlpha = poseSeuilAlpha
   const shadows = pick(src.shadows, ['auto', 'off'] as const)
   if (shadows) out.shadows = shadows
   const marketplace = pick(src.marketplace, ['choix', 'toujours', 'jamais'] as const)

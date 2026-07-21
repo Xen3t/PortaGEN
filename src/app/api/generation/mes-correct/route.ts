@@ -28,7 +28,9 @@ export async function POST(req: NextRequest) {
   }
 
   const job = getJob(jobId)
-  if (!job || (job.type !== 'integration' && job.type !== 'mes-fix') || job.status !== 'done' || !job.result) {
+  // MES d'origine = intégration OU pose-fusion (chantier 17/07/2026), ou un mes-fix précédent.
+  const isMesRoot = job?.type === 'integration' || job?.type === 'pose-fusion'
+  if (!job || (!isMesRoot && job.type !== 'mes-fix') || job.status !== 'done' || !job.result) {
     return NextResponse.json({ error: 'Version de MES indisponible.' }, { status: 400 })
   }
 
@@ -55,8 +57,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Fichier source de la MES introuvable.' }, { status: 400 })
   }
 
-  // Racine = le job d'intégration ; un mes-fix reporte le rootJobId de sa MES.
-  const rootJobId = job.type === 'integration' ? job.id : payload.rootJobId ?? job.id
+  // Racine = le job de MES (intégration / pose-fusion) ; un mes-fix reporte le rootJobId.
+  const rootJobId = isMesRoot ? job.id : payload.rootJobId ?? job.id
 
   const newId = enqueueNewJob(
     'mes-fix',

@@ -78,7 +78,8 @@ export default function DecorStudio({
   isAdmin: boolean
   onClose: () => void
   onChanged: () => void
-  onUse: (filePath: string) => void
+  /** « Utiliser ce décor » : ouvre la Génération avec ce décor présélectionné (rebranché 20/07/2026). */
+  onUse: (decorId: number) => void
 }) {
   const [slots, setSlots] = useState<Slot[]>(() =>
     jobIds?.length
@@ -486,7 +487,7 @@ export default function DecorStudio({
                       </button>
                     )}
                     <button
-                      onClick={() => onUse(decor.file_path)}
+                      onClick={() => onUse(decor.id)}
                       disabled={working || decor.status !== 'actif'}
                       title={decor.status !== 'actif' ? 'Validez d’abord le décor' : undefined}
                       className="w-full bg-brand-teal text-white rounded-[10px] py-2 text-sm font-bold hover:bg-brand-teal-hover transition-colors disabled:opacity-50"

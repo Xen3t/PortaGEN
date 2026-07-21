@@ -5,6 +5,7 @@ import { config } from '@/lib/config'
 import { getDb, getJob } from '@/lib/db'
 import { getActivePrompt } from '@/lib/db/prompts'
 import { generateImage, type ImageSize } from '@/lib/genai/client'
+import { marquerImageIa } from '@/lib/images/marquage'
 import {
   computeLayout,
   projection,
@@ -208,7 +209,11 @@ export async function runIntegrationStep(
     // 13/07/2026) ; un appel explicite (Lab, API) garde la priorité.
     const moteurKey: MoteurKey = opts.moteur ?? 'battant'
     const moteur = getMoteurReglages(moteurKey)
-    const method = opts.method ?? moteur.integrationMethod
+    // « pose-fusion » est un TYPE DE JOB à part (aiguillé au lancement, chantier
+    // 17/07/2026) : un job Intégration appelé directement (Lab, bouton Intégrer)
+    // avec ce réglage retombe sur « simple ».
+    const method =
+      opts.method ?? (moteur.integrationMethod === 'pose-fusion' ? 'simple' : moteur.integrationMethod)
     const strokeW = Math.max(3, Math.round(width / 840))
 
     if (method === 'simple') {
@@ -269,6 +274,8 @@ export async function runIntegrationStep(
         `3-livraison-${config.delivery.width}x${config.delivery.height}-${stamp}.jpg`
       )
       fs.writeFileSync(deliveryPath, delivery)
+      // Le réencodage sharp repart de zéro côté métadonnées → on re-marque le livrable.
+      await marquerImageIa(deliveryPath)
 
       const result: IntegrationSimpleResult = {
         jobId,
@@ -532,6 +539,7 @@ export async function runIntegrationStep(
       `6-livraison-${config.delivery.width}x${config.delivery.height}-${stamp}.jpg`
     )
     fs.writeFileSync(deliveryPath, delivery)
+    await marquerImageIa(deliveryPath)
 
     const result: IntegrationStepResult = {
       jobId,

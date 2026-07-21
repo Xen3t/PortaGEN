@@ -4,6 +4,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { config } from '@/lib/config'
 import { logApiCall } from '@/lib/db'
+import { marquerImageIa } from '@/lib/images/marquage'
 
 let ai: GoogleGenAI | null = null
 
@@ -184,6 +185,8 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const artifactPath = path.join(dir, `${opts.artifactName ?? 'image'}-${stamp}.${ext}`)
     fs.writeFileSync(artifactPath, buffer)
+    // Marquage IA (IPTC DigitalSourceType) de chaque image sortie du modèle.
+    await marquerImageIa(artifactPath)
 
     const usage = extractUsage(response.usageMetadata)
     logApiCall({

@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     .prepare(
       `SELECT json_extract(payload, '$.catalogProductId') AS pid, COUNT(*) AS n
        FROM jobs
-       WHERE type = 'integration' AND status = 'done'
+       WHERE type IN ('integration', 'pose-fusion') AND status = 'done'
          AND json_extract(payload, '$.catalogProductId') IS NOT NULL
        GROUP BY pid`
     )

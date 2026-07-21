@@ -65,7 +65,7 @@ export default function GammeBatchPage() {
     if (!jobs) return []
     const pillars = jobs.filter((j) => j.type === 'pillars')
     const integrations = jobs.filter((j) => j.type === 'integration')
-    return pillars
+    const fromPillars = pillars
       .map((p): Tile | null => {
         const s = sizeOf(p)
         if (!s) return null
@@ -80,7 +80,16 @@ export default function GammeBatchPage() {
         return { label, w: s.w, h: s.h, pillars: p, integration: integ ?? null }
       })
       .filter((t): t is Tile => t !== null)
-      .sort((a, b) => a.w - b.w || a.h - b.h)
+    // « pose-fusion » (17/07/2026) : UN job = la MES complète — il tient les deux
+    // rôles de la vignette (préparation ET image finale).
+    const fromPoseFusion = jobs
+      .filter((j) => j.type === 'pose-fusion')
+      .map((p): Tile | null => {
+        const s = sizeOf(p)
+        return s ? { label: `${s.w}x${s.h}`, w: s.w, h: s.h, pillars: p, integration: p } : null
+      })
+      .filter((t): t is Tile => t !== null)
+    return [...fromPillars, ...fromPoseFusion].sort((a, b) => a.w - b.w || a.h - b.h)
   }, [jobs])
 
   const doneCount = tiles.filter((t) => t.integration?.status === 'done').length
@@ -229,7 +238,11 @@ export default function GammeBatchPage() {
             t.pillars.status === 'cancelled' || integ?.status === 'cancelled'
               ? { text: 'annulée', tone: 'text-text-disabled' }
               : t.pillars.status === 'error'
-              ? { text: '⚠ erreur (décor + maçonnerie)', tone: 'text-brand-red' }
+              ? {
+                  // Vignette pose-fusion : un seul job, l'erreur est celle de la génération entière.
+                  text: t.pillars.id === integ?.id ? '⚠ erreur (génération)' : '⚠ erreur (décor + maçonnerie)',
+                  tone: 'text-brand-red',
+                }
               : integ?.status === 'error'
                 ? { text: '⚠ erreur (pose du portail)', tone: 'text-brand-red' }
                 : t.pillars.status !== 'done'

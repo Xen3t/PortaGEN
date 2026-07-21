@@ -24,6 +24,8 @@ interface Notif {
   kind: 'ok' | 'partial' | 'error'
   message: string
   at: string
+  /** 'catalogue' → clic = page produit ; 'decor' → clic = Bibliothèque (20/07/2026). */
+  source: 'catalogue' | 'decor'
 }
 
 const SEEN_KEY = 'portagen-notif-seen'
@@ -88,7 +90,7 @@ export default function NotificationBell() {
 
   function openNotif(n: Notif) {
     setOpen(false)
-    router.push(`/catalogue/${n.productId}`)
+    router.push(n.source === 'decor' ? '/bibliotheque' : `/catalogue/${n.productId}`)
   }
 
   const icon = (kind: Notif['kind']) =>
@@ -147,10 +149,13 @@ export default function NotificationBell() {
             ) : (
               notifs.map((n) => {
                 const ic = icon(n.kind)
+                // Un décor n'a pas de coloris : le titre reste le nom seul.
                 const coloris =
-                  n.colorisList.length === 1
-                    ? n.colorisList[0].toUpperCase()
-                    : `${n.colorisList.length} coloris`
+                  n.colorisList.length === 0
+                    ? null
+                    : n.colorisList.length === 1
+                      ? n.colorisList[0].toUpperCase()
+                      : `${n.colorisList.length} coloris`
                 return (
                   <button
                     key={n.batchId}
@@ -166,11 +171,12 @@ export default function NotificationBell() {
                     </span>
                     <span className="text-[13px] leading-snug">
                       <b className="text-text-primary">
-                        {n.productName} · {coloris}
+                        {n.productName}
+                        {coloris ? ` · ${coloris}` : ''}
                       </b>{' '}
                       — {n.message}
                       <small className="block text-text-disabled text-[11.5px] mt-0.5">
-                        {relTime(n.at)} · voir la gamme
+                        {relTime(n.at)} · {n.source === 'decor' ? 'voir la Bibliothèque' : 'voir la gamme'}
                       </small>
                     </span>
                   </button>

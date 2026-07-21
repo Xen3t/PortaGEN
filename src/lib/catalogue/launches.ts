@@ -71,7 +71,10 @@ function parseCell(row: JobRow): { key: string; cell: LaunchCell; decorPath: str
   } catch {
     result = null
   }
-  const isFinal = row.type === 'integration' || row.type === 'marketplace'
+  // « pose-fusion » (chantier 17/07/2026) produit la MES finale en un seul job :
+  // même rôle que l'intégration pour l'historique.
+  const isFinal =
+    row.type === 'integration' || row.type === 'pose-fusion' || row.type === 'marketplace'
   const deliveryPath =
     isFinal && row.status === 'done' && typeof result?.deliveryPath === 'string'
       ? result.deliveryPath
@@ -84,7 +87,7 @@ function parseCell(row: JobRow): { key: string; cell: LaunchCell; decorPath: str
       size,
       format,
       stage:
-        row.type === 'integration'
+        row.type === 'integration' || row.type === 'pose-fusion'
           ? 'integration'
           : row.type === 'marketplace'
             ? 'marketplace'

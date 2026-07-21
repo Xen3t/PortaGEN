@@ -204,8 +204,10 @@ export default function BibliothequePage() {
     if (page > pageCount) setPage(1)
   }, [page, pageCount])
 
+  // « Utiliser ce décor » : la Génération s'ouvre avec ce décor présélectionné
+  // (rebranché 20/07/2026 — l'ancien flux /creer?decor= n'existe plus).
   function applyDecor(d: Decor) {
-    router.push(`/creer?decor=${encodeURIComponent(d.file_path)}`)
+    router.push(`/generation?decor=${d.id}`)
   }
 
   async function patchDecor(id: number, fields: Record<string, unknown>) {
@@ -589,7 +591,7 @@ export default function BibliothequePage() {
             load()
           }}
           onChanged={load}
-          onUse={(fp) => router.push(`/creer?decor=${encodeURIComponent(fp)}`)}
+          onUse={(id) => router.push(`/generation?decor=${id}`)}
         />
       )}
     </div>

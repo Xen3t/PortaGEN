@@ -64,6 +64,10 @@ function jobTitle(job: Job): string {
     const size = job.payload?.size as { w: number; h: number } | undefined
     return `${labPrefix}Intégration — ${size ? `${size.w}x${size.h}` : '?'}`
   }
+  if (job.type === 'pose-fusion') {
+    const size = job.payload?.size as { w: number; h: number } | undefined
+    return `${labPrefix}Pose + fusion — ${size ? `${size.w}x${size.h}` : '?'}`
+  }
   if (job.type === 'decor-fix') return 'Correction de décor'
   return `${job.type} #${job.id}`
 }

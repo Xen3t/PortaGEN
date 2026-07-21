@@ -47,6 +47,18 @@ export function getServerRoot(db: Database.Database = getDb()): string {
 }
 
 /**
+ * Marquage IA des images (brief Mathias 21/07/2026) : chaque image produite par
+ * PortaGEN reçoit la métadonnée IPTC DigitalSourceType = trainedAlgorithmicMedia
+ * (cf. src/lib/images/marquage.ts). Réglage GLOBAL — jamais par moteur.
+ * ACTIVÉ par défaut : seul un « 0 » explicite le coupe.
+ */
+export const MARQUAGE_IA_KEY = 'iptc_tagging_enabled'
+
+export function isMarquageIaActif(db: Database.Database = getDb()): boolean {
+  return getSetting(MARQUAGE_IA_KEY, db) !== '0'
+}
+
+/**
  * Tarif Gemini indicatif, en € par MILLION de tokens (entrée / sortie), saisi dans
  * Admin → Réglages moteur. 0 = non configuré → aucun coût en € affiché (les tokens
  * restent toujours visibles). Sert au coût par essai du Lab moteur.

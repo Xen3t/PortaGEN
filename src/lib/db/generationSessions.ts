@@ -147,12 +147,14 @@ export function summarizeGenerationSession(
     if (j.status === 'queued' || j.status === 'running') busy = true
     if (j.status === 'error') anyError = true
     if (j.type === 'marketplace') mpDone = true
-    if (j.type === 'pillars') {
+    // « pose-fusion » (17/07/2026) : UN job = une MES complète — il compte à la
+    // fois dans le total (comme les piliers) et dans le terminé (comme l'intégration).
+    if (j.type === 'pillars' || j.type === 'pose-fusion') {
       mesCount++
       const col = typeof payload.coloris === 'string' ? payload.coloris : ''
       if (col && !coloris.includes(col)) coloris.push(col)
     }
-    if (j.type === 'integration') {
+    if (j.type === 'integration' || j.type === 'pose-fusion') {
       const dp = typeof result.deliveryPath === 'string' ? result.deliveryPath : null
       if (j.status === 'done' && dp) {
         doneMes++
@@ -217,12 +219,13 @@ function summarizeCatalogueBatch(
     if (j.status === 'error') anyError = true
     if (j.type === 'marketplace') mpDone = true
     if (typeof payload.moteur === 'string' && payload.moteur) moteur = payload.moteur
-    if (j.type === 'pillars') {
+    // « pose-fusion » (17/07/2026) : UN job = une MES complète (total ET terminé).
+    if (j.type === 'pillars' || j.type === 'pose-fusion') {
       mesCount++
       const col = typeof payload.coloris === 'string' ? payload.coloris : ''
       if (col && !coloris.includes(col)) coloris.push(col)
     }
-    if (j.type === 'integration') {
+    if (j.type === 'integration' || j.type === 'pose-fusion') {
       const fp =
         (typeof result.deliveryPath === 'string' && result.deliveryPath) ||
         (typeof result.compositePath === 'string' && result.compositePath) ||

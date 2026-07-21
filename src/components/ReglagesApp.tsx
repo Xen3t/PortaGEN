@@ -48,6 +48,7 @@ export default function ReglagesApp() {
   const [priceIn, setPriceIn] = useState('')
   const [priceOut, setPriceOut] = useState('')
   const [serverRoot, setServerRoot] = useState('')
+  const [marquageIa, setMarquageIa] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -62,8 +63,33 @@ export default function ReglagesApp() {
           setPriceOut(d.pricing.outEurPerMTok > 0 ? String(d.pricing.outEurPerMTok) : '')
         }
         if (d.serverRoot) setServerRoot(d.serverRoot)
+        if (typeof d.marquageIa === 'boolean') setMarquageIa(d.marquageIa)
       })
   }, [])
+
+  /** Bascule du marquage IA — enregistrée immédiatement (un seul bouton Oui/Non). */
+  async function saveMarquageIa(next: boolean) {
+    setMarquageIa(next)
+    setBusy(true)
+    setNotice(null)
+    const res = await fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ marquageIa: next }),
+    })
+    const data = await res.json().catch(() => null)
+    setBusy(false)
+    if (res.ok) {
+      setNotice(
+        next
+          ? 'Marquage IA activé — chaque nouvelle image générée portera la métadonnée IPTC.'
+          : 'Marquage IA désactivé — les prochaines images sortiront sans la métadonnée IPTC.'
+      )
+    } else {
+      setMarquageIa(!next)
+      setNotice(`Erreur : ${data?.error ?? res.status}`)
+    }
+  }
 
   async function saveServerRoot() {
     setBusy(true)
@@ -204,6 +230,39 @@ export default function ReglagesApp() {
             Enregistrer
           </button>
         </div>
+      </Section>
+
+      <Section title="Marquage IA des images (métadonnées)">
+        <p className="text-xs text-text-secondary mb-4">
+          Chaque image générée reçoit la métadonnée officielle des contenus créés par IA :{' '}
+          <span className="font-mono">IPTC DigitalSourceType = trainedAlgorithmicMedia</span>.
+          Invisible à l&apos;œil, elle est lue par Google et les plateformes. Un code déjà
+          présent dans l&apos;image (ex. <span className="font-mono">compositeSynthetic</span>)
+          est conservé tel quel, et les Content Credentials (C2PA) ne sont jamais retirés.
+          S&apos;applique à toutes les images de l&apos;application, quel que soit le moteur.
+        </p>
+        <span className="inline-flex border border-border rounded-[8px] overflow-hidden bg-white">
+          {[
+            { v: true, label: 'Activé' },
+            { v: false, label: 'Désactivé' },
+          ].map((o, i) => (
+            <button
+              key={o.label}
+              type="button"
+              disabled={busy || marquageIa === null}
+              onClick={() => marquageIa !== o.v && saveMarquageIa(o.v)}
+              className={`px-3.5 py-1.5 text-xs transition-colors disabled:opacity-50 ${
+                i > 0 ? 'border-l border-border' : ''
+              } ${
+                marquageIa === o.v
+                  ? 'bg-brand-green text-white font-bold'
+                  : 'text-text-secondary hover:bg-surface'
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </span>
       </Section>
 
       <Section title="Serveur de fichiers (catalogue)">

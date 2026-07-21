@@ -4,12 +4,14 @@ import {
   CONCURRENCY_KEY,
   CONCURRENCY_MAX,
   CONCURRENCY_MIN,
+  MARQUAGE_IA_KEY,
   PRICE_IN_KEY,
   PRICE_OUT_KEY,
   SERVER_ROOT_KEY,
   getConcurrencyPerUser,
   getPricing,
   getServerRoot,
+  isMarquageIaActif,
   setSetting,
 } from '@/lib/db/settings'
 
@@ -22,6 +24,7 @@ export async function GET(req: NextRequest) {
     bounds: { min: CONCURRENCY_MIN, max: CONCURRENCY_MAX },
     pricing: getPricing(),
     serverRoot: getServerRoot(),
+    marquageIa: isMarquageIaActif(),
   })
 }
 
@@ -58,6 +61,14 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
+  // Marquage IA des images (IPTC DigitalSourceType) — réglage global, jamais par moteur.
+  if (body?.marquageIa !== undefined) {
+    if (typeof body.marquageIa !== 'boolean') {
+      return NextResponse.json({ error: 'Valeur invalide (attendu vrai/faux)' }, { status: 400 })
+    }
+    setSetting(MARQUAGE_IA_KEY, body.marquageIa ? '1' : '0')
+  }
+
   // Racine du serveur de fichiers (catalogue vivant) — l'app n'y accède qu'en LECTURE.
   if (body?.serverRoot !== undefined) {
     const value = String(body.serverRoot).trim()
@@ -72,5 +83,6 @@ export async function PATCH(req: NextRequest) {
     concurrencyPerUser: getConcurrencyPerUser(),
     pricing: getPricing(),
     serverRoot: getServerRoot(),
+    marquageIa: isMarquageIaActif(),
   })
 }

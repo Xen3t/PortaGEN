@@ -34,13 +34,9 @@ export async function POST(req: NextRequest) {
 
   for (const id of ids) {
     const job = getJob(id)
-    // On accepte la MES d'origine (intégration) ET une version retouchée (mes-fix).
-    if (
-      !job ||
-      (job.type !== 'integration' && job.type !== 'mes-fix') ||
-      job.status !== 'done' ||
-      !job.result
-    ) {
+    // On accepte la MES d'origine (intégration / pose-fusion) ET une version retouchée (mes-fix).
+    const isMesRoot = job?.type === 'integration' || job?.type === 'pose-fusion'
+    if (!job || (!isMesRoot && job.type !== 'mes-fix') || job.status !== 'done' || !job.result) {
       errors.push(`Job ${id} : MES Site indisponible`)
       continue
     }
@@ -97,8 +93,8 @@ export async function POST(req: NextRequest) {
         size: payload.size,
         coloris: payload.coloris,
         format: '2000x2000',
-        // MES d'origine (job d'intégration) → l'UI sait quelle MES est déjà passée en MP
-        rootJobId: job.type === 'integration' ? job.id : payload.rootJobId,
+        // MES d'origine (intégration / pose-fusion) → l'UI sait quelle MES est déjà passée en MP
+        rootJobId: isMesRoot ? job.id : payload.rootJobId,
         moteur,
       },
       job.batch_id ?? undefined,

@@ -1,12 +1,13 @@
 import path from 'node:path'
 import fs from 'node:fs'
+import sharp from 'sharp'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireApiUser } from '@/lib/auth/session'
 import { config } from '@/lib/config'
 import { getDecor } from '@/lib/db/decors'
 import { createGenerationSession } from '@/lib/db/generationSessions'
 import { parseProduitFromFileName } from '@/lib/productName'
-import { detourProduct } from '@/lib/images/detourage'
+import { detourProduct, hasRealTransparency } from '@/lib/images/detourage'
 import { launchGammeJobs, type GammeLaunchItem } from '@/lib/server/launchGamme'
 import { getMoteurReglages, moteurDef, type MoteurKey } from '@/lib/moteurs'
 
@@ -84,7 +85,8 @@ export async function POST(req: NextRequest) {
   // Déclinaison MP : le RÉGLAGE DU MOTEUR décide (Admin → Réglages par moteur,
   // 13/07/2026). 'toujours' = forcée, 'jamais' = interdite, 'choix' = la case
   // cochée au lancement. Le runner enchaîne alors un job Marketplace par MES.
-  const mpMode = getMoteurReglages(moteurKey).marketplace
+  const reglagesMoteur = getMoteurReglages(moteurKey)
+  const mpMode = reglagesMoteur.marketplace
   const autoMp =
     mpMode === 'toujours' ? true : mpMode === 'jamais' ? false : String(form.get('autoMp') ?? '') === '1'
 
@@ -114,12 +116,25 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    // Détourage BiRefNet (le produit n'est jamais réinventé : seul l'alpha change).
+    // Détourage BiRefNet (le produit n'est jamais réinventé : seul l'alpha change) —
+    // SAUF, quand le moteur est en POSE-FUSION, pour un PNG DÉJÀ détouré (vraie
+    // transparence) : son alpha d'origine est la référence de la méthode validée
+    // le 17/07 (pré-vol du 20/07 : re-détourer un rendu fournisseur rend ses
+    // piliers blancs OPAQUES → résidus collés ; l'alpha d'origine les garde en
+    // fantômes que la brique pose nettoie au seuil). Les moteurs restés en
+    // méthode « simple » gardent leur détourage BiRefNet HISTORIQUE, à l'identique.
     const buf = Buffer.from(await file.arrayBuffer())
-    const det = await detourProduct(buf)
-    if (!det.ok) {
-      errors.push({ name: file.name, error: det.reason ?? 'échec du détourage' })
-      continue
+    let productPng: Buffer
+    if (reglagesMoteur.integrationMethod === 'pose-fusion' && (await hasRealTransparency(buf))) {
+      // Alpha d'origine conservé tel quel ; normalisé en PNG (l'entrée peut être un WebP).
+      productPng = await sharp(buf).png().toBuffer()
+    } else {
+      const det = await detourProduct(buf)
+      if (!det.ok) {
+        errors.push({ name: file.name, error: det.reason ?? 'échec du détourage' })
+        continue
+      }
+      productPng = det.png
     }
 
     const safe = path
@@ -129,7 +144,7 @@ export async function POST(req: NextRequest) {
       .replace(/\s+/g, '-')
       .slice(0, 60)
     const pngPath = path.join(outDir, `${i}-${safe || 'produit'}.png`)
-    fs.writeFileSync(pngPath, det.png)
+    fs.writeFileSync(pngPath, productPng)
 
     items.push({
       size: { w, h },

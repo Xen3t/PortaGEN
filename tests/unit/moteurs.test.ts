@@ -146,7 +146,9 @@ describe('réglages moteur — invariance des défauts', () => {
       corridor: 'auto', // widestActiveSize (decor)
       corridorWidthCm: 400,
       masking: 'off', // rendu brut (décision 11/07/2026)
-      integrationMethod: 'simple', // décision 11/07/2026
+      integrationMethod: 'simple', // décision 11/07/2026 — pose-fusion en option (17/07/2026)
+      poseDebordPct: 2, // débord piliers validé par Mathias le 17/07/2026
+      poseSeuilAlpha: 200, // nettoyage des pixels fantômes (méthode 1 validée)
       shadows: 'auto',
       marketplace: 'choix', // case au lancement + bouton 1:1 (décision 13/07/2026)
       livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
@@ -188,6 +190,20 @@ describe('sanitizeMoteurReglages', () => {
     ).toEqual({ masking: 'pixel-lock', cannyPlacement: 'off' })
     expect(sanitizeMoteurReglages(null)).toEqual({})
     expect(sanitizeMoteurReglages('texte')).toEqual({})
+  })
+
+  it('accepte la méthode « pose-fusion » et ses réglages (chantier 17/07/2026)', () => {
+    expect(sanitizeMoteurReglages({ integrationMethod: 'pose-fusion' })).toEqual({
+      integrationMethod: 'pose-fusion',
+    })
+    // Le débord garde sa décimale (3,5 % mesuré → 2 % retenu) ; hors bornes = ignoré.
+    expect(sanitizeMoteurReglages({ poseDebordPct: 3.5 })).toEqual({ poseDebordPct: 3.5 })
+    expect(sanitizeMoteurReglages({ poseDebordPct: 2.04 })).toEqual({ poseDebordPct: 2 })
+    expect(sanitizeMoteurReglages({ poseDebordPct: -1 })).toEqual({})
+    expect(sanitizeMoteurReglages({ poseDebordPct: 11 })).toEqual({})
+    expect(sanitizeMoteurReglages({ poseSeuilAlpha: 200 })).toEqual({ poseSeuilAlpha: 200 })
+    expect(sanitizeMoteurReglages({ poseSeuilAlpha: 0 })).toEqual({})
+    expect(sanitizeMoteurReglages({ poseSeuilAlpha: 256 })).toEqual({})
   })
 
   it('borne et arrondit les champs numériques', () => {

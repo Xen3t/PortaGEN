@@ -404,11 +404,20 @@ export const PROMPT_FILES: Record<string, string> = {
   'piliers-murets': 'Prompt Piliers et Murets.txt',
   integration: 'Prompt Integration.txt',
   'integration-simple': 'Prompt Integration Simple.txt',
+  // Chantier pose + fusion (17/07/2026) : prompt JANUS générique dérivé du prompt
+  // labo validé (« Prompt Pose Fusion.txt », conservé verbatim comme référence) —
+  // coloris injecté via {COLORIS}, formulations neutres ajouré/sommet.
+  'pose-fusion': 'Prompt Pose Fusion JANUS.txt',
   'decor-tags': 'Prompt Decor Tags.txt',
   'decor-correctif': 'Prompt Decor Correctif.txt',
   'portillon-piliers-murets': 'Prompt Piliers et Murets Portillon.txt',
   'portillon-integration': 'Prompt Integration Portillon.txt',
   'portillon-integration-simple': 'Prompt Integration Simple Portillon.txt',
+  // Migration pose + fusion des moteurs (20/07/2026) : prompts ADAPTÉS par produit
+  // (vantail unique piéton / lame d'un seul tenant derrière le pilier droit —
+  // jamais de simple copie, règle « moteur = contenu adapté »).
+  'portillon-pose-fusion': 'Prompt Pose Fusion Portillon.txt',
+  'coulissant-pose-fusion': 'Prompt Pose Fusion Coulissant.txt',
   'marketplace-extension': 'Prompt Marketplace Extension.txt',
   'portillon-marketplace-extension': 'Prompt Marketplace Extension Portillon.txt',
   'coulissant-piliers-murets': 'Prompt Piliers et Murets Coulissant.txt',

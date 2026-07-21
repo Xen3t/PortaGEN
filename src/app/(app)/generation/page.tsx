@@ -71,6 +71,12 @@ function sansEssaisLab(js: Job[]): Job[] {
   return js.filter((j) => j.payload?.lab !== true)
 }
 
+/** Job porteur de la MES Site finale : intégration classique ou « pose-fusion »
+ *  (chantier 17/07/2026 — un seul job décor+aplats+produit posé → un appel Nano). */
+function isMesJob(j: Job): boolean {
+  return j.type === 'integration' || j.type === 'pose-fusion'
+}
+
 /**
  * Vocabulaire par moteur (règle « moteur = contenu adapté ») : libellés d'écran
  * et LETTRE de la nomenclature produit — 300B140 battant, 300C140 coulissant,
@@ -369,6 +375,13 @@ export default function GenerationPage() {
     }
   }, [])
 
+  // Décor présélectionné par l'URL (« Utiliser ce décor » de la Bibliothèque /
+  // du studio, rebranché 20/07/2026) : /generation?decor=<id>.
+  useEffect(() => {
+    const d = Number(new URLSearchParams(window.location.search).get('decor'))
+    if (Number.isInteger(d) && d > 0) setDecorId(d)
+  }, [])
+
   useEffect(() => {
     fetch('/api/decors')
       .then((r) => r.json())
@@ -386,11 +399,11 @@ export default function GenerationPage() {
   // « Fini » = toutes les MES SITE sont sorties. Les jobs Marketplace / retouches
   // (MP automatique…) continuent en arrière-plan : l'écran résultat les suit.
   const finished = (js: Job[]): boolean => {
-    const gen = js.filter((j) => j.type === 'pillars' || j.type === 'integration')
+    const gen = js.filter((j) => j.type === 'pillars' || isMesJob(j))
     if (gen.length === 0) return false
     if (gen.some((j) => j.status === 'queued' || j.status === 'running')) return false
     const donePillars = gen.filter((j) => j.type === 'pillars' && j.status === 'done').length
-    const integ = gen.filter((j) => j.type === 'integration').length
+    const integ = gen.filter((j) => isMesJob(j)).length
     return integ >= donePillars
   }
   useEffect(() => {
@@ -605,7 +618,7 @@ export default function GenerationPage() {
     const items: { p: string; name: string; folder: 'WEB' | 'MP' }[] = []
     if (kind !== 'mp') {
       jobs
-        .filter((j) => j.type === 'integration')
+        .filter(isMesJob)
         .forEach((root) => {
           const d = displayedJob(root)
           if (d.status === 'done' && d.result?.deliveryPath) {
@@ -1131,7 +1144,7 @@ export default function GenerationPage() {
           {/* ---- traitement ---- */}
           {stage === 'proc' &&
             (() => {
-              const doneN = jobs.filter((j) => j.type === 'integration' && j.status === 'done').length
+              const doneN = jobs.filter((j) => isMesJob(j) && j.status === 'done').length
               const failN = jobs.filter((j) => j.status === 'error').length
               const total = expected || images.length || 1
               return (
@@ -1158,7 +1171,7 @@ export default function GenerationPage() {
           {/* ---- résultat ---- */}
           {stage === 'result' &&
             (() => {
-              const integ = jobs.filter((j) => j.type === 'integration')
+              const integ = jobs.filter(isMesJob)
               const doneSites = integ.filter((j) => j.status === 'done' && j.result?.deliveryPath)
               const mkt = jobs.filter((j) => j.type === 'marketplace')
               const failed = jobs.filter((j) => j.status === 'error')

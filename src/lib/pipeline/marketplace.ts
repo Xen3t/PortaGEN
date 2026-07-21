@@ -4,6 +4,7 @@ import sharp from 'sharp'
 import { getJob, updateJob } from '@/lib/db'
 import { getActivePrompt } from '@/lib/db/prompts'
 import { generateImage } from '@/lib/genai/client'
+import { marquerImageIa } from '@/lib/images/marquage'
 import { config } from '@/lib/config'
 import { moteurPromptName, type MoteurKey } from '@/lib/moteurs'
 
@@ -153,6 +154,8 @@ async function finish(
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const deliveryAbs = path.join(dir, `livraison-2000x2000-${stamp}.jpg`)
   fs.writeFileSync(deliveryAbs, delivery)
+  // Le réencodage sharp repart de zéro côté métadonnées → on re-marque le livrable.
+  await marquerImageIa(deliveryAbs)
   const deliveryPath = path.relative(config.rootDir, deliveryAbs)
   if (jobId) {
     updateJob(jobId, {

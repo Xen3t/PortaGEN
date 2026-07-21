@@ -54,7 +54,7 @@ function initOnce(): void {
 }
 
 export function enqueueNewJob(
-  type: 'decor' | 'decor-fix' | 'pillars' | 'integration' | 'marketplace' | 'mes-fix',
+  type: 'decor' | 'decor-fix' | 'pillars' | 'integration' | 'pose-fusion' | 'marketplace' | 'mes-fix',
   payload: unknown,
   batchId?: string,
   createdBy?: string
@@ -131,6 +131,50 @@ function schedule(): void {
   }
 }
 
+/**
+ * Déclinaison Marketplace AUTOMATIQUE (option cochée au lancement) : mêmes champs
+ * que /api/generation/mp, sans attendre la review de la MES Site. Partagée entre
+ * l'Intégration et la pose-fusion — les deux posent deliveryPath + zoneFrac.
+ */
+function maybeEnqueueAutoMp(
+  id: number,
+  payload: {
+    autoMp?: boolean
+    size?: { w?: number }
+    coloris?: string
+    moteur?: string
+  }
+): void {
+  const done = getJob(id)
+  if (done?.status !== 'done' || payload.autoMp !== true || !done.result) return
+  try {
+    const result = JSON.parse(done.result) as {
+      deliveryPath?: string
+      zoneFrac?: { x: number; y: number; w: number; h: number }
+    }
+    if (result.deliveryPath) {
+      enqueueNewJob(
+        'marketplace',
+        {
+          sourcePath: path.resolve(config.rootDir, result.deliveryPath),
+          slug: `gen-mp-${payload.size?.w ?? ''}`,
+          gateFrac: result.zoneFrac,
+          sizeW: payload.size?.w,
+          size: payload.size,
+          coloris: payload.coloris,
+          format: '2000x2000',
+          rootJobId: id,
+          moteur: payload.moteur,
+        },
+        done.batch_id ?? undefined,
+        done.created_by ?? undefined
+      )
+    }
+  } catch {
+    // résultat illisible : pas de MP automatique, la MES Site reste valable
+  }
+}
+
 async function processJob(id: number): Promise<void> {
   const job = getJob(id)
   if (!job || (job.status !== 'queued' && job.status !== 'running')) return
@@ -180,37 +224,14 @@ async function processJob(id: number): Promise<void> {
     } else if (job.type === 'integration') {
       const { runIntegrationStep } = await import('@/lib/pipeline/integration')
       await runIntegrationStep({ ...payload, jobId: id })
-      // Déclinaison Marketplace AUTOMATIQUE (option cochée au lancement) : mêmes
-      // champs que /api/generation/mp, sans attendre la review de la MES Site.
-      const done = getJob(id)
-      if (done?.status === 'done' && payload.autoMp === true && done.result) {
-        try {
-          const result = JSON.parse(done.result) as {
-            deliveryPath?: string
-            zoneFrac?: { x: number; y: number; w: number; h: number }
-          }
-          if (result.deliveryPath) {
-            enqueueNewJob(
-              'marketplace',
-              {
-                sourcePath: path.resolve(config.rootDir, result.deliveryPath),
-                slug: `gen-mp-${payload.size?.w ?? ''}`,
-                gateFrac: result.zoneFrac,
-                sizeW: payload.size?.w,
-                size: payload.size,
-                coloris: payload.coloris,
-                format: '2000x2000',
-                rootJobId: id,
-                moteur: payload.moteur,
-              },
-              done.batch_id ?? undefined,
-              done.created_by ?? undefined
-            )
-          }
-        } catch {
-          // résultat illisible : pas de MP automatique, la MES Site reste valable
-        }
-      }
+      maybeEnqueueAutoMp(id, payload)
+    } else if (job.type === 'pose-fusion') {
+      // Chantier pose + fusion (17/07/2026) : un seul job décor+aplats+produit posé
+      // → un appel Nano — remplace le chaînage pillars → integration quand le
+      // réglage moteur le demande (aiguillage dans launchGammeJobs).
+      const { runPoseFusionStep } = await import('@/lib/pipeline/poseFusion')
+      await runPoseFusionStep({ ...payload, jobId: id })
+      maybeEnqueueAutoMp(id, payload)
     } else if (job.type === 'marketplace') {
       const { runMarketplaceStep } = await import('@/lib/pipeline/marketplace')
       await runMarketplaceStep({ ...payload, jobId: id })

@@ -47,6 +47,28 @@ const fail = (reason: string): DetourageResult => ({
   reason,
 })
 
+/**
+ * Le visuel a-t-il déjà une VRAIE transparence (déjà détouré) ? Même critère que
+ * prepareProduct : un pixel d'alpha < 250 quelque part. Un PNG fournisseur déjà
+ * détouré ne repasse JAMAIS par BiRefNet (« le produit n'est jamais réinventé ») :
+ * re-détourer un rendu à piliers blancs les rendrait opaques — c'est l'alpha
+ * d'origine, nettoyé au seuil par la brique pose, qui est la référence validée
+ * (méthode 1 du 17/07/2026).
+ */
+export async function hasRealTransparency(input: Buffer | string): Promise<boolean> {
+  const meta = await sharp(input).metadata()
+  if (!meta.hasAlpha) return false
+  const { data, info } = await sharp(input)
+    .ensureAlpha()
+    .resize({ width: 256, withoutEnlargement: true })
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+  for (let i = 3; i < data.length; i += info.channels) {
+    if (data[i] < 250) return true
+  }
+  return false
+}
+
 export async function detourProduct(input: Buffer | string): Promise<DetourageResult> {
   if (!fs.existsSync(MODEL_PATH)) {
     return fail('moteur de détourage indisponible (modèle BiRefNet manquant)')

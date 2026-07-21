@@ -83,6 +83,33 @@ describe('générations locales d’une page produit (bloc 3.1)', () => {
     expect(listProductGenerations(5, db)).toEqual([])
   })
 
+  it('un job « pose-fusion » (17/07/2026) vaut MES finale : stage integration + livraison', () => {
+    const db = getDb(':memory:')
+    const jid = createJob(
+      'pose-fusion',
+      { catalogProductId: 5, coloris: 'GRIS', size: { w: 300, h: 120 }, format: '2000x1330' },
+      db,
+      'b1',
+      'u'
+    )
+    updateJob(jid, { status: 'running' }, db)
+    expect(listProductGenerations(5, db)[0]).toMatchObject({
+      stage: 'integration',
+      status: 'running',
+      deliveryPath: null,
+    })
+    updateJob(
+      jid,
+      { status: 'done', result: JSON.stringify({ deliveryPath: 'data/artifacts/pf/livraison.jpg' }) },
+      db
+    )
+    expect(listProductGenerations(5, db)[0]).toMatchObject({
+      stage: 'integration',
+      status: 'done',
+      deliveryPath: 'data/artifacts/pf/livraison.jpg',
+    })
+  })
+
   it('une relance (id plus grand) écrase l’état précédent de la case', () => {
     const db = getDb(':memory:')
     const iid = integration(db, 5, 'GRIS', 300, 120, '2000x1330')
