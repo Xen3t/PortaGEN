@@ -17,7 +17,9 @@ import type { ImageSize } from '@/lib/genai/client'
  * génération validée (traçabilité) — l'archivage est alors la seule issue.
  */
 
-export const DECOR_TYPES = ['battant', 'coulissant', 'portillon'] as const
+// « coulissant-xl » (22/07/2026) : décor à l'échelle XL (caméra reculée), réservé
+// aux coulissants 450-600 — jamais proposé aux tailles standards, et inversement.
+export const DECOR_TYPES = ['battant', 'coulissant', 'portillon', 'coulissant-xl'] as const
 export const DECOR_ANGLES = ['face', 'angle'] as const
 export const DECOR_STATUSES = ['a_valider', 'actif', 'archive'] as const
 

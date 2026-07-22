@@ -5,11 +5,11 @@ import { useRouter } from 'next/navigation'
 import DecorStudio from '@/components/DecorStudio'
 
 /**
- * « Décors » (ex-Bibliothèque, renommée le 13/07/2026 — demande Mathias) :
- * recherche, filtres, statuts, favoris et génération de nouveaux décors.
- * Les onglets Moodboards et Produits ont été supprimés (ils ne servaient à
- * rien) ; la page est désormais dans la nav principale, après Catalogue.
- * L'adresse reste /bibliotheque car des liens internes pointent dessus.
+ * « MES Décors » (ex-Bibliothèque, renommée le 13/07/2026 puis harmonisée le
+ * 22/07/2026 — demandes Mathias) : recherche, filtres, statuts, favoris et
+ * génération de nouveaux décors. Les onglets Moodboards et Produits ont été
+ * supprimés (ils ne servaient à rien). Adresse /decors depuis le 22/07/2026 ;
+ * /bibliotheque redirige ici (next.config.ts) pour les anciens liens.
  */
 
 interface Decor {
@@ -18,7 +18,7 @@ interface Decor {
   name: string
   slug: string
   gamme: string | null
-  type: 'battant' | 'coulissant' | 'portillon'
+  type: 'battant' | 'coulissant' | 'portillon' | 'coulissant-xl'
   angle: 'face' | 'angle'
   status: 'a_valider' | 'actif' | 'archive'
   image_size: string | null
@@ -39,9 +39,12 @@ interface MoodboardEntry {
   name: string
 }
 
+// « Coulissant XL » (22/07/2026) : décor à l'échelle XL (caméra reculée), réservé
+// aux coulissants 450-600 — typologie À PART, jamais mélangée au coulissant standard.
 const TYPE_LABELS: Record<Decor['type'], string> = {
   battant: 'Battant',
   coulissant: 'Coulissant',
+  'coulissant-xl': 'Coulissant XL',
   portillon: 'Portillon',
 }
 const ANGLE_LABELS: Record<Decor['angle'], string> = { face: 'Face', angle: 'Angle' }
@@ -82,7 +85,7 @@ function Star({ on, onClick }: { on: boolean; onClick: (e: React.MouseEvent) => 
   )
 }
 
-export default function BibliothequePage() {
+export default function DecorsPage() {
   const router = useRouter()
   const [decors, setDecors] = useState<Decor[]>([])
   const [moodboards, setMoodboards] = useState<MoodboardEntry[]>([])
@@ -108,7 +111,9 @@ export default function BibliothequePage() {
   const [moodboard, setMoodboard] = useState('')
   const [newGamme, setNewGamme] = useState('')
   const [newName, setNewName] = useState('')
-  const [decorSize, setDecorSize] = useState<'2K' | '4K'>('2K')
+  // Typologie du décor (maquette decors-xl-bibliotheque-v2 validée le 22/07/2026) —
+  // avant, tout partait en Battant sans le dire. Plus de choix de qualité : 4K.
+  const [genType, setGenType] = useState<Decor['type']>('battant')
   const [tirages, setTirages] = useState(1)
   const [busy, setBusy] = useState(false)
   const [mbZoom, setMbZoom] = useState<string | null>(null)
@@ -280,10 +285,12 @@ export default function BibliothequePage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         moodboardPath: moodboard,
-        imageSize: decorSize,
         gamme: newGamme || null,
         name: newName || null,
         count: tirages,
+        // Le serveur force le 4K (décision 22/07/2026) ; la typologie choisit le
+        // jeu (corridor, CANNY, type du décor) — battant = comportement historique.
+        moteur: genType !== 'battant' ? genType : undefined,
       }),
     })
     setBusy(false)
@@ -305,7 +312,7 @@ export default function BibliothequePage() {
     <div className="space-y-5">
       {/* En-tête */}
       <div>
-        <h1 className="text-[34px] leading-tight font-bold tracking-tight">Décors</h1>
+        <h1 className="text-[34px] leading-tight font-bold tracking-tight">MES Décors</h1>
         <p className="text-sm text-text-secondary mt-1">
           Recherchez, triez et générez les décors utilisés pour les mises en situation.
         </p>
@@ -346,6 +353,30 @@ export default function BibliothequePage() {
             </button>
             {genOpen && (
               <div className="mt-4 flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Typologie</label>
+                  <span className="inline-flex border border-border rounded-[8px] overflow-hidden bg-white">
+                    {(Object.keys(TYPE_LABELS) as Decor['type'][]).map((t, i) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setGenType(t)}
+                        className={`px-3.5 py-2 text-sm transition-colors ${i > 0 ? 'border-l border-border' : ''} ${
+                          genType === t
+                            ? 'bg-brand-green text-white font-bold'
+                            : 'text-text-secondary hover:bg-surface'
+                        }`}
+                      >
+                        {TYPE_LABELS[t]}
+                      </button>
+                    ))}
+                  </span>
+                  {genType === 'coulissant-xl' && (
+                    <p className="mt-2 inline-block bg-brand-teal-light text-brand-teal text-xs rounded-[8px] px-2.5 py-1.5">
+                      Caméra reculée — réservé aux coulissants 450 à 600 cm.
+                    </p>
+                  )}
+                </div>
                 <div className="grow min-w-56">
                   <label className="block text-xs font-medium text-text-secondary mb-1">Moodboard</label>
                   <select title="Moodboard" value={moodboard} onChange={(e) => setMoodboard(e.target.value)} className="w-full border border-border bg-surface rounded-[8px] px-2 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors">
@@ -365,13 +396,6 @@ export default function BibliothequePage() {
                 <div className="min-w-44">
                   <label className="block text-xs font-medium text-text-secondary mb-1">Nom (facultatif)</label>
                   <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="auto si vide" className="w-full border border-border bg-surface rounded-[8px] px-2 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-text-secondary mb-1">Qualité</label>
-                  <select title="Qualité" value={decorSize} onChange={(e) => setDecorSize(e.target.value as '2K' | '4K')} className="border border-border bg-surface rounded-[8px] px-2 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors">
-                    <option value="2K">2K (standard)</option>
-                    <option value="4K">4K (maximum)</option>
-                  </select>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-text-secondary mb-1" title="Plusieurs propositions du même moodboard, à trier ensuite">Propositions</label>
@@ -510,6 +534,16 @@ export default function BibliothequePage() {
                         {d.image_size && (
                           <span className="absolute top-2 right-2 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded">{d.image_size}</span>
                         )}
+                        {/* Badge de typologie (maquette decors-xl-bibliotheque-v2) — XL en sarcelle. */}
+                        <span
+                          className={`absolute bottom-2 left-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm ${
+                            d.type === 'coulissant-xl'
+                              ? 'bg-brand-teal text-white'
+                              : 'bg-white/95 text-text-secondary'
+                          }`}
+                        >
+                          {TYPE_LABELS[d.type]}
+                        </span>
                       </div>
                       <div className="px-3 py-2 flex items-center justify-between gap-2">
                         <div className="min-w-0">

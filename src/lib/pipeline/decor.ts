@@ -11,8 +11,9 @@ import {
   bandPatternShift,
   corridorVegetationFraction,
 } from '@/lib/images/analyze'
+import { GABARIT_SET_DEFAULTS, type GabaritSetKey } from '@/lib/gabaritSets'
 import { buildCanny, type CorridorInfo } from '@/lib/images/canny'
-import { getMoteurReglages, type MoteurKey } from '@/lib/moteurs'
+import { getMoteurReglages } from '@/lib/moteurs'
 import { NATIVE_DIMS } from '@/lib/pipeline/nativeFormats'
 import { cannyRefPath } from '@/lib/server/cannyRef'
 import { registerDecor } from '@/lib/db/decors'
@@ -93,8 +94,11 @@ export interface DecorStepOptions {
    * Moteur produit (13/07/2026) : ses réglages de corridor et SON référentiel de
    * tailles (un portillon appelle une allée piétonne de 100 cm, pas une allée de
    * voiture de 400 cm). Absent = battant. Le décor généré porte le type du moteur.
+   * Depuis le 22/07/2026, accepte aussi le JEU « coulissant-xl » : décor à
+   * l'échelle XL (corridor 600 cm calculé dans la scène élargie, CANNY XL
+   * « caméra reculée ») — réglages et prompts restent ceux du coulissant.
    */
-  moteur?: MoteurKey
+  moteur?: GabaritSetKey
 }
 
 export interface DecorStepResult {
@@ -112,11 +116,11 @@ export interface DecorStepResult {
   nativeSizeRespected: boolean
 }
 
-/** Plus grande taille active DU MOTEUR (cm) — pilote la largeur du corridor. */
-function widestActiveSize(db: ReturnType<typeof getDb>, moteur: MoteurKey): number {
+/** Plus grande taille active DU JEU (cm) — pilote la largeur du corridor. */
+function widestActiveSize(db: ReturnType<typeof getDb>, jeu: GabaritSetKey): number {
   const row = db
     .prepare('SELECT MAX(width_cm) AS w FROM sizes WHERE active = 1 AND moteur = ?')
-    .get(moteur) as { w: number | null }
+    .get(jeu) as { w: number | null }
   return row.w ?? 400
 }
 
@@ -128,9 +132,11 @@ function widestActiveSize(db: ReturnType<typeof getDb>, moteur: MoteurKey): numb
 export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepResult> {
   const imageSize = opts.imageSize ?? '4K' // 4K par défaut (décision Mathias 13/07/2026)
   const native = NATIVE_DIMS[imageSize]
-  const moteurKey: MoteurKey = opts.moteur ?? 'battant'
-  // CANNY du MOTEUR : image personnalisée déposée dans l'admin, sinon trottoir d'origine.
-  const cannyPath = opts.cannyPath ?? cannyRefPath(moteurKey)
+  // Jeu de gabarits du décor (22/07/2026) : « coulissant-xl » a ses propres
+  // réglages Canny (section « Canny XL »), corridor, image Canny et scène.
+  const jeu: GabaritSetKey = opts.moteur ?? 'battant'
+  // Canny du JEU : image personnalisée déposée dans l'admin, sinon celle d'origine.
+  const cannyPath = opts.cannyPath ?? cannyRefPath(jeu)
   const slug = opts.slug ?? 'decor'
 
   const db = getDb()
@@ -148,7 +154,12 @@ export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepRes
     //    caméra et la clause d'ouverture portent la géométrie et l'ouverture de la
     //    scène — s'ils manquent, un retry, puis erreur explicite du job. Les marqueurs
     //    choisis existent dans les prompts v3 ET v4 (retour arrière sans casse).
-    const promptRow = getActivePrompt('moodboard-llm')
+    // Prompt du JEU (22/07/2026) : le Canny XL seul ne suffit pas — Nano suit le
+    // TEXTE pour le cadrage. Le jeu XL a donc son analyse moodboard adaptée
+    // (caméra reculée, allée 6 m, trottoir remonté), éditable dans l'Admin.
+    const promptRow = getActivePrompt(
+      jeu === 'coulissant-xl' ? 'coulissant-xl-moodboard-llm' : 'moodboard-llm'
+    )
     const systemPrompt = promptRow.content
     const REQUIRED_VERBATIM = ['Output format:', 'rontal symmetrical view', 'no pillars', 'no gate']
     let analysisText = ''
@@ -184,17 +195,23 @@ export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepRes
     //    automatiquement la plus grande ouverture du référentiel des tailles actives.
     //    Largeur : appel explicite > réglage moteur (Admin → Réglages par moteur :
     //    'manuel' = largeur imposée en cm, 'auto' = plus grande taille active).
-    const moteur = getMoteurReglages(moteurKey)
+    // Réglages Canny DU JEU (22/07/2026) : le jeu XL a son propre corridor
+    // (section « Canny XL » de la fiche TERMINUS) — auto = plus grande taille
+    // active du jeu (600 en XL), manuel = largeur imposée dans l'admin.
+    const moteur = getMoteurReglages(jeu)
     const corridorWidthCm =
       opts.corridorWidthCm === null
         ? null
         : (opts.corridorWidthCm ??
-          (moteur.corridor === 'manuel' ? moteur.corridorWidthCm : widestActiveSize(db, moteurKey)))
+          (moteur.corridor === 'manuel' ? moteur.corridorWidthCm : widestActiveSize(db, jeu)))
     const { image: cannyNative, corridor } = await buildCanny({
       width: native.width,
       height: native.height,
       basePath: cannyPath,
       corridorWidthCm,
+      // Géométrie du corridor calculée dans la scène DU JEU : la scène élargie
+      // XL (~722 cm) contient une allée de 6 m, la scène standard non.
+      params: GABARIT_SET_DEFAULTS[jeu],
     })
 
     // 3. Assemblage final : addendum couloir (prompt versionné « decor-couloir ») +
@@ -287,7 +304,9 @@ export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepRes
           name: (opts.name?.trim() || `${mbName} · ${stamp}`) + (opts.nameSuffix ?? ''),
           slug,
           gamme: opts.gamme ?? null,
-          type: moteurKey,
+          // Le décor porte le TYPE DU JEU : un décor XL n'est jamais proposé aux
+          // tailles standards, et inversement (décision Mathias 22/07/2026).
+          type: jeu,
           status: 'a_valider',
           imageSize,
           width: img.width,

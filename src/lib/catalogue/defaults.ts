@@ -15,6 +15,11 @@ import { getDb } from '@/lib/db'
 
 export interface ColorisSettings {
   decorId: number | null
+  /**
+   * Décor par défaut des tailles XL (coulissants ≥ 450 cm, 22/07/2026) — décor
+   * de type « coulissant-xl » uniquement. Les gammes sans largeur XL l'ignorent.
+   */
+  decorXlId: number | null
   align: 'moteur' | 'off' | 'manual'
   alignPx: number
   formats: { site: boolean; marketplace: boolean }
@@ -22,6 +27,7 @@ export interface ColorisSettings {
 
 export const DEFAULT_COLORIS_SETTINGS: ColorisSettings = {
   decorId: null,
+  decorXlId: null,
   align: 'moteur',
   alignPx: 0,
   formats: { site: true, marketplace: true },
@@ -36,6 +42,10 @@ export function sanitizeColorisSettings(input: unknown): ColorisSettings {
     typeof raw.decorId === 'number' && Number.isInteger(raw.decorId) && raw.decorId > 0
       ? raw.decorId
       : null
+  const decorXlId =
+    typeof raw.decorXlId === 'number' && Number.isInteger(raw.decorXlId) && raw.decorXlId > 0
+      ? raw.decorXlId
+      : null
   // Tout sauf 'off'/'manual' (dont l'ancien 'auto') → 'moteur' : le moteur décide.
   const align = raw.align === 'off' || raw.align === 'manual' ? raw.align : 'moteur'
   const alignPxRaw = Number(raw.alignPx)
@@ -46,6 +56,7 @@ export function sanitizeColorisSettings(input: unknown): ColorisSettings {
   const formats = (raw.formats ?? {}) as Record<string, unknown>
   return {
     decorId,
+    decorXlId,
     align,
     alignPx,
     formats: { site: formats.site !== false, marketplace: formats.marketplace !== false },

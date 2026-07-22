@@ -118,7 +118,7 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
       name TEXT NOT NULL,
       slug TEXT NOT NULL,
       gamme TEXT,
-      type TEXT NOT NULL DEFAULT 'battant' CHECK (type IN ('battant', 'coulissant', 'portillon')),
+      type TEXT NOT NULL DEFAULT 'battant' CHECK (type IN ('battant', 'coulissant', 'portillon', 'coulissant-xl')),
       angle TEXT NOT NULL DEFAULT 'face' CHECK (angle IN ('face', 'angle')),
       status TEXT NOT NULL DEFAULT 'a_valider' CHECK (status IN ('a_valider', 'actif', 'archive')),
       image_size TEXT,
@@ -275,6 +275,11 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
   if (!jobCols.includes('created_by')) {
     db.exec(`ALTER TABLE jobs ADD COLUMN created_by TEXT`)
   }
+  // LAB (refonte lab-v1, 22/07/2026) : essai archivé = masqué de la liste des
+  // essais du LAB, images et mesures conservées (consultable via « Archives »).
+  if (!jobCols.includes('lab_archived_at')) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN lab_archived_at TEXT`)
+  }
 
   // Marque active PAR UTILISATEUR (navigation v2, 12/07/2026) : migration douce.
   const userCols = (db.prepare(`PRAGMA table_info(users)`).all() as { name: string }[]).map(
@@ -327,6 +332,56 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
     `)
   }
 
+  // Décors XL (22/07/2026) : le type de décor « coulissant-xl » entre dans la
+  // contrainte CHECK. Reconstruction douce des bases existantes, ATOMIQUE
+  // (transaction : tout ou rien) et REPRENABLE — le premier essai du 22/07 a
+  // planté au DROP (better-sqlite3 active les clés étrangères PAR DÉFAUT, et
+  // decor_tags/favorites/versions pointent sur decors), laissant une decors_new
+  // orpheline qui faisait replanter tous les démarrages suivants. D'où :
+  // foreign_keys OFF le temps de la reconstruction (réglé HORS transaction,
+  // sinon c'est un no-op), et renommage en mode legacy_alter_table pour que les
+  // tables filles, qui référencent « decors » par NOM, ne soient pas réécrites.
+  const decorsSchema = (
+    db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'decors'`).get() as
+      | { sql: string }
+      | undefined
+  )?.sql
+  if (decorsSchema && !decorsSchema.includes('coulissant-xl')) {
+    db.pragma('foreign_keys = OFF')
+    db.exec('DROP TABLE IF EXISTS decors_new')
+    db.pragma('legacy_alter_table = ON')
+    const rebuildDecors = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE decors_new (
+          id INTEGER PRIMARY KEY,
+          file_path TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          gamme TEXT,
+          type TEXT NOT NULL DEFAULT 'battant' CHECK (type IN ('battant', 'coulissant', 'portillon', 'coulissant-xl')),
+          angle TEXT NOT NULL DEFAULT 'face' CHECK (angle IN ('face', 'angle')),
+          status TEXT NOT NULL DEFAULT 'a_valider' CHECK (status IN ('a_valider', 'actif', 'archive')),
+          image_size TEXT,
+          width INTEGER,
+          height INTEGER,
+          moodboard_path TEXT,
+          job_id INTEGER,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO decors_new SELECT id, file_path, name, slug, gamme, type, angle, status,
+          image_size, width, height, moodboard_path, job_id, created_at FROM decors;
+        DROP TABLE decors;
+        ALTER TABLE decors_new RENAME TO decors;
+      `)
+    })
+    try {
+      rebuildDecors()
+    } finally {
+      db.pragma('legacy_alter_table = OFF')
+      db.pragma('foreign_keys = ON')
+    }
+  }
+
   seedSizes(db)
   seedPrompts(db)
   seedAdmin(db, opts.ephemeral)
@@ -354,14 +409,23 @@ export const PORTILLON_SIZES: ReadonlyArray<{ w: number; h: number }> = [
 /**
  * Référentiel des tailles coulissants : 3 largeurs × 3 hauteurs — relevé sur les
  * 22 gammes du serveur le 13/07/2026 (300/350/400 présentes sur 12-18 gammes,
- * hauteurs 140/160/180 uniquement, jamais de 100/120/200). Les largeurs 500/600
- * (10 et 7 gammes) et les atypiques 370/450 sont EXCLUES pour l'instant : la
- * scène du gabarit (~480 cm de large) ne les contient pas — à traiter dans un
- * lot dédié (scène élargie par moteur). Le catalogue, qui ne consulte pas ce
- * référentiel, les affichera mais leur génération sortira clampée.
+ * hauteurs 140/160/180 uniquement, jamais de 100/120/200). Les largeurs ≥ 450
+ * vivent dans le jeu « Gabarits XL » ci-dessous (chantier 22/07/2026) — le 400
+ * RESTE ici (décision Mathias 22/07/2026 : rendus validés inchangés).
  */
 export const COULISSANT_SIZES: ReadonlyArray<{ w: number; h: number }> = [140, 160, 180]
   .flatMap((h) => [300, 350, 400].map((w) => ({ w, h })))
+  .sort((a, b) => a.w - b.w || a.h - b.h)
+
+/**
+ * Référentiel des coulissants XL (demande Mathias 22/07/2026) : largeurs
+ * 450/500/550/600, mêmes hauteurs 140/160/180 que le relevé serveur. Jeu de
+ * gabarits SÉPARÉ « coulissant-xl » (onglet « Gabarits XL » de la fiche
+ * TERMINUS) : sa scène élargie (src/lib/gabaritSets.ts) contient les grandes
+ * lames que la scène standard clampait. Même moteur TERMINUS pour tout le reste.
+ */
+export const COULISSANT_XL_SIZES: ReadonlyArray<{ w: number; h: number }> = [140, 160, 180]
+  .flatMap((h) => [450, 500, 550, 600].map((w) => ({ w, h })))
   .sort((a, b) => a.w - b.w || a.h - b.h)
 
 function seedSizes(db: Database.Database): void {
@@ -370,10 +434,13 @@ function seedSizes(db: Database.Database): void {
   )
   // Un référentiel PAR MOTEUR (jamais partagés) : chacun se seed indépendamment,
   // pour que les bases existantes (déjà seedées battant) reçoivent les portillons.
+  // « coulissant-xl » n'est pas un moteur mais un second JEU DE GABARITS du
+  // coulissant (22/07/2026) — même mécanique de stockage.
   const referentiels: ReadonlyArray<[string, ReadonlyArray<{ w: number; h: number }>]> = [
     ['battant', BATTANT_SIZES],
     ['portillon', PORTILLON_SIZES],
     ['coulissant', COULISSANT_SIZES],
+    ['coulissant-xl', COULISSANT_XL_SIZES],
   ]
   const insertAll = db.transaction(() => {
     for (const [moteur, sizes] of referentiels) {
@@ -399,6 +466,10 @@ function seedSizes(db: Database.Database): void {
  */
 export const PROMPT_FILES: Record<string, string> = {
   'moodboard-llm': 'Moodboard LLM.txt',
+  // Décors XL (22/07/2026) : le Canny seul ne suffit pas à imposer le cadrage —
+  // c'est le prompt qui le verrouille. Adaptation RÉELLE : caméra reculée de
+  // l'autre côté de la rue, allée de 6 m, trottoir remonté, rue en avant-plan.
+  'coulissant-xl-moodboard-llm': 'Moodboard LLM XL.txt',
   'decor-architecture': 'Prompt Decor Architecture.txt',
   'decor-couloir': 'Prompt Decor Couloir.txt',
   'piliers-murets': 'Prompt Piliers et Murets.txt',
@@ -440,6 +511,7 @@ const PROMPT_COPY_SOURCES: Record<string, { source: string; moteur: string }> = 
   'coulissant-integration': { source: 'integration', moteur: 'Coulissant « TERMINUS »' },
   'coulissant-integration-simple': { source: 'integration-simple', moteur: 'Coulissant « TERMINUS »' },
   'coulissant-marketplace-extension': { source: 'marketplace-extension', moteur: 'Coulissant « TERMINUS »' },
+  'coulissant-xl-moodboard-llm': { source: 'moodboard-llm', moteur: 'Jeu Coulissant XL' },
 }
 
 function seedPrompts(db: Database.Database): void {
@@ -522,6 +594,7 @@ export interface JobRow {
   reviewed_at: string | null
   batch_id: string | null
   created_by: string | null
+  lab_archived_at: string | null
   created_at: string
   updated_at: string | null
 }

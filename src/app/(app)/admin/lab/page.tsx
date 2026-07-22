@@ -31,7 +31,9 @@ export default function LabPage() {
   }, [])
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-[1500px] mx-auto">
+      {/* Refonte lab-v1 (22/07/2026) : panneau de lancement + liste des essais côte
+          à côte — le conteneur s'élargit en conséquence. */}
       <h1 className="text-xl font-semibold mb-1">LAB</h1>
       <p className="text-sm text-text-secondary mb-5">
         Choisissez le moteur à tester : chaque essai utilise ses tailles, ses gabarits, ses

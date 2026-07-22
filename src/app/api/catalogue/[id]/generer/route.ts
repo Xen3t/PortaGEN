@@ -13,6 +13,7 @@ import { enqueueNewJob } from '@/lib/server/runner'
 import { getJob } from '@/lib/db'
 import { config } from '@/lib/config'
 import { getMoteurReglages, moteurDef, moteurForFamily } from '@/lib/moteurs'
+import { COULISSANT_XL_MIN_W } from '@/lib/gabaritSets'
 
 /**
  * Lancement d'une génération DEPUIS la page produit (bloc 3.1, 12/07/2026).
@@ -161,18 +162,34 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   // d'ouvrir la fenêtre de réglages plutôt que de planter (demande Mathias).
   // Un décor d'appoint (Dupliquer) prime sur le décor par défaut pour ce seul lancement.
   const settings = getColorisSettings(productId, coloris)
-  const effectiveDecorId = overrideDecorId ?? settings.decorId
+  // Coulissants XL (22/07/2026) : les largeurs ≥ 450 partent sur le DÉCOR XL du
+  // coloris — décors incompatibles entre jeux (échelle différente), donc jamais
+  // de repli silencieux : sans décor XL actif, la case reste en attente. Un
+  // décor d'appoint du mauvais jeu est ignoré au profit du défaut du bon jeu.
+  const isXl = moteur.key === 'coulissant' && w >= COULISSANT_XL_MIN_W
+  const overrideDecor = overrideDecorId !== null ? getDecor(overrideDecorId) : null
+  const overrideOk = overrideDecor && (overrideDecor.type === 'coulissant-xl') === isXl
+  const effectiveDecorId =
+    (overrideOk ? overrideDecorId : null) ?? (isXl ? settings.decorXlId : settings.decorId)
   if (effectiveDecorId === null) {
     return NextResponse.json(
-      { error: 'Choisis un décor par défaut pour ce coloris.', code: 'reglages_manquants', coloris },
+      {
+        error: isXl
+          ? 'Choisis un décor XL par défaut pour ce coloris (tailles 450-600).'
+          : 'Choisis un décor par défaut pour ce coloris.',
+        code: 'reglages_manquants',
+        coloris,
+      },
       { status: 409 }
     )
   }
   const decor = getDecor(effectiveDecorId)
-  if (!decor || decor.status !== 'actif') {
+  if (!decor || decor.status !== 'actif' || (decor.type === 'coulissant-xl') !== isXl) {
     return NextResponse.json(
       {
-        error: 'Le décor par défaut de ce coloris n’est plus disponible — choisis-en un autre.',
+        error: isXl
+          ? 'Le décor XL de ce coloris n’est plus disponible — choisis-en un autre.'
+          : 'Le décor par défaut de ce coloris n’est plus disponible — choisis-en un autre.',
         code: 'reglages_manquants',
         coloris,
       },

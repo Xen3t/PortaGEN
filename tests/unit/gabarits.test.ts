@@ -102,6 +102,64 @@ describe('bandPatternShift', () => {
   })
 })
 
+describe('groundBandShift', () => {
+  // Profil reproduisant la 1re gamme XL du 22/07/2026 (jobs #136-148) : le décor
+  // dessine un trottoir plus FIN que le Canny — bord haut descendu de +16 lignes,
+  // bordure route quasi en place. Bandes du Canny XL : 0.617 / 0.675 / 0.696.
+  const bandesXl = [0.617, 0.675, 0.696]
+  const profilXlCompresse = () => {
+    const profile = new Array(1000).fill(1)
+    profile[633] = 26 // bord haut du trottoir, descendu (617 + 16)
+    profile[674] = 18 // ligne intermédiaire, quasi en place
+    profile[688] = 55 // bordure trottoir/route, très contrastée
+    profile[694] = 34 // bas de bordure
+    return profile
+  }
+
+  it('cale sur le bord d’ancrage même quand le motif est compressé (bug XL du 22/07)', async () => {
+    const { groundBandShift, bandPatternShift } = await import('@/lib/images/analyze')
+    const h = 1000
+    const profile = profilXlCompresse()
+    // Le motif complet ne colle nulle part : la mesure historique ne trouve rien
+    // (sur le décor réel elle trouvait pire : un compromis sur la bordure route).
+    expect(bandPatternShift(profile, bandesXl)).toBeNull()
+    const match = groundBandShift(profile, bandesXl)
+    expect(match).not.toBeNull()
+    expect(Math.round(match!.shiftNorm * h)).toBe(16) // posé sur le bord haut réel
+  })
+
+  it('retourne null sans bord net à l’ancrage', async () => {
+    const { groundBandShift } = await import('@/lib/images/analyze')
+    expect(groundBandShift(new Array(1000).fill(1), bandesXl)).toBeNull()
+  })
+
+  it('refuse un ancrage que les bandes basses ne confirment pas (garde du 11/07)', async () => {
+    const { groundBandShift } = await import('@/lib/images/analyze')
+    const profile = new Array(1000).fill(1)
+    profile[627] = 50 // un seul bord net à l'ancrage (+10), rien en dessous
+    expect(groundBandShift(profile, bandesXl)).toBeNull()
+  })
+
+  it('rejette un calage collé à la borne de recherche', async () => {
+    const { groundBandShift } = await import('@/lib/images/analyze')
+    const h = 1000
+    const window = Math.round(0.05 * h)
+    const profile = new Array(h).fill(1)
+    for (const b of bandesXl) profile[Math.round(b * h) + window] = 50 // motif PILE à la borne
+    expect(groundBandShift(profile, bandesXl)).toBeNull()
+  })
+
+  it('retrouve un décalage simple quand le motif est intact (comportement standard)', async () => {
+    const { groundBandShift } = await import('@/lib/images/analyze')
+    const h = 1000
+    const profile = new Array(h).fill(1)
+    for (const b of bandesXl) profile[Math.round(b * h) + 23] = 50 // motif entier décalé de +23
+    const match = groundBandShift(profile, bandesXl)
+    expect(match).not.toBeNull()
+    expect(Math.round(match!.shiftNorm * h)).toBe(23)
+  })
+})
+
 describe('gabaritMask', () => {
   it('génère un masque binaire avec zones blanches dilatées', async () => {
     const mask = await gabaritMask({ w: 300, h: 140 }, {}, 1264, 848, 24)

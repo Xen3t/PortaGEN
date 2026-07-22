@@ -1,5 +1,6 @@
 import { enqueueNewJob } from '@/lib/server/runner'
 import { getGabaritGlobals, getSizeParamsOverride, type SizeParamsOverride } from '@/lib/db/sizeParams'
+import { GABARIT_SET_DEFAULTS, gabaritSetForSize } from '@/lib/gabaritSets'
 import { getMoteurReglages, type MoteurKey } from '@/lib/moteurs'
 
 /**
@@ -7,8 +8,9 @@ import { getMoteurReglages, type MoteurKey } from '@/lib/moteurs'
  *
  * Un lancement = un GROUPE (batch_id) : un job Piliers par taille ; si l'item
  * porte une image produit, le runner enchaîne l'Intégration automatiquement.
- * Réglages de gabarit fusionnés dans l'ordre : défauts du code < globaux (page
- * Gabarits) < paramètres d'appel < dérogation par taille.
+ * Réglages de gabarit fusionnés dans l'ordre : défauts du code < défauts du jeu
+ * de gabarits (scène élargie des coulissants XL) < globaux (page Gabarits) <
+ * paramètres d'appel < dérogation par taille.
  *
  * Cette fonction ne fait AUCUNE validation de chemin : elle reçoit des chemins
  * ABSOLUS déjà résolus et autorisés par l'appelant (l'API /gamme borne à data/,
@@ -53,14 +55,22 @@ export function launchGammeJobs(opts: GammeLaunchOptions): { jobIds: number[]; b
   const batchId =
     opts.batchId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const moteur = opts.moteur ?? 'battant'
-  const globals = getGabaritGlobals(moteur)
   // Chantier pose + fusion (17/07/2026) : quand le réglage moteur le demande ET
   // que l'item porte un produit, UN job « pose-fusion » remplace le chaînage
   // pillars → integration. Sans produit, l'étape Piliers seule reste telle quelle.
   const poseFusion = getMoteurReglages(moteur).integrationMethod === 'pose-fusion'
   const jobIds = opts.items.map(({ size, productPath, extra }) => {
-    const override = getSizeParamsOverride(`${size.w}x${size.h}`, moteur)
-    const effective = { ...globals, ...(opts.params ?? {}), ...(override ?? {}) }
+    // Coulissants XL (22/07/2026) : les largeurs ≥ 450 prennent le jeu de
+    // gabarits « Gabarits XL » (référentiel + réglages + scène élargie propres) —
+    // moteur TERMINUS inchangé pour prompts et réglages.
+    const jeu = gabaritSetForSize(moteur, size.w)
+    const override = getSizeParamsOverride(`${size.w}x${size.h}`, jeu)
+    const effective = {
+      ...(GABARIT_SET_DEFAULTS[jeu] ?? {}),
+      ...getGabaritGlobals(jeu),
+      ...(opts.params ?? {}),
+      ...(override ?? {}),
+    }
     return enqueueNewJob(
       poseFusion && productPath ? 'pose-fusion' : 'pillars',
       {

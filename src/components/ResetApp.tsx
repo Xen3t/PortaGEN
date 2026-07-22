@@ -177,7 +177,7 @@ export default function ResetApp() {
                   {[
                     ['Les comptes utilisateurs et leurs rôles', null],
                     ['Les prompts', '· toutes versions'],
-                    ['Les gabarits et images CANNY', null],
+                    ['Les gabarits et images Canny', null],
                     ['Les réglages', '· généraux et par moteur'],
                     ['La palette de coloris', null],
                     ['Les retours utilisateurs (Feedback)', null],

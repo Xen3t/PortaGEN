@@ -8,10 +8,11 @@ import { generateImage, type ImageSize } from '@/lib/genai/client'
 import { marquerImageIa } from '@/lib/images/marquage'
 import { DEFAULT_PARAMS, computeLayout, projection, projectRect, type GabaritParams, type SizeCm } from '@/lib/geometry'
 import { overlayGabaritOnDecor, renderGabaritPng } from '@/lib/images/gabarits'
-import { whiteLineBands, horizontalEdgeProfile, bandPatternShift } from '@/lib/images/analyze'
+import { whiteLineBands, horizontalEdgeProfile, bandPatternShift, groundBandShift } from '@/lib/images/analyze'
 import { poserProduit, poserProduitSurCible, type PoseResult } from '@/lib/images/pose'
 import { prepareProduct } from '@/lib/images/product'
 import { parseSizeFromProductName } from '@/lib/productName'
+import { gabaritSetForSize } from '@/lib/gabaritSets'
 import { getMoteurReglages, moteurPromptName, type MoteurKey } from '@/lib/moteurs'
 import { NATIVE_DIMS } from '@/lib/pipeline/nativeFormats'
 import { cannyRefPath } from '@/lib/server/cannyRef'
@@ -124,9 +125,13 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
   const slug = opts.slug ?? 'pose-fusion'
   const moteurKey: MoteurKey = opts.moteur ?? 'battant'
   const moteur = getMoteurReglages(moteurKey)
+  // Coulissants XL (22/07/2026) : alignement et image Canny du JEU de la taille
+  // (section « Canny XL » de la fiche TERMINUS) — le reste suit le moteur.
+  const jeu = gabaritSetForSize(moteurKey, opts.size.w)
+  const cannyReg = jeu === moteurKey ? moteur : getMoteurReglages(jeu)
   const align =
     opts.align ??
-    (moteur.cannyPlacement === 'manuel' ? moteur.cannyOffsetPx : moteur.cannyPlacement)
+    (cannyReg.cannyPlacement === 'manuel' ? cannyReg.cannyOffsetPx : cannyReg.cannyPlacement)
 
   // Verrou LARGEUR uniquement : la règle validée le 17/07 choisit le PNG de même
   // largeur et de hauteur la plus proche, l'étirement libre absorbe l'écart de
@@ -151,7 +156,7 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
   try {
     // 1. Alignement de la ligne de sol sur le trottoir réel — même logique que
     //    l'étape Piliers (le repli « offset 0 » est le plan de base, 11/07/2026).
-    const cannyPath = cannyRefPath(moteurKey)
+    const cannyPath = cannyRefPath(jeu)
     let groundOffsetPxNative = 0
     let groundAlign: PoseFusionStepResult['groundAlign']
     if (typeof align === 'number') {
@@ -160,7 +165,10 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
     } else if (align === 'auto') {
       const bands = (await whiteLineBands(cannyPath)).filter((b) => b.yNorm > 0.5)
       const profile = await horizontalEdgeProfile(opts.decorPath)
-      const match = bandPatternShift(
+      // XL (22/07/2026) : mesure calée sur le bord HAUT du trottoir — même
+      // aiguillage que l'étape Piliers (voir pillars.ts, jobs #136-148).
+      const mesure = jeu === 'coulissant-xl' ? groundBandShift : bandPatternShift
+      const match = mesure(
         profile,
         bands.map((b) => b.yNorm)
       )

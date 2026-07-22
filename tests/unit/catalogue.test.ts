@@ -327,6 +327,7 @@ describe('réglages par défaut par coloris', () => {
     // Valeurs farfelues → défauts sains ('moteur' = suivre le réglage du moteur, 13/07/2026).
     expect(sanitizeColorisSettings({ decorId: -3, align: 'nimporte', alignPx: 9999 })).toEqual({
       decorId: null,
+      decorXlId: null, // décor XL des coulissants ≥ 450 (22/07/2026)
       align: 'moteur',
       alignPx: 0,
       formats: { site: true, marketplace: true },
@@ -336,7 +337,7 @@ describe('réglages par défaut par coloris', () => {
     // alignPx borné, formats désactivables.
     expect(
       sanitizeColorisSettings({ decorId: 7, align: 'manual', alignPx: -1200, formats: { site: false } })
-    ).toEqual({ decorId: 7, align: 'manual', alignPx: -500, formats: { site: false, marketplace: true } })
+    ).toEqual({ decorId: 7, decorXlId: null, align: 'manual', alignPx: -500, formats: { site: false, marketplace: true } })
 
     // Aller-retour en base, rattaché à un produit réel (clé étrangère).
     const root = buildFixture()

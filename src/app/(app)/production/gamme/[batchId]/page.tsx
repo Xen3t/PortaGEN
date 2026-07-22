@@ -26,8 +26,16 @@ interface Tile {
   label: string
   w: number
   h: number
+  /** Coloris du lancement catalogue — null pour une gamme directe (sans coloris). */
+  coloris: string | null
   pillars: Job
   integration: Job | null
+}
+
+/** Lettre de nomenclature du job : B battant · C coulissant · P portillon. */
+function lettreOf(job: Job): string {
+  const m = job.payload?.moteur
+  return m === 'coulissant' ? 'C' : m === 'portillon' ? 'P' : 'B'
 }
 
 function art(p: unknown, w?: number): string {
@@ -65,6 +73,8 @@ export default function GammeBatchPage() {
     if (!jobs) return []
     const pillars = jobs.filter((j) => j.type === 'pillars')
     const integrations = jobs.filter((j) => j.type === 'integration')
+    const colorisOf = (j: Job): string | null =>
+      typeof j.payload?.coloris === 'string' ? (j.payload.coloris as string) : null
     const fromPillars = pillars
       .map((p): Tile | null => {
         const s = sizeOf(p)
@@ -77,7 +87,14 @@ export default function GammeBatchPage() {
             return js && js.w === s.w && js.h === s.h
           })
           .sort((a, b) => b.id - a.id)[0]
-        return { label, w: s.w, h: s.h, pillars: p, integration: integ ?? null }
+        return {
+          label,
+          w: s.w,
+          h: s.h,
+          coloris: colorisOf(p),
+          pillars: p,
+          integration: integ ?? null,
+        }
       })
       .filter((t): t is Tile => t !== null)
     // « pose-fusion » (17/07/2026) : UN job = la MES complète — il tient les deux
@@ -86,11 +103,42 @@ export default function GammeBatchPage() {
       .filter((j) => j.type === 'pose-fusion')
       .map((p): Tile | null => {
         const s = sizeOf(p)
-        return s ? { label: `${s.w}x${s.h}`, w: s.w, h: s.h, pillars: p, integration: p } : null
+        return s
+          ? {
+              label: `${s.w}x${s.h}`,
+              w: s.w,
+              h: s.h,
+              coloris: colorisOf(p),
+              pillars: p,
+              integration: p,
+            }
+          : null
       })
       .filter((t): t is Tile => t !== null)
     return [...fromPillars, ...fromPoseFusion].sort((a, b) => a.w - b.w || a.h - b.h)
   }, [jobs])
+
+  // RÈGLE PERMANENTE (rappel Mathias 22/07/2026) : blocs par coloris, une largeur
+  // = UNE ligne, colonnes alignées par hauteur, taille absente = case vide
+  // alignée — jamais de repli. Une relance (id plus grand) remplace sa case.
+  const blocs = useMemo(() => {
+    const byColoris = new Map<string | null, Map<string, Tile>>()
+    for (const t of tiles) {
+      if (!byColoris.has(t.coloris)) byColoris.set(t.coloris, new Map())
+      const cellules = byColoris.get(t.coloris)!
+      const prev = cellules.get(t.label)
+      if (!prev || t.pillars.id > prev.pillars.id) cellules.set(t.label, t)
+    }
+    return Array.from(byColoris.entries()).map(([coloris, cellules]) => {
+      const list = [...cellules.values()]
+      return {
+        coloris,
+        cellules,
+        widths: [...new Set(list.map((t) => t.w))].sort((a, b) => a - b),
+        heights: [...new Set(list.map((t) => t.h))].sort((a, b) => a - b),
+      }
+    })
+  }, [tiles])
 
   const doneCount = tiles.filter((t) => t.integration?.status === 'done').length
   const approvedCount = tiles.filter((t) => t.integration?.reviewStatus === 'approved').length
@@ -216,16 +264,35 @@ export default function GammeBatchPage() {
         </div>
       )}
 
-      {/* Une rangée par largeur (retour à la ligne à chaque changement de largeur) */}
-      <div className="space-y-6">
-        {[...new Set(tiles.map((t) => t.w))].sort((a, b) => a - b).map((w) => (
-          <section key={w}>
-            <h2 className="text-sm font-semibold text-text-secondary mb-2">
-              Largeur {w} cm
-              <span className="font-normal text-text-disabled"> · {tiles.filter((t) => t.w === w).length} taille{tiles.filter((t) => t.w === w).length > 1 ? 's' : ''}</span>
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-              {tiles.filter((t) => t.w === w).map((t) => {
+      {/* RÈGLE PERMANENTE (rappel Mathias 22/07/2026) : un bloc par coloris, une
+          largeur = UNE ligne, colonnes alignées par hauteur, taille absente =
+          case vide alignée — jamais de repli, quel que soit le nombre de tailles. */}
+      <div className="space-y-8">
+        {blocs.map((b) => (
+          <section key={b.coloris ?? 'sans-coloris'}>
+            {b.coloris && <h2 className="text-[15px] font-bold mb-3">{b.coloris}</h2>}
+            <div className="space-y-5">
+              {b.widths.map((w) => (
+                <div key={w}>
+                  <h3 className="text-sm font-semibold text-text-secondary mb-2">
+                    Largeur {w} cm
+                  </h3>
+                  <div
+                    className="grid gap-4"
+                    style={{ gridTemplateColumns: `repeat(${b.heights.length}, minmax(0, 1fr))` }}
+                  >
+                    {b.heights.map((h) => {
+                      const t = b.cellules.get(`${w}x${h}`)
+                      if (!t) {
+                        // Taille absente de ce lancement : case vide alignée.
+                        return (
+                          <div
+                            key={h}
+                            aria-hidden
+                            className="rounded-[12px] border-2 border-dashed border-border/60 min-h-[120px]"
+                          />
+                        )
+                      }
           const integ = t.integration
           const finalDone = integ?.status === 'done'
           const image = finalDone
@@ -259,7 +326,7 @@ export default function GammeBatchPage() {
                           ? { text: '✗ rejetée', tone: 'text-brand-red font-medium' }
                           : { text: 'à vérifier', tone: 'text-brand-teal font-medium' }
           return (
-            <div key={t.label} className="bg-white rounded-[12px] border border-border shadow-sm overflow-hidden hover:shadow-default hover:translate-y-[-1px] transition-all duration-200">
+            <div key={h} className="bg-white rounded-[12px] border border-border shadow-sm overflow-hidden hover:shadow-default hover:translate-y-[-1px] transition-all duration-200">
               <Link href={`/production/image/${detailId}`} className="block relative">
                 {image ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -280,7 +347,8 @@ export default function GammeBatchPage() {
                   </div>
                 )}
                 <span className="absolute top-2 left-2 bg-black/75 text-white text-xs px-2 py-0.5 rounded-md font-medium">
-                  {t.label}
+                  {`${t.w}${lettreOf(t.pillars)}${t.h}`}
+                  {t.coloris ? ` · ${t.coloris}` : ''}
                 </span>
                 {finalDone && (
                   <span className="absolute top-2 right-2 bg-white/90 text-[10px] px-1.5 py-0.5 rounded text-text-secondary">
@@ -336,6 +404,9 @@ export default function GammeBatchPage() {
             </div>
           )
         })}
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         ))}

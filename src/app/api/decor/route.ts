@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireApiUser } from '@/lib/auth/session'
 import { enqueueNewJob } from '@/lib/server/runner'
 import { config } from '@/lib/config'
-import { moteurDef, type MoteurKey } from '@/lib/moteurs'
+import { isGabaritSetKey, type GabaritSetKey } from '@/lib/gabaritSets'
 
 /** Lance la génération d'un décor depuis un moodboard. */
 export async function POST(req: NextRequest) {
@@ -12,9 +12,12 @@ export async function POST(req: NextRequest) {
   if (auth instanceof NextResponse) return auth
   const body = await req.json().catch(() => null)
   const moodboardRel = typeof body?.moodboardPath === 'string' ? body.moodboardPath : ''
-  // Décors en 4K PAR DÉFAUT (décision Mathias 13/07/2026) : les MES héritent de la
-  // résolution du décor, donc un décor 4K → des MES 4K, sans réglage à la génération.
-  const imageSize = ['1K', '2K', '4K'].includes(body?.imageSize) ? body.imageSize : '4K'
+  // Essai Lab moteur : jamais dans la bibliothèque, artefacts isolés sous lab/.
+  const lab = body?.lab === true
+  // Décors UNIQUEMENT en 4K (décision Mathias 22/07/2026 — le sélecteur 2K/4K a
+  // disparu de la Bibliothèque) : les MES héritent de la résolution du décor.
+  // Seul le LAB garde le choix (banc d'essai, hors bibliothèque).
+  const imageSize = lab && ['1K', '2K', '4K'].includes(body?.imageSize) ? body.imageSize : '4K'
 
   const moodboardPath = path.resolve(config.rootDir, moodboardRel)
   if (!moodboardPath.startsWith(path.resolve(config.assetsDir)) || !fs.existsSync(moodboardPath)) {
@@ -29,14 +32,11 @@ export async function POST(req: NextRequest) {
 
   const gamme = typeof body?.gamme === 'string' && body.gamme.trim() ? body.gamme.trim().slice(0, 80) : null
   const name = typeof body?.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 120) : undefined
-  // Essai Lab moteur : jamais dans la bibliothèque, artefacts isolés sous lab/.
-  const lab = body?.lab === true
-  // Moteur à utiliser (sélecteur du LAB, 13/07/2026) : corridor et référentiel
-  // de tailles DU moteur. Absent ou inconnu = battant (comportement historique).
-  const moteur: MoteurKey | undefined =
-    typeof body?.moteur === 'string' && moteurDef(body.moteur) && body.moteur !== 'battant'
-      ? (body.moteur as MoteurKey)
-      : undefined
+  // Jeu de gabarits à utiliser (typologie de la Bibliothèque, sélecteur du LAB) :
+  // corridor, CANNY et référentiel de tailles DU jeu — « coulissant-xl » = décor
+  // à l'échelle XL (22/07/2026). Absent ou inconnu = battant (historique).
+  const moteur: GabaritSetKey | undefined =
+    isGabaritSetKey(body?.moteur) && body.moteur !== 'battant' ? body.moteur : undefined
   // Tirages multiples : N décors générés d'un coup, à trier ensuite dans la
   // bibliothèque (garder / archiver / supprimer). Borné à 4 (coût API).
   const count = Math.min(4, Math.max(1, Number.isFinite(Number(body?.count)) ? Number(body.count) : 1))

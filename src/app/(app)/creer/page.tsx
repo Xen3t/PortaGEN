@@ -273,7 +273,7 @@ function CreerPageInner() {
         <div className="space-y-5 animate-fade-in-up">
           <div className="flex items-baseline justify-between">
             <h2 className="font-semibold">Choisissez le décor de la gamme</h2>
-            <Link href="/bibliotheque" className="text-sm text-brand-teal hover:underline">
+            <Link href="/decors" className="text-sm text-brand-teal hover:underline">
               Gérer la bibliothèque →
             </Link>
           </div>

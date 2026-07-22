@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { parseProduitFromFileName, parseSizeFromProductName } from '@/lib/productName'
-import Silhouette, { type Typo } from '../Silhouette'
+import Silhouette, {
+  PictoIllu,
+  SilhouetteMode,
+  SilhouetteOrigineIcone,
+  type Typo,
+} from '../Silhouette'
 import MesStudio from './MesStudio'
 
 /**
@@ -82,34 +87,19 @@ function isMesJob(j: Job): boolean {
  * et LETTRE de la nomenclature produit — 300B140 battant, 300C140 coulissant,
  * 100P140 portillon (convention serveur).
  */
-const TYPO_INFO: Record<Typo, { ic: string; titre: string; moteur: string; lettre: string }> = {
-  battant: { ic: 'battant', titre: 'Portail battant', moteur: 'Battant « JANUS »', lettre: 'B' },
+const TYPO_INFO: Record<Typo, { titre: string; moteur: string; lettre: string }> = {
+  battant: { titre: 'Portail battant', moteur: 'Battant « JANUS »', lettre: 'B' },
   coulissant: {
-    ic: 'coulissant',
     titre: 'Portail coulissant',
     moteur: 'Coulissant « TERMINUS »',
     lettre: 'C',
   },
-  portillon: { ic: 'portillon', titre: 'Portillon', moteur: 'Portillon « FORCULUS »', lettre: 'P' },
+  portillon: { titre: 'Portillon', moteur: 'Portillon « FORCULUS »', lettre: 'P' },
 }
 
-/**
- * Pictos 3D de la page (remplacement des emoji, demande Mathias 13/07/2026) :
- * Fluent Emoji 3D de Microsoft (github.com/microsoft/fluentui-emoji, licence MIT),
- * fichiers dans public/pictos/. `ic` de TYPO_INFO = nom de fichier.
- */
-function Pic({ name, size, className }: { name: string; size: number; className?: string }) {
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`/pictos/${name}.png`}
-      alt=""
-      width={size}
-      height={size}
-      className={`inline-block align-[-0.18em] ${className ?? ''}`}
-    />
-  )
-}
+/* Les pictos PNG Fluent Emoji (13/07/2026) ont été remplacés le 22/07/2026 par
+   les pictos SVG animés PictoIllu (../Silhouette), même langage que les
+   illustrations de mode. */
 
 /**
  * Fil d'ariane « chemin » (maquette choix-mode-typologie-v1, variante B validée
@@ -197,7 +187,11 @@ function parseName(name: string): { w: number | null; h: number | null; color: s
 }
 
 type Mode = 'con' | 'lib'
-type View = 'mode' | 'typo' | 'gen'
+/** 'origine' (rework 22/07/2026) : après Contrainte, choix « Depuis le
+ *  catalogue / Depuis mes images » — « mes images » va DIRECTEMENT au dépôt,
+ *  la typologie est détectée depuis les noms de fichiers (fenêtre par-dessus
+ *  si indevinable) ; l'écran « Typologie » a disparu (demande Mathias 22/07). */
+type View = 'mode' | 'origine' | 'gen'
 type Stage = 'input' | 'proc' | 'result'
 
 /** Libellé d'une MES : « Gris · 300B140 » (la lettre suit le moteur : B/C/P). */
@@ -291,10 +285,24 @@ function SizeRows({ jobs, render }: { jobs: Job[]; render: (j: Job) => ReactNode
 export default function GenerationPage() {
   const [view, setView] = useState<View>('mode')
   const [mode, setMode] = useState<Mode>('con')
+  // Accès direct depuis l'Accueil (rework 22/07/2026) : /generation?mode=contrainte
+  // ou ?mode=libre présélectionne le mode. Lu au montage — pas de useSearchParams,
+  // qui imposerait un <Suspense> à toute la page.
+  useEffect(() => {
+    const m = new URLSearchParams(window.location.search).get('mode')
+    if (m === 'contrainte') pickMode('con')
+    else if (m === 'libre') pickMode('lib')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // Typologie de l'étape 2 → moteur de génération (battant « JANUS », coulissant
   // « TERMINUS », portillon « FORCULUS »). Chaque moteur a ses tailles,
   // gabarits et prompts.
   const [typo, setTypo] = useState<Typo>('battant')
+  // Typologie AUTOMATIQUE (demande Mathias 22/07/2026) : false tant qu'elle n'a
+  // pas été détectée depuis un nom de fichier ou choisie dans la fenêtre
+  // par-dessus (askTypo).
+  const [typoKnown, setTypoKnown] = useState(true)
+  const [askTypo, setAskTypo] = useState(false)
   const [stage, setStage] = useState<Stage>('input')
   // Nom du produit : détecté depuis le nom de fichier, corrigeable. Il identifie
   // la session sur l'accueil (« Mes sessions », validé 13/07/2026).
@@ -446,6 +454,26 @@ export default function GenerationPage() {
 
   function addFiles(list: FileList | null) {
     if (!list?.length) return
+    // Typologie AUTOMATIQUE (demande Mathias 22/07/2026) : au premier dépôt, la
+    // lettre de la nomenclature décide (300B140 battant, 300C140 coulissant,
+    // 100P140 portillon). Aucune lettre, ou plusieurs différentes → la fenêtre
+    // par-dessus demande la typologie.
+    let effTypo = typo
+    if (!typoKnown) {
+      const lettres = new Set<string>()
+      for (const f of Array.from(list)) {
+        const m = f.name.toUpperCase().match(/\d{2,3}([BCP])\d{2,3}/)
+        if (m) lettres.add(m[1])
+      }
+      if (lettres.size === 1) {
+        const lettre = [...lettres][0]
+        effTypo = lettre === 'C' ? 'coulissant' : lettre === 'P' ? 'portillon' : 'battant'
+        setTypo(effTypo)
+        setTypoKnown(true)
+      } else {
+        setAskTypo(true)
+      }
+    }
     const next: Img[] = Array.from(list).map((f) => {
       const p = parseName(f.name)
       return {
@@ -455,7 +483,7 @@ export default function GenerationPage() {
         url: URL.createObjectURL(f),
         color: p.color ?? 'Gris',
         // Taille non lue dans le nom → taille la plus courante DU moteur.
-        w: p.w ?? (typo === 'portillon' ? 100 : 300),
+        w: p.w ?? (effTypo === 'portillon' ? 100 : 300),
         h: p.h ?? 140,
         detSize: p.w != null && p.h != null,
         editSize: false,
@@ -464,14 +492,17 @@ export default function GenerationPage() {
     })
     setImages((cur) => [...cur, ...next])
     // Nom du produit : première détection gagnante, jamais écrasée si déjà saisi.
-    setProduit((cur) => {
-      if (cur) return cur
-      for (const f of Array.from(list)) {
-        const p = parseProduitFromFileName(f.name)
-        if (p) return p
+    // Lecture IMMÉDIATE obligatoire : le FileList d'un glisser-déposer se vide
+    // dès que le gestionnaire d'événement rend la main — trop tard dans setProduit.
+    let detProduit = ''
+    for (const f of Array.from(list)) {
+      const p = parseProduitFromFileName(f.name)
+      if (p) {
+        detProduit = p
+        break
       }
-      return cur
-    })
+    }
+    if (detProduit) setProduit((cur) => cur || detProduit)
   }
   function removeImg(id: string) {
     setImages((cur) => {
@@ -496,14 +527,20 @@ export default function GenerationPage() {
   }
   function pickMode(m: Mode) {
     setMode(m)
-    setView(m === 'con' ? 'typo' : 'gen')
+    // Contrainte passe d'abord par le choix du point de départ (rework 22/07/2026) :
+    // « Depuis le catalogue » ou « Depuis mes images » (= le flux historique).
+    setView(m === 'con' ? 'origine' : 'gen')
     setStage('input')
   }
-  function startCon(m: Typo) {
-    setTypo(m)
+  /** « Depuis mes images » (demande Mathias 22/07/2026) : on dépose D'ABORD —
+   *  la typologie est détectée depuis la lettre de la nomenclature (300B140 /
+   *  300C140 / 100P140) ; indevinable → la fenêtre par-dessus (askTypo). */
+  function startImages() {
     resetImages()
     setProduit('')
     setNotice(null)
+    setTypoKnown(false)
+    setAskTypo(false)
     setStage('input')
     setView('gen')
   }
@@ -695,16 +732,11 @@ export default function GenerationPage() {
     }
   }
 
-  const detCount = images.filter((i) => i.detSize).length
   const canGenerate = images.length > 0 && decorId != null
 
-  // — sélecteur de décor : 3 vignettes max dans le panneau (le décor choisi
-  //   remonte en premier, puis les plus récents), le reste via la fenêtre —
+  // — sélecteur de décor : un bouton dans le panneau, tout se passe dans la
+  //   fenêtre de sélection (demande Mathias 22/07/2026) —
   const selectedDecor = decors.find((d) => d.id === decorId) ?? null
-  const shortlist = [
-    ...(selectedDecor ? [selectedDecor] : []),
-    ...decors.filter((d) => d.id !== decorId),
-  ].slice(0, 3)
 
   function openPicker() {
     setPickId(decorId)
@@ -736,105 +768,134 @@ export default function GenerationPage() {
       {/* ÉTAPE 1 — MODE */}
       {view === 'mode' && (
         <section className="animate-fade-in-up">
-          <h1 className="text-[34px] leading-tight font-bold tracking-tight mb-7">Génération</h1>
+          <h1 className="text-[34px] leading-tight font-bold tracking-tight mb-7">Générer</h1>
           {/* Maquette choix-mode-typologie-v1 validée le 13/07/2026 : panneaux
               typographiques (variante A) avec les textes condensés de la variante B.
-              Retouches 15/07 : plus de liseré ni de badge d'état, tout en vert. */}
-          <div className="grid md:grid-cols-2 gap-[18px]">
+              Retouches 15/07 : plus de liseré ni de badge d'état, tout en vert.
+              22/07 (rework validé) : 3ᵉ panneau « MES Décors » — la gestion des
+              décors est ici et sur l'Accueil depuis que « Décors » a quitté la nav.
+              22/07 : illustrations SilhouetteMode en tête de panneau, même langage
+              que les silhouettes typologie ; plus de bouton, la carte entière
+              est cliquable. */}
+          <div className="grid md:grid-cols-3 gap-[18px]">
             <button
               onClick={() => pickMode('con')}
-              className="group text-left bg-white rounded-[12px] border border-border shadow-sm px-7 py-[26px] transition-all hover:shadow-lg hover:-translate-y-0.5"
+              className="group text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
             >
-              <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
-                <span className="w-[7px] h-[7px] rounded-full bg-current" />
-                Effet catalogue · gabarits
-              </span>
-              <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">
-                MES Contrainte
-              </h3>
-              <p className="text-sm text-text-secondary">
-                Proportions cohérentes entre les tailles, décor imposé, produit posé précisément,
-                perspective réglée. Livraison <b className="text-text-primary">Site + Marketplace</b>.
-              </p>
-              <span className="inline-flex items-center gap-1.5 mt-[18px] text-[13.5px] font-bold text-white bg-brand-green rounded-[10px] px-[18px] py-[9px] transition-colors group-hover:bg-brand-green-hover">
-                Générer →
-              </span>
+              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+                <SilhouetteMode mode="contrainte" />
+              </div>
+              <div className="px-7 pt-5">
+                <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
+                  <span className="w-[7px] h-[7px] rounded-full bg-current" />
+                  Effet catalogue · gabarits
+                </span>
+                <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">
+                  MES Contrainte
+                </h3>
+                <p className="text-sm text-text-secondary">
+                  Proportions cohérentes entre les tailles, décor imposé, produit posé précisément,
+                  perspective réglée. Livraison <b className="text-text-primary">Site + Marketplace</b>.
+                </p>
+              </div>
             </button>
 
             <button
               onClick={() => pickMode('lib')}
-              className="group text-left bg-white rounded-[12px] border border-border shadow-sm px-7 py-[26px] transition-all hover:shadow-lg hover:-translate-y-0.5"
+              className="group text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
             >
-              <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
-                <span className="w-[7px] h-[7px] rounded-full bg-current" />
-                Scène décrite · formulaire
-              </span>
-              <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">MES Libre</h3>
-              <p className="text-sm text-text-secondary">
-                Ambiance, angle, lumière — peu de règles, plusieurs variantes générées,{' '}
-                <b className="text-text-primary">tu choisis</b>. Le produit reste verrouillé.
+              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+                <SilhouetteMode mode="libre" />
+              </div>
+              <div className="px-7 pt-5">
+                <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
+                  <span className="w-[7px] h-[7px] rounded-full bg-current" />
+                  Scène décrite · formulaire
+                </span>
+                <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">MES Libre</h3>
+                <p className="text-sm text-text-secondary">
+                  Ambiance, angle, lumière — peu de règles, plusieurs variantes générées,{' '}
+                  <b className="text-text-primary">tu choisis</b>. Le produit reste verrouillé.
+                </p>
+              </div>
+            </button>
+
+            <Link
+              href="/decors"
+              className="group text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
+            >
+              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+                <SilhouetteMode mode="decors" />
+              </div>
+              <div className="px-7 pt-5">
+                <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
+                  <span className="w-[7px] h-[7px] rounded-full bg-current" />
+                  Arrière-plans · bibliothèque
+                </span>
+                <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">
+                  MES Décors
+                </h3>
+                <p className="text-sm text-text-secondary">
+                  Créer et gérer les décors dans lesquels les produits sont posés — génération,
+                  corrections, décors <b className="text-text-primary">XL</b> des coulissants.
+                </p>
+              </div>
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {/* ÉTAPE 1bis — POINT DE DÉPART (Contrainte, rework 22/07/2026) : depuis le
+          catalogue (nouveau flux /generation/catalogue) ou depuis ses images (le
+          flux historique, inchangé). */}
+      {view === 'origine' && (
+        <section className="animate-fade-in-up">
+          <Chemin onBack={goMode} parents={[{ label: 'Générer', onClick: goMode }]} here="Contrainte" />
+          <div className="flex items-baseline gap-3 flex-wrap mb-4">
+            <h1 className="text-2xl font-bold tracking-tight">Le point de départ</h1>
+            <span className="text-sm text-text-secondary">d&apos;où part la mise en situation ?</span>
+          </div>
+          <div className="grid md:grid-cols-2 gap-[18px] max-w-3xl">
+            <Link
+              href="/generation/catalogue"
+              className="group text-left bg-white rounded-[12px] border-[1.5px] border-border shadow-sm px-6 py-6 transition-all hover:shadow-lg hover:-translate-y-0.5 hover:border-brand-green"
+            >
+              <div className="flex items-center gap-3 mb-2">
+                {/* Icônes SilhouetteOrigineIcone à la place des pictos PNG (22/07) */}
+                <SilhouetteOrigineIcone origine="catalogue" className="block w-[40px] h-[40px] shrink-0" />
+                <h3 className="text-[19px] font-bold">Depuis le catalogue</h3>
+              </div>
+              <p className="text-[13px] text-text-secondary">
+                Le produit est référencé : tailles, coloris et visuels détourés déjà là. Tu coches
+                les tailles à mettre en situation, les MES existantes sont signalées.
               </p>
-              <span className="inline-flex items-center gap-1.5 mt-[18px] text-[13.5px] font-bold text-brand-green bg-white border-[1.5px] border-brand-green rounded-[10px] px-[17px] py-2 transition-colors group-hover:bg-brand-green-light">
-                Voir le brouillon →
+              <span className="inline-flex items-center gap-1.5 mt-3.5 text-[13px] font-bold text-brand-green group-hover:underline">
+                Choisir un produit →
+              </span>
+            </Link>
+            <button
+              onClick={startImages}
+              className="group text-left bg-white rounded-[12px] border-[1.5px] border-border shadow-sm px-6 py-6 transition-all hover:shadow-lg hover:-translate-y-0.5 hover:border-brand-green"
+            >
+              <div className="flex items-center gap-3 mb-2">
+                <SilhouetteOrigineIcone origine="images" className="block w-[40px] h-[40px] shrink-0" />
+                <h3 className="text-[19px] font-bold">Depuis mes images</h3>
+              </div>
+              <p className="text-[13px] text-text-secondary">
+                Le produit n&apos;est pas (encore) référencé : dépose tes images, taille et coloris
+                sont détectés depuis le nom de fichier, corrigeables.
+              </p>
+              <span className="inline-flex items-center gap-1.5 mt-3.5 text-[13px] font-bold text-brand-green group-hover:underline">
+                Déposer des images →
               </span>
             </button>
           </div>
         </section>
       )}
 
-      {/* ÉTAPE 2 — TYPOLOGIE */}
-      {view === 'typo' && (
-        <section className="animate-fade-in-up">
-          <Chemin onBack={goMode} parents={[{ label: 'Génération', onClick: goMode }]} here="Contrainte" />
-          <div className="flex items-baseline gap-3 flex-wrap mb-4">
-            <h1 className="text-2xl font-bold tracking-tight">Typologie de produit</h1>
-            <span className="text-sm text-text-secondary">chaque typologie a son moteur</span>
-          </div>
-          {/* Maquette choix-mode-typologie-v1 validée le 13/07/2026 : cartes silhouette
-              (variante A) — le visuel EST le produit, le moteur a sa propre ligne. */}
-          <div className="grid md:grid-cols-3 gap-[18px]">
-            {(
-              [
-                {
-                  key: 'battant' as const,
-                  mot: '« JANUS »',
-                  s: 'Deux vantaux entre les piliers.',
-                },
-                {
-                  key: 'coulissant' as const,
-                  mot: '« TERMINUS »',
-                  s: 'Une lame d’un seul tenant, le bord droit caché derrière le pilier.',
-                },
-                {
-                  key: 'portillon' as const,
-                  mot: '« FORCULUS »',
-                  s: 'Un vantail piéton entre les piliers.',
-                },
-              ]
-            ).map((m) => (
-              <button
-                key={m.key}
-                onClick={() => startCon(m.key)}
-                className="group text-left bg-white rounded-[12px] border-[1.5px] border-border shadow-sm pb-[18px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5 hover:border-brand-green"
-              >
-                <div className="border-b border-border px-[18px] pt-[18px] bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
-                  <Silhouette typo={m.key} />
-                </div>
-                <div className="px-[18px] pt-3.5">
-                  <h3 className="text-[17px] font-bold">{TYPO_INFO[m.key].titre}</h3>
-                  <div className="text-[11px] font-bold uppercase tracking-[.07em] text-brand-green mb-1.5">
-                    Moteur {m.mot}
-                  </div>
-                  <p className="text-[12.5px] text-text-secondary">{m.s}</p>
-                </div>
-                <span className="inline-flex items-center gap-1.5 mx-[18px] mt-3 text-[13px] font-bold text-brand-green group-hover:underline">
-                  Générer →
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+      {/* (L'écran « Typologie » a disparu le 22/07/2026 : la typologie est
+          détectée au dépôt des images, corrigeable via « ✎ changer » ou la
+          fenêtre askTypo si les noms de fichiers ne permettent pas de trancher.) */}
 
       {/* ÉTAPE 3 — GÉNÉRATION (Contrainte) */}
       {view === 'gen' && mode === 'con' && (
@@ -842,17 +903,27 @@ export default function GenerationPage() {
           {/* Une fois la génération lancée, « Contrainte » ne ramène plus au choix de
               typologie (comme l'ancien pill « ← Typologie » réservé à la saisie). */}
           <Chemin
-            onBack={() => (stage === 'input' ? setView('typo') : goMode())}
+            onBack={() => (stage === 'input' ? setView('origine') : goMode())}
             parents={[
-              { label: 'Génération', onClick: goMode },
+              { label: 'Générer', onClick: goMode },
               {
                 label: 'Contrainte',
-                onClick: stage === 'input' ? () => setView('typo') : undefined,
+                onClick: stage === 'input' ? () => setView('origine') : undefined,
               },
             ]}
-            here={TYPO_INFO[typo].titre}
-            sub={`· ${TYPO_INFO[typo].moteur}`}
-          />
+            here={typoKnown ? TYPO_INFO[typo].titre : 'Depuis mes images'}
+            sub={typoKnown ? `· ${TYPO_INFO[typo].moteur}` : undefined}
+          >
+            {typoKnown && stage === 'input' && (
+              <button
+                onClick={() => setAskTypo(true)}
+                title="Changer la typologie détectée"
+                className="text-[12px] font-semibold text-text-secondary border border-border rounded-full px-2.5 py-0.5 ml-1 hover:text-brand-green hover:border-brand-green transition-colors"
+              >
+                ✎ changer
+              </button>
+            )}
+          </Chemin>
 
           {/* ---- saisie ---- */}
           {stage === 'input' && (
@@ -870,7 +941,6 @@ export default function GenerationPage() {
                   </button>
                 </div>
               )}
-
               <div className="grid lg:grid-cols-[1fr_340px] gap-4 items-start">
                 {/* colonne images */}
                 <div>
@@ -891,7 +961,7 @@ export default function GenerationPage() {
                         hot ? 'border-brand-green bg-brand-green-light' : 'border-[#c8d3bb] bg-white hover:border-brand-green hover:bg-[#fbfdf8]'
                       }`}
                     >
-                      <Pic name="image" size={48} />
+                      <PictoIllu name="photos" size={48} />
                       <span className="text-base font-bold">Dépose la ou les images du produit</span>
                       <span className="text-sm text-text-secondary max-w-md">
                         Photos de face, même produit (une par taille / coloris). Le moteur lit la taille et le
@@ -919,16 +989,6 @@ export default function GenerationPage() {
                           </span>
                         )}
                       </div>
-                      <div className="bg-brand-green-light text-brand-green/90 text-xs rounded-[8px] px-3 py-2">
-                        <Pic name="mes-contrainte" size={15} className="mr-1" />
-                        Taille lue dans le nom de fichier → pilote le <b>gabarit</b> du moteur{' '}
-                        {TYPO_INFO[typo].moteur}.{' '}
-                        <b>
-                          {detCount}/{images.length} détectée{detCount > 1 ? 's' : ''} automatiquement
-                        </b>{' '}
-                        — corrige toute valeur si besoin.
-                      </div>
-
                       {images.map((im) => {
                         const c = COLORS.find((x) => x.name === im.color) ?? COLORS[0]
                         return (
@@ -1016,7 +1076,7 @@ export default function GenerationPage() {
                   <div className="p-4 space-y-5">
                     <div>
                       <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
-                        Produit
+                        Nom de la session
                       </label>
                       <input
                         value={produit}
@@ -1025,46 +1085,25 @@ export default function GenerationPage() {
                         maxLength={60}
                         className="w-full border border-border bg-white rounded-[8px] px-3 py-2 text-[13.5px]"
                       />
-                      <p className="text-[11.5px] text-text-disabled mt-1.5">
-                        Détecté depuis le nom de fichier — corrige si besoin. C&apos;est le nom de la
-                        session sur l&apos;accueil.
-                      </p>
                     </div>
 
                     <div>
                       <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
                         Décor
                       </label>
-                      <div className="grid grid-cols-3 gap-2">
-                        {shortlist.map((d) => {
-                          const on = d.id === decorId
-                          return (
-                            <button
-                              key={d.id}
-                              onClick={() => setDecorId(d.id)}
-                              title={d.name}
-                              className={`rounded-[8px] overflow-hidden border-[1.5px] text-left bg-white ${
-                                on ? 'border-brand-green ring-2 ring-brand-green-light' : 'border-border'
-                              }`}
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={imgUrl(d.file_path, 480)} alt={d.name} loading="lazy" decoding="async" className="w-full aspect-[3/2] object-cover" />
-                              <span className="block px-2 py-1 text-[11px] font-medium truncate">{d.name}</span>
-                            </button>
-                          )
-                        })}
-                      </div>
                       {decors.length > 0 ? (
                         <button
                           onClick={openPicker}
-                          className="w-full mt-2 rounded-[8px] border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-brand-green hover:border-brand-green transition-colors"
+                          className="w-full rounded-[8px] border border-border bg-white px-3 py-2.5 text-[13px] font-bold text-text-secondary hover:text-brand-green hover:border-brand-green transition-colors"
                         >
-                          Choisir un décor ({decors.length})
+                          {selectedDecor
+                            ? `Décor : ${selectedDecor.name} — changer`
+                            : `Choisir un décor (${decors.length})`}
                         </button>
                       ) : (
                         <p className="text-[11.5px] text-text-disabled mt-1.5">
                           Aucun décor actif —{' '}
-                          <Link href="/bibliotheque" className="text-brand-green font-bold">
+                          <Link href="/decors" className="text-brand-green font-bold">
                             crées-en un depuis la page Décors ↗
                           </Link>
                         </p>
@@ -1085,9 +1124,12 @@ export default function GenerationPage() {
                       <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
                         Livraison
                       </label>
-                      <div className="flex items-center gap-2 text-[13.5px] font-semibold mb-2">
-                        <Pic name="image" size={18} /> Format Site (WEB) · 2000×1330{' '}
-                        <span className="text-[11px] text-text-disabled font-normal">— toujours généré</span>
+                      <div className="flex items-start gap-2.5 text-[13.5px] font-semibold mb-2">
+                        {mpMode === 'choix' && <span className="w-4 shrink-0" aria-hidden />}
+                        <span>
+                          <PictoIllu name="site" size={18} className="mr-1" />
+                          Format Site (WEB) · 2000×1330
+                        </span>
                       </div>
                       {mpMode === 'choix' && (
                         <label className="flex items-start gap-2.5 text-[13.5px] font-semibold cursor-pointer">
@@ -1098,21 +1140,19 @@ export default function GenerationPage() {
                             className="mt-0.5 w-4 h-4 accent-[#6d5bb5]"
                           />
                           <span>
-                            <Pic name="marketplace" size={18} className="mr-1" />
-                            Format Marketplace (MP) · 2000×2000{' '}
-                            <span className="text-[11px] text-text-disabled font-normal">— automatique si coché</span>
-                            <span className="block text-[11.5px] text-text-disabled font-normal mt-0.5">
-                              Chaque MES Site est déclinée en carré 1:1 dès qu&apos;elle est prête, sans attendre
-                              ta review. Sinon, le passage MP reste possible après, sur le résultat (bouton 1:1).
-                            </span>
+                            <PictoIllu name="mp" size={18} className="mr-1" />
+                            Format Marketplace (MP) · 2000×2000
                           </span>
                         </label>
                       )}
                       {mpMode === 'toujours' && (
-                        <div className="flex items-center gap-2 text-[13.5px] font-semibold">
-                          <Pic name="marketplace" size={18} /> Format Marketplace (MP) · 2000×2000{' '}
-                          <span className="text-[11px] text-text-disabled font-normal">
-                            — toujours généré (réglage moteur)
+                        <div className="flex items-start gap-2.5 text-[13.5px] font-semibold">
+                          <span>
+                            <PictoIllu name="mp" size={18} className="mr-1" />
+                            Format Marketplace (MP) · 2000×2000{' '}
+                            <span className="text-[11px] text-text-disabled font-normal">
+                              — toujours généré (réglage moteur)
+                            </span>
                           </span>
                         </div>
                       )}
@@ -1125,9 +1165,9 @@ export default function GenerationPage() {
                 <button
                   onClick={generate}
                   disabled={!canGenerate}
-                  className="bg-brand-green text-white rounded-[12px] px-6 py-3 text-[15px] font-bold hover:bg-brand-green-hover hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="group bg-brand-green text-white rounded-[12px] px-6 py-3 text-[15px] font-bold hover:bg-brand-green-hover hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  <Pic name="generer" size={16} className="mr-1.5" />
+                  <PictoIllu name="generer" size={16} className="mr-1.5" />
                   Générer{images.length ? ` (${images.length})` : ''}
                 </button>
                 <span className="text-xs text-text-disabled">
@@ -1288,7 +1328,7 @@ export default function GenerationPage() {
                                 <img src={imgUrl(dp!, 960)} alt={labelOf(root)} loading="lazy" decoding="async" className="w-full aspect-[3/2] object-cover bg-surface" />
                                 <span className="absolute inset-0 grid place-items-center bg-black/0 group-hover:bg-black/30 opacity-0 group-hover:opacity-100 text-white text-[13px] font-bold transition-all">
                                   <span className="flex items-center gap-1.5">
-                                    <Pic name="loupe" size={15} />
+                                    <PictoIllu name="loupe" size={15} />
                                     Ouvrir · retours &amp; versions
                                   </span>
                                 </span>
@@ -1442,17 +1482,17 @@ export default function GenerationPage() {
       {/* ÉTAPE 3 — LIBRE (brouillon) */}
       {view === 'gen' && mode === 'lib' && (
         <section className="animate-fade-in-up">
-          <Chemin onBack={goMode} parents={[{ label: 'Génération', onClick: goMode }]} here="MES Libre">
+          <Chemin onBack={goMode} parents={[{ label: 'Générer', onClick: goMode }]} here="MES Libre">
             <span
               className="pill ml-2"
               style={{ borderColor: 'var(--color-brand-red)', color: 'var(--color-brand-red)', cursor: 'default' }}
             >
-              <Pic name="wip" size={14} className="mr-1" />
+              <PictoIllu name="wip" size={14} className="mr-1" />
               Work in progress
             </span>
           </Chemin>
           <div className="bg-brand-red-light border border-brand-red/30 rounded-[12px] px-5 py-4 flex items-center gap-3.5">
-            <Pic name="wip" size={26} />
+            <PictoIllu name="wip" size={26} />
             <div className="text-sm text-text-secondary">
               <b className="text-brand-red">Écran en réflexion — pas encore construit.</b> Le mode Libre viendra
               après les battants (priorité #4 du cadrage) : formulaire (angle de vue, profondeur de champ,
@@ -1490,7 +1530,7 @@ export default function GenerationPage() {
           onClick={() => setPickerOpen(false)}
         >
           <div
-            className="bg-surface rounded-[16px] shadow-2xl w-[960px] max-w-full max-h-[min(720px,calc(100vh-40px))] flex flex-col overflow-hidden"
+            className="bg-surface rounded-[16px] shadow-2xl w-[min(1500px,100%)] h-[min(920px,calc(100vh-40px))] flex flex-col overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="bg-white border-b border-border px-5 pt-4">
@@ -1511,7 +1551,7 @@ export default function GenerationPage() {
               <div className="flex items-center gap-2.5 flex-wrap py-3">
                 <div className="relative flex-1 min-w-[220px]">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2">
-                    <Pic name="loupe" size={15} />
+                    <PictoIllu name="loupe" size={15} className="text-text-secondary" />
                   </span>
                   <input
                     value={pickSearch}
@@ -1556,7 +1596,7 @@ export default function GenerationPage() {
                           : 'text-text-secondary border-transparent font-semibold'
                       }`}
                     >
-                      <Pic name={TYPO_INFO[t].ic} size={15} className="mr-1" />
+                      <PictoIllu name={t} size={15} className="mr-1" />
                       {TYPO_INFO[t].titre}{' '}
                       <span className="text-[11px] text-text-disabled">{n}</span>
                     </button>
@@ -1565,7 +1605,7 @@ export default function GenerationPage() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="flex-1 overflow-y-auto px-10 py-6">
               {pickList.length === 0 ? (
                 <div className="text-center text-text-secondary text-[13.5px] py-10">
                   <p className="text-[15px] font-bold text-text-primary mb-1">
@@ -1582,7 +1622,7 @@ export default function GenerationPage() {
                     return (
                       <div key={t} className="mb-5 last:mb-0">
                         <div className="flex items-center gap-2 mb-2.5 text-[13.5px] font-bold">
-                          <Pic name={TYPO_INFO[t].ic} size={16} />
+                          <PictoIllu name={t} size={16} />
                           {TYPO_INFO[t].titre}{' '}
                           <span className="text-xs text-text-secondary font-normal">
                             · {items.length}
@@ -1597,7 +1637,7 @@ export default function GenerationPage() {
                             </span>
                           )}
                         </div>
-                        <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3">
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
                           {items.map((d) => {
                             const on = d.id === pickId
                             return (
@@ -1605,10 +1645,10 @@ export default function GenerationPage() {
                                 key={d.id}
                                 onClick={() => setPickId(d.id)}
                                 title={d.name}
-                                className={`relative rounded-[12px] overflow-hidden border-[1.5px] text-left bg-white shadow-sm transition-all ${
+                                className={`relative rounded-[12px] overflow-hidden border-[1.5px] text-left bg-white shadow-sm transition-transform duration-150 hover:scale-[1.3] hover:z-20 hover:shadow-2xl ${
                                   on
                                     ? 'border-brand-green ring-2 ring-brand-green-light'
-                                    : 'border-border hover:shadow-lg'
+                                    : 'border-border'
                                 }`}
                               >
                                 {on && (
@@ -1622,7 +1662,7 @@ export default function GenerationPage() {
                                   alt={d.name}
                                   loading="lazy"
                                   decoding="async"
-                                  className="w-full h-[92px] object-cover"
+                                  className="w-full h-[150px] object-cover"
                                 />
                                 <span className="block px-2.5 pt-1.5 pb-2">
                                   <span className="block text-[12.5px] font-bold leading-tight truncate">
@@ -1638,7 +1678,7 @@ export default function GenerationPage() {
                             )
                           })}
                           <Link
-                            href="/bibliotheque"
+                            href="/decors"
                             className="rounded-[12px] border-[1.5px] border-dashed border-brand-green grid place-items-center min-h-[140px] text-brand-green font-bold text-center text-xs px-2 bg-white"
                           >
                             ＋ Créer un décor ↗
@@ -1692,6 +1732,52 @@ export default function GenerationPage() {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={lightbox} alt="Aperçu en grand" className="max-w-full max-h-full object-contain rounded-[8px]" />
+        </div>
+      )}
+
+      {/* Typologie indevinable depuis les noms de fichiers → fenêtre PAR-DESSUS
+          le reste (demande Mathias 22/07/2026) : on choisit, tout est conservé. */}
+      {askTypo && (
+        <div className="fixed inset-0 z-50 bg-black/45 grid place-items-center p-4">
+          <div className="bg-white rounded-[16px] shadow-xl w-full max-w-3xl p-6">
+            <h2 className="text-xl font-bold mb-1">Quelle typologie de produit ?</h2>
+            <p className="text-sm text-text-secondary mb-5">
+              Impossible de la deviner depuis les noms de fichiers (aucune lettre B/C/P, ou
+              plusieurs différentes). Choisis — tes images et le reste sont conservés.
+            </p>
+            <div className="grid md:grid-cols-3 gap-[14px]">
+              {(['battant', 'coulissant', 'portillon'] as const).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => {
+                    setTypo(k)
+                    setTypoKnown(true)
+                    setAskTypo(false)
+                  }}
+                  className="group text-left bg-white rounded-[12px] border-[1.5px] border-border shadow-sm pb-3.5 overflow-hidden transition-all hover:shadow-lg hover:border-brand-green"
+                >
+                  <div className="border-b border-border px-4 pt-4 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+                    <Silhouette typo={k} />
+                  </div>
+                  <div className="px-4 pt-2.5">
+                    <span className="block text-[15px] font-bold">{TYPO_INFO[k].titre}</span>
+                    <span className="block text-[11px] font-bold uppercase tracking-[.07em] text-brand-green">
+                      Moteur {TYPO_INFO[k].moteur}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                resetImages()
+                setAskTypo(false)
+              }}
+              className="mt-4 text-sm font-semibold text-text-secondary hover:text-brand-red transition-colors"
+            >
+              Annuler le dépôt
+            </button>
+          </div>
         </div>
       )}
 

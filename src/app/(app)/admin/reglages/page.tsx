@@ -18,7 +18,7 @@ import type { MoteurKey, MoteurReglages } from '@/lib/moteurs'
  *
  * Un moteur par type de produit. La partie Moteurs regroupe TOUTES les
  * technologies du moteur : import & détourage, coloris, gabarits (ex-page
- * Gabarits absorbée ici), guidage CANNY, génération (prompts par étape),
+ * Gabarits absorbée ici), guidage Canny, génération (prompts par étape),
  * livraison.
  *
  * Sélection du moteur : colonne latérale avec compteur, filtre et familles
@@ -48,10 +48,16 @@ interface PromptMeta {
  * rendu (« portillon-… ») et les libellés emploient le mot du produit
  * (« Intégration du portillon », pas « du portail »).
  */
-const PROMPTS_DECOR: { name: string; label: string }[] = [
+const PROMPTS_DECOR: { name: string; label: string; exact?: boolean }[] = [
   { name: 'moodboard-llm', label: 'Analyse moodboard' },
   { name: 'decor-architecture', label: 'Architecture du décor' },
   { name: 'decor-couloir', label: 'Contrainte du couloir' },
+]
+// Fiche TERMINUS uniquement : l'analyse moodboard des décors XL (caméra reculée,
+// allée 6 m) — nom EXACT, hors du préfixage par moteur (jeu « coulissant-xl »).
+const PROMPTS_DECOR_COULISSANT: typeof PROMPTS_DECOR = [
+  ...PROMPTS_DECOR,
+  { name: 'coulissant-xl-moodboard-llm', label: 'Analyse moodboard — décors XL', exact: true },
 ]
 const PROMPTS_PILIERS: { name: string; label: string }[] = [
   { name: 'piliers-murets', label: 'Rendu stucco piliers & murets' },
@@ -81,7 +87,7 @@ interface ColorisEntry {
   custom: boolean
 }
 
-/** Image CANNY active du moteur (personnalisée ou d'origine), servie par l'API. */
+/** Image Canny active du moteur (personnalisée ou d'origine), servie par l'API. */
 interface CannyInfo {
   custom: boolean
   relPath: string
@@ -203,6 +209,14 @@ export default function MoteursPage() {
   const [canny, setCanny] = useState<CannyInfo | null>(null)
   const [cannyBusy, setCannyBusy] = useState(false)
   const cannyFileRef = useRef<HTMLInputElement>(null)
+  // Canny XL (22/07/2026) : image ET réglages (alignement, corridor) du jeu
+  // « coulissant-xl », EN COMPLÉMENT du Canny coulissant qui ne bouge pas —
+  // visible sur la fiche TERMINUS uniquement.
+  const [cannyXl, setCannyXl] = useState<CannyInfo | null>(null)
+  const [cannyXlBusy, setCannyXlBusy] = useState(false)
+  const cannyXlFileRef = useRef<HTMLInputElement>(null)
+  const [reglagesXl, setReglagesXl] = useState<MoteurReglages | null>(null)
+  const [dirtyXl, setDirtyXl] = useState(false)
   // Prompt dont l'éditeur est déroulé (un seul à la fois, replié par défaut).
   const [openPrompt, setOpenPrompt] = useState<string | null>(null)
 
@@ -235,6 +249,17 @@ export default function MoteursPage() {
     fetch(`/api/moteurs/${selected}/canny`)
       .then((r) => r.json())
       .then((d) => setCanny(d.canny ?? null))
+    setCannyXl(null)
+    setReglagesXl(null)
+    setDirtyXl(false)
+    if (selected === 'coulissant') {
+      fetch('/api/moteurs/coulissant-xl/canny')
+        .then((r) => r.json())
+        .then((d) => setCannyXl(d.canny ?? null))
+      fetch('/api/moteurs/coulissant-xl/reglages')
+        .then((r) => r.json())
+        .then((d) => setReglagesXl(d.reglages ?? null))
+    }
   }, [selected])
 
   /** Ajout d'un coloris à la palette (POST /api/coloris), depuis le mini-formulaire. */
@@ -277,7 +302,7 @@ export default function MoteursPage() {
     }
   }
 
-  /** Remplacement de l'image CANNY du moteur (fichier choisi via l'input caché). */
+  /** Remplacement de l'image Canny du moteur (fichier choisi via l'input caché). */
   async function uploadCanny(file: File) {
     setCannyBusy(true)
     const form = new FormData()
@@ -288,22 +313,54 @@ export default function MoteursPage() {
     if (res.ok && data?.canny) {
       setCanny(data.canny)
       setNotice(
-        `Image CANNY remplacée (${data.canny.width}×${data.canny.height}). Elle sert dès la prochaine génération.`
+        `Image Canny remplacée (${data.canny.width}×${data.canny.height}). Elle sert dès la prochaine génération.`
       )
     } else {
       setNotice(`Erreur : ${data?.error ?? res.status}`)
     }
   }
 
+  /** Remplacement de l'image Canny XL (jeu « coulissant-xl », fiche TERMINUS). */
+  async function uploadCannyXl(file: File) {
+    setCannyXlBusy(true)
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch('/api/moteurs/coulissant-xl/canny', { method: 'POST', body: form })
+    const data = await res.json().catch(() => null)
+    setCannyXlBusy(false)
+    if (res.ok && data?.canny) {
+      setCannyXl(data.canny)
+      setNotice(
+        `Image Canny XL remplacée (${data.canny.width}×${data.canny.height}). Elle sert dès le prochain décor XL.`
+      )
+    } else {
+      setNotice(`Erreur : ${data?.error ?? res.status}`)
+    }
+  }
+
+  async function resetCannyXl() {
+    if (!window.confirm('Revenir à l’image Canny XL d’origine (trottoir « caméra reculée ») ?')) return
+    setCannyXlBusy(true)
+    const res = await fetch('/api/moteurs/coulissant-xl/canny', { method: 'DELETE' })
+    const data = await res.json().catch(() => null)
+    setCannyXlBusy(false)
+    if (res.ok && data?.canny) {
+      setCannyXl(data.canny)
+      setNotice('Image Canny XL d’origine rétablie.')
+    } else {
+      setNotice(`Erreur : ${data?.error ?? res.status}`)
+    }
+  }
+
   async function resetCanny() {
-    if (!window.confirm('Revenir à l’image CANNY d’origine ?')) return
+    if (!window.confirm('Revenir à l’image Canny d’origine ?')) return
     setCannyBusy(true)
     const res = await fetch(`/api/moteurs/${selected}/canny`, { method: 'DELETE' })
     const data = await res.json().catch(() => null)
     setCannyBusy(false)
     if (res.ok && data?.canny) {
       setCanny(data.canny)
-      setNotice('Image CANNY d’origine rétablie.')
+      setNotice('Image Canny d’origine rétablie.')
     } else {
       setNotice(`Erreur : ${data?.error ?? res.status}`)
     }
@@ -314,6 +371,13 @@ export default function MoteursPage() {
     if (!reglages) return
     setReglages({ ...reglages, [key]: value })
     setDirty(true)
+  }
+
+  /** Réglages du jeu Canny XL (alignement, corridor) — fiche TERMINUS. */
+  function setFieldXl<K extends keyof MoteurReglages>(key: K, value: MoteurReglages[K]) {
+    if (!reglagesXl) return
+    setReglagesXl({ ...reglagesXl, [key]: value })
+    setDirtyXl(true)
   }
 
   async function save() {
@@ -347,15 +411,43 @@ export default function MoteursPage() {
       body: JSON.stringify(body),
     })
     const data = await res.json().catch(() => null)
-    setBusy(false)
-    if (res.ok && data?.reglages) {
-      setReglages(data.reglages)
-      setDirty(false)
-      const m = moteurs.find((x) => x.key === selected)
-      setNotice(`Réglages du moteur ${m?.label ?? selected} enregistrés.`)
-    } else {
+    if (!res.ok || !data?.reglages) {
+      setBusy(false)
       setNotice(`Erreur : ${data?.error ?? res.status}`)
+      return
     }
+    setReglages(data.reglages)
+    setDirty(false)
+    // Réglages du jeu Canny XL (fiche TERMINUS) : seuls ses champs Canny partent —
+    // alignement et corridor, avec la même règle « Manuel seulement » que ci-dessus.
+    if (dirtyXl && reglagesXl) {
+      const bodyXl: Record<string, unknown> = {
+        cannyPlacement: reglagesXl.cannyPlacement,
+        corridor: reglagesXl.corridor,
+      }
+      if (reglagesXl.cannyPlacement === 'manuel') {
+        bodyXl.cannyOffsetPx = Math.min(300, Math.max(-300, Math.round(reglagesXl.cannyOffsetPx || 0)))
+      }
+      if (reglagesXl.corridor === 'manuel') {
+        bodyXl.corridorWidthCm = Math.min(800, Math.max(100, Math.round(reglagesXl.corridorWidthCm || 100)))
+      }
+      const resXl = await fetch('/api/moteurs/coulissant-xl/reglages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyXl),
+      })
+      const dataXl = await resXl.json().catch(() => null)
+      if (!resXl.ok || !dataXl?.reglages) {
+        setBusy(false)
+        setNotice(`Erreur (Canny XL) : ${dataXl?.error ?? resXl.status}`)
+        return
+      }
+      setReglagesXl(dataXl.reglages)
+      setDirtyXl(false)
+    }
+    setBusy(false)
+    const m = moteurs.find((x) => x.key === selected)
+    setNotice(`Réglages du moteur ${m?.label ?? selected} enregistrés.`)
   }
 
   const current = moteurs.find((m) => m.key === selected)
@@ -386,10 +478,11 @@ export default function MoteursPage() {
    * préfixent (« portillon-piliers-murets »). Un prompt que le moteur n'a pas
    * encore (ex. décor portillon) est « à venir ».
    */
-  const PromptRows = ({ list }: { list: { name: string; label: string }[] }) => (
+  const PromptRows = ({ list }: { list: { name: string; label: string; exact?: boolean }[] }) => (
     <div className="space-y-1.5">
       {list.map((p) => {
-        const name = selected === 'battant' ? p.name : `${selected}-${p.name}`
+        // exact = nom pris tel quel (prompts d'un JEU, ex. coulissant-xl-…).
+        const name = p.exact ? p.name : selected === 'battant' ? p.name : `${selected}-${p.name}`
         const version = promptVersions[name]
         const open = openPrompt === name
         return (
@@ -692,6 +785,13 @@ export default function MoteursPage() {
             <GabaritsManager moteur={selected} embedded />
           </Section>
 
+          {/* ============ Gabarits XL (coulissants larges 450-600, 22/07/2026) ============ */}
+          {selected === 'coulissant' && (
+            <Section title="Gabarits XL">
+              <GabaritsManager moteur="coulissant-xl" embedded />
+            </Section>
+          )}
+
           {/* ============ Canny ============ */}
           <Section title="Canny">
             <div className="flex flex-wrap gap-5 items-start">
@@ -701,7 +801,7 @@ export default function MoteursPage() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={`/api/artifacts?p=${encodeURIComponent(canny.relPath)}&v=${canny.version}`}
-                    alt="CANNY trottoir de référence"
+                    alt="Canny trottoir de référence"
                     className="w-full rounded-[8px] border border-border bg-black"
                   />
                 ) : (
@@ -715,7 +815,9 @@ export default function MoteursPage() {
                     : 'Chargement…'}
                 </figcaption>
               </figure>
-              <div className="flex flex-wrap gap-x-8 gap-y-4 flex-1 min-w-64">
+              {/* Options en UNE colonne (mise en page Canny XL préférée par
+                  Mathias le 22/07/2026, appliquée à tous les moteurs). */}
+              <div className="flex flex-col gap-4 flex-1 min-w-64">
                 <div>
                   <FieldLabel>Alignement des piliers au sol</FieldLabel>
                   <Seg
@@ -768,6 +870,9 @@ export default function MoteursPage() {
                       <span className="text-xs text-text-disabled">cm</span>
                     </div>
                   )}
+                  <p className="text-[11px] text-text-disabled mt-1.5 max-w-56">
+                    Auto = plus grande taille active du moteur.
+                  </p>
                 </div>
                 <div>
                   <FieldLabel>Image de référence</FieldLabel>
@@ -810,7 +915,137 @@ export default function MoteursPage() {
                 </div>
               </div>
             </div>
+
           </Section>
+
+          {/* ============ Canny XL (coulissants 450-600, 22/07/2026) — section à
+               part, comme Gabarits XL : le Canny standard ci-dessus ne bouge pas.
+               Mêmes options que le Canny (alignement, corridor), pour le jeu XL. ============ */}
+          {selected === 'coulissant' && (
+            <Section title="Canny XL">
+              <p className="text-xs text-text-secondary mb-4">
+                Utilisé UNIQUEMENT par les tailles et décors XL (coulissants 450 – 600) — il
+                vient en complément, le Canny de la section précédente reste celui du standard.
+              </p>
+              <div className="flex flex-wrap gap-5 items-start">
+                <figure className="w-[400px] max-w-full flex-none">
+                  {cannyXl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={`/api/artifacts?p=${encodeURIComponent(cannyXl.relPath)}&v=${cannyXl.version}`}
+                      alt="Canny XL de référence"
+                      className="w-full rounded-[8px] border border-border bg-black"
+                    />
+                  ) : (
+                    <div className="w-full aspect-[2000/1330] rounded-[8px] border border-border bg-surface" />
+                  )}
+                  <figcaption className="text-[11px] text-text-disabled mt-1 text-center">
+                    {cannyXl
+                      ? `Référence XL ${cannyXl.width ?? '?'}×${cannyXl.height ?? '?'} · ${
+                          cannyXl.custom ? 'personnalisée' : 'd’origine'
+                        }`
+                      : 'Chargement…'}
+                  </figcaption>
+                </figure>
+                <div className="flex flex-col gap-4 flex-1 min-w-64">
+                  <div>
+                    <FieldLabel>Alignement des piliers au sol</FieldLabel>
+                    <Seg
+                      value={reglagesXl?.cannyPlacement ?? 'auto'}
+                      options={[
+                        { value: 'auto', label: 'Auto' },
+                        { value: 'manuel', label: 'Manuel' },
+                        { value: 'off', label: 'Off' },
+                      ]}
+                      onChange={(v) => setFieldXl('cannyPlacement', v)}
+                      disabled={!reglagesXl}
+                    />
+                    {reglagesXl?.cannyPlacement === 'manuel' && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={-300}
+                          max={300}
+                          value={reglagesXl.cannyOffsetPx}
+                          onChange={(e) => setFieldXl('cannyOffsetPx', Number(e.target.value) || 0)}
+                          title="Décalage manuel de la ligne de sol (jeu XL)"
+                          className="w-24 border border-border bg-white rounded-[8px] px-3 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                        />
+                        <span className="text-xs text-text-disabled">px · positif = descendu</span>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <FieldLabel>Largeur du corridor</FieldLabel>
+                    <Seg
+                      value={reglagesXl?.corridor ?? 'auto'}
+                      options={[
+                        { value: 'auto', label: 'Auto' },
+                        { value: 'manuel', label: 'Manuel' },
+                      ]}
+                      onChange={(v) => setFieldXl('corridor', v)}
+                      disabled={!reglagesXl}
+                    />
+                    {reglagesXl?.corridor === 'manuel' && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={100}
+                          max={800}
+                          value={reglagesXl.corridorWidthCm}
+                          onChange={(e) => setFieldXl('corridorWidthCm', Number(e.target.value) || 0)}
+                          title="Largeur imposée du corridor (jeu XL)"
+                          className="w-24 border border-border bg-white rounded-[8px] px-3 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                        />
+                        <span className="text-xs text-text-disabled">cm</span>
+                      </div>
+                    )}
+                    <p className="text-[11px] text-text-disabled mt-1.5 max-w-56">
+                      Auto = plus grande taille XL active (600 cm).
+                    </p>
+                  </div>
+                  <div>
+                    <FieldLabel>Image de référence</FieldLabel>
+                    <input
+                      ref={cannyXlFileRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        e.target.value = ''
+                        if (f) uploadCannyXl(f)
+                      }}
+                    />
+                    <span className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={cannyXlBusy || !cannyXl}
+                        onClick={() => cannyXlFileRef.current?.click()}
+                        className="bg-white border border-border rounded-[8px] px-3.5 py-1.5 text-xs font-bold text-text-secondary hover:border-brand-green hover:text-brand-green transition-colors disabled:opacity-50"
+                      >
+                        {cannyXlBusy ? 'Envoi…' : 'Remplacer'}
+                      </button>
+                      {cannyXl?.custom && (
+                        <button
+                          type="button"
+                          disabled={cannyXlBusy}
+                          onClick={resetCannyXl}
+                          className="text-xs text-text-secondary hover:underline disabled:opacity-50"
+                        >
+                          Revenir à l&apos;image d&apos;origine
+                        </button>
+                      )}
+                    </span>
+                    <p className="text-[11px] text-text-disabled mt-1.5 max-w-56">
+                      Trottoir « caméra reculée » : sert uniquement aux décors XL —
+                      remplaçable à tout moment.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </Section>
+          )}
 
           {/* ============ Prompt System ============ */}
           <Section title="Prompt System">
@@ -820,7 +1055,7 @@ export default function MoteursPage() {
                   <span className="w-[22px] h-[22px] rounded-[6px] bg-surface border border-border grid place-items-center text-xs font-bold text-text-secondary">1</span>
                   <h3 className="font-semibold text-[15px]">Décor</h3>
                 </div>
-                <PromptRows list={PROMPTS_DECOR} />
+                <PromptRows list={selected === 'coulissant' ? PROMPTS_DECOR_COULISSANT : PROMPTS_DECOR} />
               </div>
 
               <div className="py-4">
@@ -993,12 +1228,12 @@ export default function MoteursPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={save}
-              disabled={busy || !dirty || !reglages}
+              disabled={busy || (!dirty && !dirtyXl) || !reglages}
               className="bg-brand-green text-white text-sm font-bold rounded-[10px] px-5 py-2.5 hover:bg-brand-green-hover transition-colors disabled:opacity-50"
             >
               Enregistrer les réglages du moteur
             </button>
-            {dirty && (
+            {(dirty || dirtyXl) && (
               <span className="text-xs text-brand-teal">Modifications non enregistrées.</span>
             )}
           </div>

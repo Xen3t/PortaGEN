@@ -73,6 +73,122 @@ html[data-brand='sicaan'] {
   animation: fade-in-up 0.4s ease-out both;
 }
 
+/* Animations des illustrations SilhouetteMode (page Générer, 22/07/2026) :
+   le produit reste immobile, le contexte s'anime à l'affichage.
+   Contrainte : la grande barre se déploie d'abord toute seule, les deux
+   traits pleins apparaissent à son arrivée, puis les deux hachurés. */
+@keyframes cote-deploie {
+  from {
+    transform: scaleX(0);
+  }
+}
+.anim-cote {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: cote-deploie 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.3s backwards;
+}
+@keyframes apparait {
+  from {
+    opacity: 0;
+  }
+}
+.anim-cote-fin {
+  animation: apparait 0.35s ease-out 1s backwards;
+}
+.anim-cote-hachures {
+  animation: apparait 0.35s ease-out 1.35s backwards;
+}
+
+/* Libre : le soleil surgit, le nuage dérive depuis la droite.
+   (anim-loupe : même surgissement pour la loupe « Depuis le catalogue ».) */
+@keyframes soleil-pop {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+}
+.anim-soleil,
+.anim-loupe {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: soleil-pop 0.5s ease-out 0.35s backwards;
+}
+@keyframes nuage-derive {
+  from {
+    transform: translateX(14px);
+    opacity: 0;
+  }
+}
+.anim-nuage {
+  animation: nuage-derive 0.8s ease-out 0.5s backwards;
+}
+
+/* Décors : la maison se pose, puis les haies poussent depuis le sol.
+   (anim-photos : même pose pour les photos « Depuis mes images ».) */
+@keyframes maison-pose {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+}
+.anim-maison,
+.anim-photos {
+  animation: maison-pose 0.55s ease-out 0.3s backwards;
+}
+@keyframes haie-pousse {
+  from {
+    transform: scale(0);
+  }
+}
+.anim-haie {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: haie-pousse 0.4s ease-out backwards;
+}
+.anim-haie-1 {
+  animation-delay: 0.7s;
+}
+.anim-haie-2 {
+  animation-delay: 0.85s;
+}
+
+/* Petits pictos SVG (PictoIllu, remplacement des PNG le 22/07/2026) :
+   l'élément principal surgit, le détail apparaît juste après. */
+@keyframes picto-pop {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+}
+.anim-picto {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: picto-pop 0.35s ease-out 0.15s backwards;
+}
+.anim-picto-suite {
+  animation: apparait 0.3s ease-out 0.55s backwards;
+}
+
+/* Picto « générer » : les étincelles se jouent au survol du bouton (classe
+   group sur le bouton), pas au chargement. */
+@keyframes etincelle-pop {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+}
+.anim-etincelle-1,
+.anim-etincelle-2 {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.group:hover .anim-etincelle-1 {
+  animation: etincelle-pop 0.35s ease-out;
+}
+.group:hover .anim-etincelle-2 {
+  animation: etincelle-pop 0.3s ease-out 0.2s backwards;
+}
+
 /* Pastilles de sous-navigation (page Génération, 13/07/2026) */
 .pill {
   display: inline-flex;

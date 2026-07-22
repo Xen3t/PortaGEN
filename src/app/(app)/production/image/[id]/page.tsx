@@ -199,7 +199,7 @@ export default function ImageDetailPage() {
             { label: '3 · Livraison 2000×1330', path: r.deliveryPath },
           ]
         : [
-            { label: 'CANNY envoyé', path: r.cannySentPath },
+            { label: 'Canny envoyé', path: r.cannySentPath },
             { label: 'Décor généré', path: r.imagePath },
           ]
 
@@ -428,7 +428,7 @@ export default function ImageDetailPage() {
                       <div className="text-xs text-text-secondary">Alignement sol appliqué</div>
                       <div className="font-mono">
                         {r.groundAlign === 'fallback-canny'
-                          ? 'CANNY (défaut)'
+                          ? 'Canny (défaut)'
                           : `${String(r.groundOffsetPxNative ?? 0)} px`}
                       </div>
                     </div>

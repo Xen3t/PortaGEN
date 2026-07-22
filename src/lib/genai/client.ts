@@ -51,6 +51,34 @@ function extractUsage(meta: UsageMetadataLike | undefined): Usage {
   }
 }
 
+/**
+ * Traduit l'erreur brute de l'API Gemini (anglais, souvent du JSON) en une
+ * phrase claire pour l'écran. Le message d'origine reste intact dans le
+ * journal des appels API (logApiCall) pour le diagnostic.
+ */
+function erreurGeminiLisible(err: unknown): string {
+  const brut = err instanceof Error ? err.message : String(err)
+  if (/429|RESOURCE_EXHAUSTED|quota/i.test(brut)) {
+    return 'Quota Gemini atteint — réessayez dans quelques minutes (429).'
+  }
+  if (/503|UNAVAILABLE|overloaded/i.test(brut)) {
+    return 'Gemini est surchargé en ce moment — relancez dans quelques minutes (503).'
+  }
+  if (/500|502|504|INTERNAL/i.test(brut)) {
+    return 'Erreur interne côté Gemini — relancez, ça passe en général au 2e essai (5xx).'
+  }
+  if (/401|403|API.?key|PERMISSION_DENIED|UNAUTHENTICATED/i.test(brut)) {
+    return 'Clé API Gemini invalide ou non autorisée — vérifiez la clé dans la configuration.'
+  }
+  if (/SAFETY|PROHIBITED_CONTENT|blocked/i.test(brut)) {
+    return 'Génération bloquée par le filtre de contenu Gemini — relancez ou ajustez la demande.'
+  }
+  if (/fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network/i.test(brut)) {
+    return 'Connexion à Gemini impossible — vérifiez l’accès internet, puis relancez.'
+  }
+  return brut
+}
+
 /** Retente sur erreurs transitoires (429/5xx), jamais sur les erreurs de requête. */
 async function withRetry<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
   let lastErr: unknown
@@ -117,7 +145,7 @@ export async function generateText(opts: GenerateTextOptions): Promise<{
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     })
-    throw err
+    throw new Error(erreurGeminiLisible(err))
   }
 }
 
@@ -218,6 +246,6 @@ export async function generateImage(opts: GenerateImageOptions): Promise<Generat
       ok: false,
       error: err instanceof Error ? err.message : String(err),
     })
-    throw err
+    throw new Error(erreurGeminiLisible(err))
   }
 }

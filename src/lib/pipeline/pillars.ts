@@ -8,10 +8,11 @@ import { generateImage, type ImageSize } from '@/lib/genai/client'
 import { marquerImageIa } from '@/lib/images/marquage'
 import { DEFAULT_PARAMS, type GabaritParams, type SizeCm } from '@/lib/geometry'
 import { overlayGabaritOnDecor, gabaritMask } from '@/lib/images/gabarits'
-import { whiteLineBands, horizontalEdgeProfile, bandPatternShift } from '@/lib/images/analyze'
+import { whiteLineBands, horizontalEdgeProfile, bandPatternShift, groundBandShift } from '@/lib/images/analyze'
 import { estimateShift, applyShift, compositeWithMask } from '@/lib/images/composite'
 import { addShadowsToMask } from '@/lib/images/shadows'
 import { resizeExact } from '@/lib/images/resize'
+import { gabaritSetForSize } from '@/lib/gabaritSets'
 import { getMoteurReglages, moteurPromptName, type MoteurKey } from '@/lib/moteurs'
 import { NATIVE_DIMS } from '@/lib/pipeline/nativeFormats'
 import { cannyRefPath } from '@/lib/server/cannyRef'
@@ -115,11 +116,15 @@ export async function runPillarsStep(opts: PillarsStepOptions): Promise<PillarsS
   // moteurs. Hiérarchie : appel explicite > réglage coloris (catalogue) > moteur > code.
   const moteurKey: MoteurKey = opts.moteur ?? 'battant'
   const moteur = getMoteurReglages(moteurKey)
+  // Coulissants XL (22/07/2026) : alignement et image Canny du JEU de la taille
+  // (section « Canny XL » de la fiche TERMINUS) — le reste suit le moteur.
+  const jeu = gabaritSetForSize(moteurKey, opts.size.w)
+  const cannyReg = jeu === moteurKey ? moteur : getMoteurReglages(jeu)
   const align =
     opts.align ??
-    (moteur.cannyPlacement === 'manuel' ? moteur.cannyOffsetPx : moteur.cannyPlacement)
-  // CANNY du MOTEUR : image personnalisée déposée dans l'admin, sinon trottoir d'origine.
-  const cannyPath = opts.cannyPath ?? cannyRefPath(moteurKey)
+    (cannyReg.cannyPlacement === 'manuel' ? cannyReg.cannyOffsetPx : cannyReg.cannyPlacement)
+  // Canny du JEU : image personnalisée déposée dans l'admin, sinon celle d'origine.
+  const cannyPath = opts.cannyPath ?? cannyRefPath(jeu)
 
   const db = getDb()
   let jobId = opts.jobId
@@ -144,7 +149,13 @@ export async function runPillarsStep(opts: PillarsStepOptions): Promise<PillarsS
     } else if (align === 'auto') {
       const bands = (await whiteLineBands(cannyPath)).filter((b) => b.yNorm > 0.5)
       const profile = await horizontalEdgeProfile(opts.decorPath)
-      const match = bandPatternShift(
+      // XL (22/07/2026) : mesure calée sur le bord HAUT du trottoir (celui où
+      // posent les piliers) — le motif complet exigé par bandPatternShift
+      // s'accrochait à la bordure route quand le décor dessinait un trottoir
+      // plus fin que le Canny (piliers en l'air, jobs #136-148). Le standard,
+      // validé, garde la mesure historique.
+      const mesure = jeu === 'coulissant-xl' ? groundBandShift : bandPatternShift
+      const match = mesure(
         profile,
         bands.map((b) => b.yNorm)
       )

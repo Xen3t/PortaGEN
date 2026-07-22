@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import GabaritPreview from '@/components/GabaritPreview'
 import { DEFAULT_PARAMS, effectiveHeights, type CapStyle, type GabaritParams } from '@/lib/geometry'
-import type { MoteurKey } from '@/lib/moteurs'
+import { GABARIT_SET_DEFAULTS, type GabaritSetKey } from '@/lib/gabaritSets'
 
 /**
  * Gestion des gabarits (piliers & murets) — extraction de l'ex-page
@@ -11,6 +11,8 @@ import type { MoteurKey } from '@/lib/moteurs'
  * Admin → Réglages par moteur : chaque moteur porte SES gabarits (règle
  * 13/07/2026 : jamais partagés) — la prop `moteur` sélectionne le jeu de
  * réglages et le référentiel de tailles lus/écrits (/api/size-params, /api/sizes).
+ * Depuis le 22/07/2026 elle accepte aussi le jeu « coulissant-xl » (onglet
+ * Gabarits XL de la fiche TERMINUS : coulissants 450-600, scène élargie).
  *  - PARAMÈTRES GLOBAUX (curseurs) : pilotent TOUTES les tailles d'un coup ;
  *  - grille de VIGNETTES compactes, une rangée par largeur, aperçu seul ;
  *  - clic sur une vignette → PANNEAU DE DÉTAIL pour déroger cette taille
@@ -40,15 +42,17 @@ type Override = Partial<
     | 'muretEnabled'
     | 'capStyle'
     | 'offsetX'
+    | 'sceneH'
   >
 >
 type OverrideKey = keyof Override
 type Slider = { key: Exclude<OverrideKey, 'capStyle' | 'muretEnabled'>; label: string; unit: string; min: number; max: number }
 
-// Mot du produit selon le moteur — utilisé dans tous les libellés.
-const PRODUIT: Record<MoteurKey, string> = {
+// Mot du produit selon le jeu de gabarits — utilisé dans tous les libellés.
+const PRODUIT: Record<GabaritSetKey, string> = {
   battant: 'portail',
   coulissant: 'portail',
+  'coulissant-xl': 'portail',
   portillon: 'portillon',
 }
 
@@ -61,6 +65,12 @@ const globalSliders = (produit: string): Slider[] => [
   { key: 'muretHMin', label: `Muret · ${produit} 100`, unit: 'cm', min: 20, max: 250 },
   { key: 'muretHMax', label: `Muret · ${produit} 200`, unit: 'cm', min: 20, max: 250 },
   { key: 'offsetX', label: `Décalage X ${produit}`, unit: 'cm', min: -100, max: 100 },
+]
+
+// Jeu XL uniquement : reculer la scène l'agrandit (cm de hauteur, la largeur
+// suit le ratio MES) pour que les lames de 4,5 à 6 m tiennent dans le cadre.
+const XL_SLIDERS: Slider[] = [
+  { key: 'sceneH', label: 'Recul de la scène', unit: 'cm', min: 320, max: 700 },
 ]
 
 // Dérogation par taille : hauteurs imposées en direct pour CETTE taille.
@@ -77,13 +87,17 @@ export default function GabaritsManager({
   moteur = 'battant',
   embedded = false,
 }: {
-  moteur?: MoteurKey
+  /** Moteur ou jeu de gabarits (« coulissant-xl » = onglet Gabarits XL). */
+  moteur?: GabaritSetKey
   /** true = intégré dans une section de la fiche moteur qui porte déjà le titre. */
   embedded?: boolean
 }) {
   const [sizes, setSizes] = useState<SizeEntry[]>([])
   const [decors, setDecors] = useState<DecorEntry[]>([])
   const [decorPath, setDecorPath] = useState('')
+  // Canny du jeu en surimpression sur les aperçus (demande Mathias 22/07/2026) :
+  // repère blanc pour régler piliers et murets — le jeu XL affiche le Canny XL.
+  const [cannyUrl, setCannyUrl] = useState<string | null>(null)
   const [globals, setGlobals] = useState<Override>({})
   const [globalsDirty, setGlobalsDirty] = useState(false)
   const [overrides, setOverrides] = useState<Record<string, Override>>({})
@@ -120,6 +134,17 @@ export default function GabaritsManager({
         setOverrides(d.overrides ?? {})
         setGlobals(d.globals ?? {})
       })
+    setCannyUrl(null)
+    fetch(`/api/moteurs/${moteur}/canny`)
+      .then((r) => r.json())
+      .then((d) =>
+        setCannyUrl(
+          d.canny?.relPath
+            ? `/api/artifacts?p=${encodeURIComponent(d.canny.relPath)}&v=${d.canny.version}`
+            : null
+        )
+      )
+      .catch(() => setCannyUrl(null))
   }, [moteur])
 
   // Ordre de navigation dans la fenêtre de dérogation : celui des vignettes
@@ -158,9 +183,15 @@ export default function GabaritsManager({
   )
   const widths = useMemo(() => [...new Set(sizes.map((s) => s.w))].sort((a, b) => a - b), [sizes])
 
+  // Défauts effectifs du jeu : ceux du code + ceux du jeu (scène élargie en XL).
+  const base = useMemo<GabaritParams>(
+    () => ({ ...DEFAULT_PARAMS, ...(GABARIT_SET_DEFAULTS[moteur] ?? {}) }),
+    [moteur]
+  )
+
   /** Valeur effective d'un paramètre pour une taille (défaut < global < dérogation). */
   const effectiveFor = (label: string): GabaritParams => ({
-    ...DEFAULT_PARAMS,
+    ...base,
     ...globals,
     ...(panelLabel === label ? draft : overrides[label] ?? {}),
   })
@@ -287,8 +318,11 @@ export default function GabaritsManager({
           </p>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-x-6 gap-y-4">
-          {globalSliders(PRODUIT[moteur]).map((p) => {
-            const value = (globals[p.key] ?? DEFAULT_PARAMS[p.key]) as number
+          {[
+            ...globalSliders(PRODUIT[moteur]),
+            ...(moteur === 'coulissant-xl' ? XL_SLIDERS : []),
+          ].map((p) => {
+            const value = (globals[p.key] ?? base[p.key]) as number
             return (
               <div key={p.key}>
                 <div className="flex items-baseline justify-between text-xs mb-1">
@@ -315,7 +349,7 @@ export default function GabaritsManager({
               <label className="font-medium text-text-secondary">Chapeau pilier</label>
             </div>
             <select
-              value={globals.capStyle ?? DEFAULT_PARAMS.capStyle}
+              value={globals.capStyle ?? base.capStyle}
               onChange={(e) => setGlobal('capStyle', e.target.value as CapStyle)}
               title="Chapeau pilier"
               className="w-full text-xs border border-border bg-white rounded-[8px] px-2 py-1.5 focus:outline-none focus:border-brand-green transition-colors"
@@ -329,7 +363,7 @@ export default function GabaritsManager({
             <label className="flex items-center gap-2 text-xs font-medium text-text-secondary cursor-pointer">
               <input
                 type="checkbox"
-                checked={globals.muretEnabled ?? DEFAULT_PARAMS.muretEnabled}
+                checked={globals.muretEnabled ?? base.muretEnabled}
                 onChange={(e) => setGlobal('muretEnabled', e.target.checked)}
               />
               Murets latéraux
@@ -375,7 +409,7 @@ export default function GabaritsManager({
                         open ? 'border-brand-green' : 'border-transparent hover:shadow-default hover:translate-y-[-1px]'
                       }`}
                     >
-                      <GabaritPreview decorUrl={decorUrl} size={{ w: s.w, h: s.h }} params={effectiveFor(s.label)} />
+                      <GabaritPreview decorUrl={decorUrl} size={{ w: s.w, h: s.h }} params={effectiveFor(s.label)} cannyUrl={cannyUrl} />
                       <div className="flex items-center justify-between gap-1 mt-1.5 px-0.5">
                         <span className="text-sm font-medium">{s.w}×{s.h}</span>
                         {hasOverride && (
@@ -441,7 +475,7 @@ export default function GabaritsManager({
               {/* Grand aperçu */}
               <div className="flex-1 min-w-0 bg-surface p-5 flex items-center justify-center">
                 <div className="w-full max-w-3xl">
-                  <GabaritPreview decorUrl={decorUrl} size={{ w: panelSize.w, h: panelSize.h }} params={effectiveFor(panelLabel)} />
+                  <GabaritPreview decorUrl={decorUrl} size={{ w: panelSize.w, h: panelSize.h }} params={effectiveFor(panelLabel)} cannyUrl={cannyUrl} />
                 </div>
               </div>
 
@@ -456,7 +490,7 @@ export default function GabaritsManager({
                       ? interp.pillarH
                       : p.key === 'muretH'
                         ? interp.muretH
-                        : ((globals[p.key] ?? DEFAULT_PARAMS[p.key]) as number)
+                        : ((globals[p.key] ?? base[p.key]) as number)
                   const value = Math.round(draft[p.key] ?? fallback)
                   return (
                     <div key={p.key}>
@@ -509,7 +543,7 @@ export default function GabaritsManager({
                     )}
                   </label>
                   <select
-                    value={draft.capStyle ?? globals.capStyle ?? DEFAULT_PARAMS.capStyle}
+                    value={draft.capStyle ?? globals.capStyle ?? base.capStyle}
                     onChange={(e) => setDraftField('capStyle', e.target.value as CapStyle)}
                     title="Chapeau pilier"
                     className="text-xs border border-border bg-white rounded-[8px] px-2 py-1.5 focus:outline-none focus:border-brand-green transition-colors"
@@ -534,7 +568,7 @@ export default function GabaritsManager({
                   </label>
                   <input
                     type="checkbox"
-                    checked={draft.muretEnabled ?? globals.muretEnabled ?? DEFAULT_PARAMS.muretEnabled}
+                    checked={draft.muretEnabled ?? globals.muretEnabled ?? base.muretEnabled}
                     onChange={(e) => setDraftField('muretEnabled', e.target.checked)}
                     title="Murets latéraux"
                   />

@@ -5,15 +5,21 @@ import { computeLayout, gendarmePathD, type GabaritParams, type SizeCm } from '@
 /**
  * Aperçu en direct des gabarits : la même géométrie (cm) que le pipeline, rendue en SVG
  * par-dessus le décor sélectionné — équivalent interactif du mockup historique.
+ * `cannyUrl` (demande Mathias 22/07/2026) : le Canny du jeu en surimpression, traits
+ * teintés en ROUGE pour l'aperçu (filtre d'affichage : blanc → rouge, fond noir
+ * rendu transparent par mix-blend screen) — repère de réglage, le fichier Canny
+ * lui-même reste blanc pour le pipeline.
  */
 export default function GabaritPreview({
   decorUrl,
   size,
   params,
+  cannyUrl,
 }: {
   decorUrl: string | null
   size: SizeCm
   params: Partial<GabaritParams>
+  cannyUrl?: string | null
 }) {
   const L = computeLayout(size, params)
   const r = (rect: { x: number; y: number; w: number; h: number } | null, fill: string) =>
@@ -36,6 +42,16 @@ export default function GabaritPreview({
         preserveAspectRatio="none"
         className="absolute inset-0 w-full h-full"
       >
+        {/* Filtre de teinte du Canny (aperçu seulement) : garde le canal rouge,
+            éteint vert et bleu — les traits blancs deviennent rouge pur. */}
+        <defs>
+          <filter id="canny-rouge" colorInterpolationFilters="sRGB">
+            <feColorMatrix
+              type="matrix"
+              values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0"
+            />
+          </filter>
+        </defs>
         {r(L.muretLeft, 'rgba(138,138,138,0.85)')}
         {r(L.muretRight, 'rgba(138,138,138,0.85)')}
         {r(L.pillarLeft, 'rgba(107,107,107,0.9)')}
@@ -63,6 +79,15 @@ export default function GabaritPreview({
           strokeDasharray="8 5"
         />
       </svg>
+      {cannyUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={cannyUrl}
+          alt="Canny du jeu en surimpression"
+          className="absolute inset-0 w-full h-full object-fill pointer-events-none"
+          style={{ mixBlendMode: 'screen', filter: 'url(#canny-rouge)' }}
+        />
+      )}
       {L.isClamped && (
         <div className="absolute top-2 right-2 bg-brand-red text-white text-xs px-2 py-1 rounded-[8px]">
           Hors cadre

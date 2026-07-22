@@ -14,25 +14,25 @@ import { usePathname } from 'next/navigation'
  *
  * 13/07/2026 : la Bibliothèque devient « Décors » et rejoint la nav principale
  * — ses onglets Moodboards et Produits ont été supprimés.
- * L'adresse reste /bibliotheque (des liens internes pointent dessus).
  * Ordre demandé par Mathias : Accueil · Génération · Décors · Catalogue.
  *
  * 13/07/2026 (sessions-v2) : « Production » SUPPRIMÉE de la nav — un lancement
  * de gamme = une session, affichée sur l'Accueil ; /production redirige vers /.
  * Les pages de détail /production/gamme/* et /production/image/* restent.
+ *
+ * 22/07/2026 (rework, structure actée par Mathias — maquette
+ * generer-depuis-catalogue-v3) : « Génération » devient « Générer » et
+ * « Décors » SORT de la barre — la page devient « MES Décors » sur /decors
+ * (ex-/bibliotheque, redirigée), accessible depuis l'Accueil et la page
+ * Générer. Nav : Accueil · Générer · Catalogue.
  */
 
 const MAIN_LINKS = [
   { href: '/', label: 'Accueil', match: (p: string) => p === '/' },
   {
     href: '/generation',
-    label: 'Génération',
-    match: (p: string) => p.startsWith('/generation'),
-  },
-  {
-    href: '/bibliotheque',
-    label: 'Décors',
-    match: (p: string) => p.startsWith('/bibliotheque'),
+    label: 'Générer',
+    match: (p: string) => p.startsWith('/generation') || p.startsWith('/decors'),
   },
   {
     href: '/catalogue',

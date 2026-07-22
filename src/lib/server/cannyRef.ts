@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
 import { config } from '@/lib/config'
-import type { MoteurKey } from '@/lib/moteurs'
+import type { GabaritSetKey } from '@/lib/gabaritSets'
 
 /**
  * Image CANNY de référence PAR MOTEUR (demande Mathias 13/07/2026 : pouvoir la
@@ -10,6 +10,12 @@ import type { MoteurKey } from '@/lib/moteurs'
  * propre image (data/moteurs/<moteur>/canny-ref.png), le pipeline l'utilise ;
  * sinon on retombe sur le trottoir historique 2000×1330 (Assets/). « Revenir à
  * l'image d'origine » = suppression du fichier déposé, rien d'autre.
+ *
+ * Depuis le 22/07/2026 la clé est un JEU DE GABARITS : « coulissant-xl » (CANNY
+ * XL, section dédiée de la fiche TERMINUS) a sa propre image d'origine — le
+ * trottoir « caméra reculée » (bande plus fine, remontée vers l'horizon,
+ * dérivé par scripts/derive-canny-xl.ts) qui pousse les décors XL à l'échelle.
+ * Le CANNY du coulissant standard ne bouge pas : le XL vient EN COMPLÉMENT.
  */
 
 export const DEFAULT_CANNY_PATH = path.join(
@@ -18,13 +24,22 @@ export const DEFAULT_CANNY_PATH = path.join(
   'Trottoir 2000x1330.png'
 )
 
-const customPath = (moteur: MoteurKey) =>
-  path.join(config.dataDir, 'moteurs', moteur, 'canny-ref.png')
+export const DEFAULT_CANNY_XL_PATH = path.join(
+  config.assetsDir,
+  'Trottoir Canny',
+  'Trottoir XL 2000x1330.png'
+)
 
-/** Chemin de l'image CANNY active du moteur (personnalisée sinon d'origine). */
-export function cannyRefPath(moteur: MoteurKey): string {
-  const p = customPath(moteur)
-  return fs.existsSync(p) ? p : DEFAULT_CANNY_PATH
+const defaultPath = (jeu: GabaritSetKey) =>
+  jeu === 'coulissant-xl' ? DEFAULT_CANNY_XL_PATH : DEFAULT_CANNY_PATH
+
+const customPath = (jeu: GabaritSetKey) =>
+  path.join(config.dataDir, 'moteurs', jeu, 'canny-ref.png')
+
+/** Chemin de l'image CANNY active du jeu (personnalisée sinon d'origine). */
+export function cannyRefPath(jeu: GabaritSetKey): string {
+  const p = customPath(jeu)
+  return fs.existsSync(p) ? p : defaultPath(jeu)
 }
 
 export interface CannyRefInfo {
@@ -37,12 +52,12 @@ export interface CannyRefInfo {
   version: number
 }
 
-export async function cannyRefInfo(moteur: MoteurKey): Promise<CannyRefInfo> {
-  const full = cannyRefPath(moteur)
+export async function cannyRefInfo(jeu: GabaritSetKey): Promise<CannyRefInfo> {
+  const full = cannyRefPath(jeu)
   const meta = await sharp(full).metadata().catch(() => null)
   const st = fs.statSync(full)
   return {
-    custom: full !== DEFAULT_CANNY_PATH,
+    custom: full !== defaultPath(jeu),
     relPath: path.relative(config.rootDir, full).split(path.sep).join('/'),
     width: meta?.width ?? null,
     height: meta?.height ?? null,
@@ -52,7 +67,7 @@ export async function cannyRefInfo(moteur: MoteurKey): Promise<CannyRefInfo> {
 
 /** Dépose la nouvelle image de référence (convertie en PNG, telle quelle sinon). */
 export async function saveCannyRef(
-  moteur: MoteurKey,
+  jeu: GabaritSetKey,
   buffer: Buffer
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   let png: Buffer
@@ -61,14 +76,14 @@ export async function saveCannyRef(
   } catch {
     return { ok: false, error: 'Fichier illisible — envoyer une image (PNG, JPG ou WebP)' }
   }
-  const p = customPath(moteur)
+  const p = customPath(jeu)
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, png)
   return { ok: true }
 }
 
-/** Supprime l'image personnalisée : le moteur repart sur l'image d'origine. */
-export function resetCannyRef(moteur: MoteurKey): void {
-  const p = customPath(moteur)
+/** Supprime l'image personnalisée : le jeu repart sur son image d'origine. */
+export function resetCannyRef(jeu: GabaritSetKey): void {
+  const p = customPath(jeu)
   if (fs.existsSync(p)) fs.unlinkSync(p)
 }

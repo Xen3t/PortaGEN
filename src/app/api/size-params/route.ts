@@ -7,16 +7,17 @@ import {
   saveSizeParamsOverride,
   sanitizeSizeParams,
 } from '@/lib/db/sizeParams'
-import { moteurDef, type MoteurKey } from '@/lib/moteurs'
+import { isGabaritSetKey, type GabaritSetKey } from '@/lib/gabaritSets'
 
 /**
  * Réglages de gabarit (globaux + par taille) : lecture pour tous, écriture admin.
- * PAR MOTEUR (règle 13/07/2026 : jamais partagés) — `?moteur=` en GET, champ
+ * PAR JEU DE GABARITS (règle 13/07/2026 : jamais partagés ; « coulissant-xl » =
+ * jeu Gabarits XL du coulissant, 22/07/2026) — `?moteur=` en GET, champ
  * `moteur` dans le corps en écriture. Absent = battant (clés historiques).
  */
-function parseMoteur(value: unknown): MoteurKey | null {
+function parseMoteur(value: unknown): GabaritSetKey | null {
   if (value === undefined || value === null || value === '') return 'battant'
-  return typeof value === 'string' && moteurDef(value) ? (value as MoteurKey) : null
+  return isGabaritSetKey(value) ? value : null
 }
 
 export async function GET(req: NextRequest) {

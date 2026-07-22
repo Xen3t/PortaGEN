@@ -307,3 +307,82 @@ export function bandPatternShift(
   if (Math.abs(bestShift) === window) return null
   return { shiftNorm: bestShift / h, score: bestScore }
 }
+
+/**
+ * Décalage vertical calé sur la BANDE D'ANCRAGE (la première = bord haut du
+ * trottoir, celle où pose la ligne de sol des gabarits), les bandes suivantes
+ * ne servant que de contrôle de cohérence avec une tolérance.
+ *
+ * Pourquoi (1re gamme XL, 22/07/2026, jobs #136-148) : le décor généré peut
+ * dessiner un trottoir un peu plus FIN que le CANNY de référence — bord haut
+ * descendu, bordure route en place. Le motif étant déformé, aucun décalage ne
+ * fait répondre les 3 bandes ensemble : `bandPatternShift` choisit alors le
+ * compromis qui colle aux bords les plus contrastés (la bordure route) et pose
+ * les piliers EN L'AIR, ~75 px au-dessus du trottoir.
+ *
+ * Garde-fous conservés de la leçon du 11/07 (piliers en pleine allée) :
+ * l'ancrage exige un bord NET (1,5 × bruit, comme `strongestEdgeNear`), chaque
+ * bande basse doit répondre près de sa position attendue (± tolérance), et un
+ * calage collé à la borne de recherche est rejeté. Retourne null si le bord
+ * d'ancrage est introuvable — le repli « position du CANNY » reste le plan de base.
+ */
+export function groundBandShift(
+  profile: number[],
+  bandsYNorm: number[],
+  windowNorm = 0.05,
+  // ±2 % de la hauteur : la déformation mesurée le 22/07 (bord haut décalé de
+  // 1,6 % pendant que la bordure ne bouge pas) tient dans cette tolérance.
+  toleranceNorm = 0.02
+): { shiftNorm: number; score: number } | null {
+  if (bandsYNorm.length === 0) return null
+  const bands = [...bandsYNorm].sort((a, b) => a - b)
+  const anchor = bands[0]
+  const others = bands.slice(1)
+  const h = profile.length
+  const window = Math.round(windowNorm * h)
+  const tolerance = Math.round(toleranceNorm * h)
+
+  // Même référence de bruit que bandPatternShift : moitié inférieure uniquement.
+  const lower = profile.slice(Math.floor(h / 2))
+  const noiseMean = lower.reduce((a, b) => a + b, 0) / Math.max(1, lower.length)
+  if (noiseMean <= 0) return null
+
+  const at = (i: number) => (i >= 0 && i < h ? profile[i] : 0)
+  const bandValue = (y: number): number => Math.max(at(y), 0.9 * Math.max(at(y - 1), at(y + 1)))
+
+  let bestShift: number | null = null
+  let bestScore = -Infinity
+  for (let s = -window; s <= window; s++) {
+    const anchorY = Math.round(anchor * h) + s
+    if (anchorY < 0 || anchorY >= h) continue
+    const anchorV = bandValue(anchorY)
+    if (anchorV < noiseMean * 1.5) continue // pas de bord net à l'ancrage
+    // Cohérence : chaque bande basse doit répondre PRÈS de sa position attendue.
+    let ok = true
+    for (const b of others) {
+      const center = Math.round(b * h) + s
+      let found = false
+      for (let t = -tolerance; t <= tolerance && !found; t++) {
+        if (bandValue(center + t) >= noiseMean * 1.1) found = true
+      }
+      if (!found) {
+        ok = false
+        break
+      }
+    }
+    if (!ok) continue
+    // Le score est la force du bord d'ancrage : c'est LUI qu'on cale.
+    // Ex æquo : préférer le plus petit décalage, comme bandPatternShift.
+    if (
+      anchorV > bestScore ||
+      (anchorV === bestScore && bestShift !== null && Math.abs(s) < Math.abs(bestShift))
+    ) {
+      bestScore = anchorV
+      bestShift = s
+    }
+  }
+  if (bestShift === null) return null
+  // Calage collé à la borne : le vrai décalage est probablement hors plage.
+  if (Math.abs(bestShift) === window) return null
+  return { shiftNorm: bestShift / h, score: bestScore }
+}

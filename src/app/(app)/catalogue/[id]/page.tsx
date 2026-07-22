@@ -8,6 +8,7 @@ import {
   familyTitle,
   invalidateCatalogueCache,
 } from '../catalogueUi'
+import { COULISSANT_XL_MIN_W } from '@/lib/gabaritSets'
 import DetourageStudio from '@/components/DetourageStudio'
 import DecorStudio from '@/components/DecorStudio'
 import { swatchFor } from '@/lib/catalogue/colorisPalette'
@@ -68,6 +69,8 @@ interface Detail {
 
 interface ColorisSettings {
   decorId: number | null
+  /** Décor par défaut des tailles XL (coulissants ≥ 450, 22/07/2026) — type « coulissant-xl ». */
+  decorXlId: number | null
   /** 'moteur' (défaut) = suivre le réglage du moteur ; 'off'/'manual' = dérogation. */
   align: 'moteur' | 'off' | 'manual'
   alignPx: number
@@ -80,6 +83,7 @@ interface DecorEntry {
   status: string
   gamme: string | null
   file_path: string
+  type: string
 }
 
 interface ProductGeneration {
@@ -253,7 +257,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
   const [saving, setSaving] = useState(false)
   // Génération d'un décor depuis la fenêtre de réglages (bloc 3.5) : panneau de
   // choix (moodboard de la gamme + tirages) puis studio de décor en plein écran.
-  const [genDecor, setGenDecor] = useState<{ moodboard: string | null; tirages: number } | null>(null)
+  const [genDecor, setGenDecor] = useState<{ moodboard: string | null; tirages: number; xl?: boolean } | null>(null)
   const [genBusy, setGenBusy] = useState(false)
   const [studioJobs, setStudioJobs] = useState<number[] | null>(null)
   const [generations, setGenerations] = useState<ProductGeneration[]>([])
@@ -466,7 +470,10 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
       if (r.status === 409 && d?.code === 'reglages_manquants') {
         pendingCell.current = { coloris, w, h, format }
         openSettings(coloris)
-        setGenMsg(`Choisis un décor par défaut pour ${coloris.toLowerCase()} : la génération partira ensuite.`)
+        // Le serveur précise le décor attendu (standard ou XL selon la taille).
+        setGenMsg(
+          `${d?.error ?? `Choisis un décor par défaut pour ${coloris.toLowerCase()}.`} La génération partira ensuite.`
+        )
         return
       }
       if (!r.ok) {
@@ -577,6 +584,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
     return (
       settings[coloris] ?? {
         decorId: null,
+        decorXlId: null,
         align: 'moteur',
         alignPx: 0,
         formats: { site: true, marketplace: true },
@@ -588,6 +596,11 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
     if (decorId === null) return 'non défini'
     return decors.find((d) => d.id === decorId)?.name ?? `décor n°${decorId}`
   }
+
+  // Coulissants XL (22/07/2026) : une case ≥ 450 cm d'une gamme coulissante part
+  // sur le DÉCOR XL du coloris (jeux incompatibles, jamais de repli).
+  const gammeIsCoulissant = (detail?.family ?? '').toUpperCase().includes('COULISSANT')
+  const isXlCell = (w: number) => gammeIsCoulissant && w >= COULISSANT_XL_MIN_W
 
   function alignLabel(s: ColorisSettings): string {
     if (s.align === 'off') return 'alignement désactivé'
@@ -614,12 +627,14 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
       if (r.ok) {
         const d = await r.json()
         const newDecorId = d.settings?.decorId ?? null
+        const newXlDecorId = d.settings?.decorXlId ?? null
         setSettings((prev) => ({ ...prev, [coloris]: d.settings }))
         setEditing(null)
-        // Reprise de la case en attente d'un décor (flux « aucun décor par défaut »).
+        // Reprise de la case en attente d'un décor (flux « aucun décor par défaut ») —
+        // une case XL attend le décor XL, une case standard le décor standard.
         const p = pendingCell.current
         pendingCell.current = null
-        if (p && newDecorId) {
+        if (p && (isXlCell(p.w) ? newXlDecorId : newDecorId)) {
           setGenMsg(null)
           void generate(p.coloris, p.w, p.h, p.format)
         } else if (newDecorId && prevDecorId && prevDecorId !== newDecorId) {
@@ -642,9 +657,10 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
   }
 
   // — Génération d'un décor depuis la fenêtre de réglages (bloc 3.5) —
-  function openGenDecor() {
+  // xl = décor à l'échelle XL (coulissants 450-600, 22/07/2026).
+  function openGenDecor(xl = false) {
     const mbs = detail?.summary.moodboards ?? []
-    setGenDecor({ moodboard: mbs[0] ?? null, tirages: 3 })
+    setGenDecor({ moodboard: mbs[0] ?? null, tirages: 3, xl })
   }
 
   async function launchGenDecor() {
@@ -654,7 +670,11 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
       const r = await fetch(`/api/catalogue/${id}/decor`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ moodboard: genDecor.moodboard, count: genDecor.tirages }),
+        body: JSON.stringify({
+          moodboard: genDecor.moodboard,
+          count: genDecor.tirages,
+          xl: genDecor.xl || undefined,
+        }),
       })
       const d = await r.json().catch(() => null)
       if (!r.ok) {
@@ -670,7 +690,9 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
     }
   }
 
-  // Décor gardé/validé dans le studio → le choisir comme décor par défaut du coloris.
+  // Décor gardé/validé dans le studio → le choisir comme décor par défaut du
+  // coloris, dans la case de SON jeu : un décor XL remplit « décor XL », jamais
+  // le décor standard (incompatibles, décision 22/07/2026).
   async function pickGeneratedDecor(decorId: number) {
     setStudioJobs(null)
     try {
@@ -680,7 +702,15 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
       setDecors(active)
       setIsAdmin(d.role === 'admin')
       const found = active.find((x) => x.id === decorId)
-      if (found) setDraft((prev) => (prev ? { ...prev, decorId: found.id } : prev))
+      if (found) {
+        setDraft((prev) =>
+          prev
+            ? found.type === 'coulissant-xl'
+              ? { ...prev, decorXlId: found.id }
+              : { ...prev, decorId: found.id }
+            : prev
+        )
+      }
     } catch {
       // rechargement échoué : le décor reste choisissable manuellement dans la grille
     }
@@ -815,6 +845,11 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
     (d) => (d.gamme ?? '').trim().toUpperCase() === detail.name.trim().toUpperCase()
   )
   const modalDecors = [...gammeDecors, ...decors.filter((d) => !gammeDecors.includes(d))]
+  // Gamme avec largeurs XL → la fenêtre de réglages propose un 2ᵉ décor par
+  // défaut, côté XL (maquette decors-xl-page-produit-v2 validée le 22/07/2026).
+  const hasXl = detail.summary.sizes.some((s) => isXlCell(s.w))
+  const modalDecorsStd = modalDecors.filter((d) => d.type !== 'coulissant-xl')
+  const modalDecorsXl = modalDecors.filter((d) => d.type === 'coulissant-xl')
   const globalMissing = groups.reduce((n, g) => n + missingSiteCells(g.coloris).length, 0)
   // Moodboards de la gamme, source de génération d'un décor. Les PDF sont convertis
   // en image côté serveur (aperçu + génération) — bloc 3.5.
@@ -968,7 +1003,8 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
               </span>
               <span className="ml-auto flex flex-wrap items-center gap-3">
                 <span className="text-xs text-text-secondary">
-                  Réglages : décor « {decorName(s.decorId)} » · {alignLabel(s)} ·{' '}
+                  Réglages : décor « {decorName(s.decorId)} »
+                  {hasXl && <> · décor XL « {decorName(s.decorXlId)} »</>} · {alignLabel(s)} ·{' '}
                   <button
                     onClick={() => openSettings(g.coloris)}
                     className="text-brand-green font-bold hover:underline"
@@ -1302,7 +1338,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
             </span>
           )}
           <button
-            onClick={openGenDecor}
+            onClick={() => openGenDecor()}
             title="Générer un nouveau décor à partir d'un moodboard de la gamme"
             className="h-14 px-3 border-[1.5px] border-dashed border-[#b7d49a] rounded-[8px] text-brand-green text-[11px] font-bold hover:bg-brand-green-light transition-colors"
           >
@@ -1517,9 +1553,14 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-2">
                   Décor par défaut
+                  {hasXl && (
+                    <span className="normal-case tracking-normal font-normal text-text-disabled">
+                      {' '}· tailles standards (300 – 400)
+                    </span>
+                  )}
                 </label>
                 <div className="flex flex-wrap gap-2">
-                  {modalDecors.slice(0, 12).map((d) => (
+                  {modalDecorsStd.slice(0, 12).map((d) => (
                     <button
                       key={d.id}
                       onClick={() => setDraft({ ...draft, decorId: d.id })}
@@ -1541,7 +1582,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                     </button>
                   ))}
                   <button
-                    onClick={openGenDecor}
+                    onClick={() => openGenDecor()}
                     title="Générer un nouveau décor à partir d’un moodboard de la gamme"
                     className="w-[100px] min-h-[76px] border-[1.5px] border-dashed border-brand-green rounded-[8px] grid place-items-center text-brand-green font-bold text-[11px] text-center leading-tight px-2 hover:bg-brand-green-light transition-colors"
                   >
@@ -1549,13 +1590,68 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                     <br />
                     un décor
                   </button>
-                  {modalDecors.length === 0 && (
+                  {modalDecorsStd.length === 0 && (
                     <span className="text-sm text-text-secondary self-center">
                       Aucun décor actif — génère-en un →
                     </span>
                   )}
                 </div>
               </div>
+
+              {/* Décor XL (coulissants 450-600) — maquette decors-xl-page-produit-v2. */}
+              {hasXl && (
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-2">
+                    Décor par défaut{' '}
+                    <span className="bg-brand-teal text-white rounded-full px-2 py-0.5 text-[10px]">XL</span>
+                    <span className="normal-case tracking-normal font-normal text-text-disabled">
+                      {' '}· tailles XL (450 – 600)
+                    </span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {modalDecorsXl.slice(0, 12).map((d) => (
+                      <button
+                        key={d.id}
+                        onClick={() => setDraft({ ...draft, decorXlId: d.id })}
+                        className={`relative w-[100px] border rounded-[8px] overflow-hidden text-left text-[11px] bg-white transition-shadow ${
+                          draft.decorXlId === d.id
+                            ? 'border-brand-green ring-2 ring-brand-green-light'
+                            : 'border-border'
+                        }`}
+                        title={d.name}
+                      >
+                        <span className="absolute top-1 left-1 bg-brand-teal text-white rounded-full px-1.5 text-[9px] font-bold">XL</span>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/api/artifacts?p=${encodeURIComponent(d.file_path)}&w=240`}
+                          alt={d.name}
+                          className="w-full h-[52px] object-cover"
+                          loading="lazy"
+                        />
+                        <span className="block px-2 py-1 font-semibold truncate">{d.name}</span>
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => openGenDecor(true)}
+                      title="Générer un décor XL (échelle caméra reculée) depuis un moodboard de la gamme"
+                      className="w-[100px] min-h-[76px] border-[1.5px] border-dashed border-brand-teal rounded-[8px] grid place-items-center text-brand-teal font-bold text-[11px] text-center leading-tight px-2 hover:bg-brand-teal-light transition-colors"
+                    >
+                      ＋ Générer
+                      <br />
+                      un décor XL
+                    </button>
+                    {modalDecorsXl.length === 0 && (
+                      <span className="text-sm text-text-secondary self-center">
+                        Aucun décor XL — génère-en un →
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-text-secondary bg-surface rounded-[8px] px-3 py-2 mt-2">
+                    <b>Seuls les décors XL sont proposés ici</b> — un décor standard n&apos;est jamais
+                    utilisé pour une taille XL (et inversement).
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-2">
                   Alignement des piliers au sol
@@ -1992,7 +2088,14 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
         >
           <div className="bg-white rounded-[12px] shadow-lg w-[560px] max-w-full">
             <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-              <h3 className="text-[15px] font-bold m-0 flex-1">🎨 Générer un décor — {detail.name}</h3>
+              <h3 className="text-[15px] font-bold m-0 flex-1">
+                🎨 Générer un décor {genDecor.xl ? 'XL ' : ''}— {detail.name}
+                {genDecor.xl && (
+                  <span className="ml-2 bg-brand-teal text-white rounded-full px-2 py-0.5 text-[10px] align-middle">
+                    échelle XL · caméra reculée
+                  </span>
+                )}
+              </h3>
               <button
                 onClick={() => setGenDecor(null)}
                 className="text-text-disabled text-lg leading-none"

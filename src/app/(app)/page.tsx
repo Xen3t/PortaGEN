@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import SessionCards from './generation/SessionCards'
+import { SilhouetteModeIcone, type Mode } from './Silhouette'
 
 /**
  * ACCUEIL — page d'arrivée (navigation v2 validée le 12/07/2026) :
@@ -102,6 +103,47 @@ export default function AccueilPage() {
 
   return (
     <div className="grid gap-4">
+      {/* Les 3 actions au-dessus des sessions (rework 22/07/2026, validé par
+          Mathias — maquette generer-depuis-catalogue-v2) : MES Contrainte,
+          MES Libre, MES Décors. L'Accueil ne change pas au-delà de cette rangée. */}
+      <div className="grid md:grid-cols-3 gap-3.5">
+        {(
+          [
+            {
+              href: '/generation?mode=contrainte',
+              mode: 'contrainte' as Mode,
+              titre: 'MES Contrainte',
+              sous: 'catalogue ou images, décor imposé',
+            },
+            {
+              href: '/generation?mode=libre',
+              mode: 'libre' as Mode,
+              titre: 'MES Libre',
+              sous: 'génération libre (WIP)',
+            },
+            {
+              href: '/decors',
+              mode: 'decors' as Mode,
+              titre: 'MES Décors',
+              sous: 'créer et gérer les décors',
+            },
+          ] as const
+        ).map((a) => (
+          <Link
+            key={a.href}
+            href={a.href}
+            className="flex items-center gap-3.5 bg-white rounded-[12px] border-[1.5px] border-border shadow-sm px-5 py-4 transition-all hover:border-brand-green hover:shadow-md hover:-translate-y-0.5"
+          >
+            {/* Icônes carrées SilhouetteMode à la place des pictos PNG (22/07) */}
+            <SilhouetteModeIcone mode={a.mode} className="block w-[34px] h-[34px] shrink-0" />
+            <span>
+              <span className="block font-bold text-[15px]">{a.titre}</span>
+              <span className="block text-xs text-text-secondary">{a.sous}</span>
+            </span>
+          </Link>
+        ))}
+      </div>
+
       {/* Sessions rouvrables : directes ET lancements de gamme (sessions-v2,
           validée le 13/07/2026). 3 max sur l'accueil (demande Mathias) —
           masqué tant qu'il n'y en a aucune. Monté SANS attendre /api/accueil :

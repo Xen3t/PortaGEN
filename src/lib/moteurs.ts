@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { getDb } from '@/lib/db'
 import { getSetting, setSetting } from '@/lib/db/settings'
+import type { GabaritSetKey } from '@/lib/gabaritSets'
 
 /**
  * Registre des MOTEURS (cadrage docs/CADRAGE-MOTEURS-2026-07-12.md, maquette
@@ -139,10 +140,14 @@ export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
   livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
 }
 
-const reglagesKey = (moteur: MoteurKey) => `moteur.${moteur}.reglages`
+// La clé accepte aussi un JEU DE GABARITS (22/07/2026) : « coulissant-xl »
+// porte SES réglages Canny (alignement des piliers, largeur du corridor —
+// section « Canny XL » de la fiche TERMINUS). Les autres champs de ce jeu ne
+// sont jamais consultés : les pipelines lisent tout le reste sur le moteur.
+const reglagesKey = (jeu: GabaritSetKey) => `moteur.${jeu}.reglages`
 
 export function getMoteurReglages(
-  moteur: MoteurKey,
+  moteur: GabaritSetKey,
   db: Database.Database = getDb()
 ): MoteurReglages {
   const raw = getSetting(reglagesKey(moteur), db)
@@ -214,7 +219,7 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
 
 /** Fusionne les champs fournis dans les réglages existants, puis persiste. */
 export function patchMoteurReglages(
-  moteur: MoteurKey,
+  moteur: GabaritSetKey,
   patch: Partial<MoteurReglages>,
   db: Database.Database = getDb()
 ): MoteurReglages {

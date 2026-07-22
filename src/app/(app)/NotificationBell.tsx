@@ -10,6 +10,10 @@ import { usePathname, useRouter } from 'next/navigation'
  * L'état « lu » vit en localStorage (repère du dernier id vu) : pas de colonne en
  * base, la cloche reste un simple témoin. Menu déroulant calé sous l'icône, jamais
  * coupé — corrige la maquette où le volet débordait à droite.
+ *
+ * « Tout effacer » (22/07/2026) suit le même principe : un repère « effacé
+ * jusqu'à l'id X » en localStorage masque les notifications antérieures ; les
+ * lancements suivants réapparaissent normalement.
  */
 
 interface Notif {
@@ -29,6 +33,7 @@ interface Notif {
 }
 
 const SEEN_KEY = 'portagen-notif-seen'
+const CLEARED_KEY = 'portagen-notif-cleared'
 
 function relTime(iso: string): string {
   const then = new Date(iso.replace(' ', 'T') + 'Z').getTime()
@@ -49,6 +54,7 @@ export default function NotificationBell() {
   const pathname = usePathname()
   const [notifs, setNotifs] = useState<Notif[]>([])
   const [seen, setSeen] = useState(0)
+  const [cleared, setCleared] = useState(0)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -63,6 +69,8 @@ export default function NotificationBell() {
   useEffect(() => {
     const raw = Number(localStorage.getItem(SEEN_KEY))
     if (Number.isFinite(raw)) setSeen(raw)
+    const rawCleared = Number(localStorage.getItem(CLEARED_KEY))
+    if (Number.isFinite(rawCleared)) setCleared(rawCleared)
     load()
     const t = setInterval(load, 20000)
     return () => clearInterval(t)
@@ -80,7 +88,8 @@ export default function NotificationBell() {
     return () => document.removeEventListener('mousedown', onClick)
   }, [open, load])
 
-  const unread = notifs.filter((n) => n.id > seen).length
+  const visible = notifs.filter((n) => n.id > cleared)
+  const unread = visible.filter((n) => n.id > seen).length
 
   function markAllRead() {
     const maxId = notifs.reduce((m, n) => Math.max(m, n.id), seen)
@@ -88,9 +97,18 @@ export default function NotificationBell() {
     localStorage.setItem(SEEN_KEY, String(maxId))
   }
 
+  // Vide la liste : tout ce qui existe aujourd'hui est masqué (et marqué lu).
+  function clearAll() {
+    const maxId = notifs.reduce((m, n) => Math.max(m, n.id), Math.max(cleared, seen))
+    setCleared(maxId)
+    setSeen(maxId)
+    localStorage.setItem(CLEARED_KEY, String(maxId))
+    localStorage.setItem(SEEN_KEY, String(maxId))
+  }
+
   function openNotif(n: Notif) {
     setOpen(false)
-    router.push(n.source === 'decor' ? '/bibliotheque' : `/catalogue/${n.productId}`)
+    router.push(n.source === 'decor' ? '/decors' : `/catalogue/${n.productId}`)
   }
 
   const icon = (kind: Notif['kind']) =>
@@ -132,22 +150,32 @@ export default function NotificationBell() {
         <div className="absolute right-0 top-full mt-2 w-[360px] max-w-[calc(100vw-32px)] bg-white rounded-[12px] shadow-lg border border-border z-40 overflow-hidden">
           <div className="flex items-center px-4 py-3 border-b border-border">
             <span className="font-bold text-sm">Notifications</span>
-            {unread > 0 && (
-              <button
-                onClick={markAllRead}
-                className="ml-auto text-xs font-semibold text-brand-green hover:underline"
-              >
-                Tout marquer comme lu
-              </button>
-            )}
+            <span className="ml-auto flex items-center gap-3">
+              {unread > 0 && (
+                <button
+                  onClick={markAllRead}
+                  className="text-xs font-semibold text-brand-green hover:underline"
+                >
+                  Tout marquer comme lu
+                </button>
+              )}
+              {visible.length > 0 && (
+                <button
+                  onClick={clearAll}
+                  className="text-xs font-semibold text-text-secondary hover:underline"
+                >
+                  Tout effacer
+                </button>
+              )}
+            </span>
           </div>
           <div className="max-h-[60vh] overflow-y-auto">
-            {notifs.length === 0 ? (
+            {visible.length === 0 ? (
               <p className="px-4 py-6 text-sm text-text-secondary text-center">
                 Aucune notification pour l&apos;instant.
               </p>
             ) : (
-              notifs.map((n) => {
+              visible.map((n) => {
                 const ic = icon(n.kind)
                 // Un décor n'a pas de coloris : le titre reste le nom seul.
                 const coloris =

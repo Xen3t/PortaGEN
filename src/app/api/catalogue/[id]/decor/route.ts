@@ -12,6 +12,7 @@ import {
 } from '@/lib/server/moodboards'
 import { pdfFirstPageToJpeg } from '@/lib/server/pdfToImage'
 import { config } from '@/lib/config'
+import { moteurForFamily } from '@/lib/moteurs'
 
 /**
  * Génération d'un décor DEPUIS la page produit (bloc 3.5 — reco enquête décors,
@@ -36,6 +37,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const count = Math.min(4, Math.max(1, Number.isFinite(Number(body?.count)) ? Number(body.count) : 3))
   if (!moodboardRel) {
     return NextResponse.json({ error: 'Moodboard requis.' }, { status: 400 })
+  }
+  // Décor XL (22/07/2026) : réservé aux gammes coulissantes — le décor sera typé
+  // « coulissant-xl » (échelle XL : corridor 600, CANNY XL, scène élargie).
+  const xl = body?.xl === true
+  if (xl && moteurForFamily(product.family) !== 'coulissant') {
+    return NextResponse.json(
+      { error: 'Le décor XL est réservé aux gammes coulissantes.' },
+      { status: 400 }
+    )
   }
 
   // Moodboard de la gamme (serveur, lecture seule) : une IMAGE est copiée telle
@@ -91,11 +101,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       'decor',
       {
         moodboardPath: moodboardAbs,
-        imageSize: '2K',
+        // Décors UNIQUEMENT en 4K (décision Mathias 22/07/2026 — était 2K ici).
+        imageSize: '4K',
         slug,
         gamme: product.name,
-        name,
+        name: xl ? `${name} · XL` : name,
         nameSuffix: count > 1 ? ` · tirage ${i + 1}` : undefined,
+        moteur: xl ? 'coulissant-xl' : undefined,
       },
       undefined,
       auth.username
