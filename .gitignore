@@ -21,8 +21,9 @@ docs/
 Brief/
 # Maquettes de travail
 maquettes/
-# Standards et docs internes
-baseDocs/
+# Standards et docs internes (seul le modèle PM2 générique est partagé)
+baseDocs/*
+!baseDocs/ecosystem.config.example.cjs
 # Prompts métier (savoir-faire)
 Prompt System/
 # Assets produits (moodboards, PSD, images de travail)
