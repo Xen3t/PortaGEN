@@ -24,8 +24,6 @@ maquettes/
 # Standards et docs internes (seul le modèle PM2 générique est partagé)
 baseDocs/*
 !baseDocs/ecosystem.config.example.cjs
-# Config PM2 locale (le modèle générique reste dans baseDocs/)
-/ecosystem.config.cjs
 # Prompts métier (savoir-faire)
 Prompt System/
 # Assets produits (moodboards, PSD, images de travail)
