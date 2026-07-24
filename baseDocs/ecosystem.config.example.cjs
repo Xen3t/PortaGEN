@@ -9,7 +9,7 @@
 module.exports = {
   apps: [
     {
-      name: 'portagen',
+      name: 'PortaGEN',
       cwd: __dirname,
       exec_mode: 'fork',
       instances: 1,

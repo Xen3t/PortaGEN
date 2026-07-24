@@ -1,5 +1,5 @@
 // ============================================================
-// Configuration PM2 — PortaGEN (fichier local, non partagé sur git)
+// Configuration PM2 — PortaGEN
 // Modèle d'origine : baseDocs/ecosystem.config.example.cjs
 //
 // MÉTHODE DE LANCEMENT
@@ -18,15 +18,15 @@
 //
 // 2. Au quotidien :
 //        pm2 status              → voir si PortaGEN tourne
-//        pm2 logs portagen       → voir les messages du serveur
-//        pm2 restart portagen    → redémarrer
-//        pm2 stop portagen       → arrêter
+//        pm2 logs PortaGEN       → voir les messages du serveur
+//        pm2 restart PortaGEN    → redémarrer
+//        pm2 stop PortaGEN       → arrêter
 //
 // 3. Mise à jour du code (RÈGLE : jamais de build pendant que le
 //    serveur tourne) :
-//        pm2 stop portagen
+//        pm2 stop PortaGEN
 //        npm run build
-//        pm2 restart portagen
+//        pm2 restart PortaGEN
 //
 // 4. (Optionnel) Relancer PortaGEN tout seul au démarrage de Windows :
 //        npm install -g pm2-windows-startup
@@ -37,7 +37,7 @@
 module.exports = {
   apps: [
     {
-      name: 'portagen',
+      name: 'PortaGEN',
       cwd: __dirname,
       exec_mode: 'fork',
       instances: 1,
