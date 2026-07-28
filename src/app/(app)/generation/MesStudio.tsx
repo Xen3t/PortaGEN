@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import PhraseAttente from '@/components/PhraseAttente'
+import Chargement from '@/components/Chargement'
 
 /**
  * Studio MES (lot 4, 13/07/2026) — la fenêtre du studio décor, appliquée à la MES.
@@ -23,7 +25,7 @@ interface SJob {
     rootJobId?: number
     instruction?: string
   } | null
-  result: { deliveryPath?: string; instruction?: string } | null
+  result: { deliveryPath?: string; instruction?: string; productPath?: string } | null
   error: string | null
 }
 
@@ -41,6 +43,8 @@ export default function MesStudio({
   onChoose,
   onMP,
   onClose,
+  onPrev,
+  onNext,
 }: {
   batchId: string
   /** Typologie (battant / portillon) — préfixe du nom de fichier téléchargé. */
@@ -52,14 +56,76 @@ export default function MesStudio({
   onChoose: (versionJobId: number) => void
   onMP: (versionJobId: number) => void
   onClose: () => void
+  /** ← : MES précédente du lot (absent = première). */
+  onPrev?: () => void
+  /** → : MES suivante du lot (absent = dernière). */
+  onNext?: () => void
 }) {
   const [jobs, setJobs] = useState<SJob[]>([])
+  // false tant que la première réponse du serveur n'est pas arrivée : la zone
+  // image montre la roue de chargement, pas « Aucune version. » (28/07/2026).
+  const [charge, setCharge] = useState(false)
   const [viewJobId, setViewJobId] = useState<number | null>(null)
   const [instruction, setInstruction] = useState('')
   const [busy, setBusy] = useState(false)
   const [mpSent, setMpSent] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  // Aperçu en grand du PNG produit d'origine, par-dessus le studio
+  const [pngZoom, setPngZoom] = useState(false)
+  // Loupe : position de la souris sur l'image (0..1) + ratio hauteur/largeur de l'image,
+  // null = souris hors de l'image
+  const [loupe, setLoupe] = useState<{ x: number; y: number; ar: number } | null>(null)
+  // Puissance de la loupe (molette sur l'image pour l'ajuster), gardée entre deux survols
+  const [loupeZoom, setLoupeZoom] = useState(4)
+  // Dimensions de la fenêtre de la loupe, mesurées à son affichage (pour centrer sous le curseur)
+  const [lensBox, setLensBox] = useState<{ w: number; h: number } | null>(null)
+  const lensRef = useCallback((el: HTMLDivElement | null) => {
+    if (el) setLensBox({ w: el.offsetWidth, h: el.offsetHeight })
+  }, [])
+  const imgRef = useRef<HTMLImageElement | null>(null)
+  const zoneRef = useRef<HTMLDivElement | null>(null)
+
+  // Studio ouvert = la page derrière ne défile plus (sinon la molette la fait bouger)
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [])
+
+  // Molette au-dessus de l'image = puissance de la loupe. Listener natif non-passif
+  // posé sur la zone image (toujours montée) : on doit pouvoir bloquer le défilement
+  // du navigateur, ce que l'onWheel de React ne permet pas.
+  useEffect(() => {
+    const zone = zoneRef.current
+    if (!zone) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const img = imgRef.current
+      if (!img || !(e.target instanceof Node) || !img.contains(e.target)) return
+      setLoupeZoom((z) => Math.min(12, Math.max(2, e.deltaY < 0 ? z + 1 : z - 1)))
+    }
+    zone.addEventListener('wheel', onWheel, { passive: false })
+    return () => zone.removeEventListener('wheel', onWheel)
+  }, [])
   const follow = useRef(true)
+
+  // Butée des flèches : petit message éphémère quand ← sur la première MES
+  // du lot ou → sur la dernière (rien ne bouge, on prévient juste).
+  const [edgeHint, setEdgeHint] = useState<string | null>(null)
+  const edgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showEdge = useCallback((msg: string) => {
+    setEdgeHint(msg)
+    if (edgeTimer.current) clearTimeout(edgeTimer.current)
+    edgeTimer.current = setTimeout(() => setEdgeHint(null), 1600)
+  }, [])
+  useEffect(
+    () => () => {
+      if (edgeTimer.current) clearTimeout(edgeTimer.current)
+    },
+    []
+  )
 
   // Suivi du batch (versions + retouches en cours)
   useEffect(() => {
@@ -67,7 +133,10 @@ export default function MesStudio({
     const tick = async () => {
       try {
         const d = await fetch(`/api/gamme/${batchId}`).then((r) => r.json())
-        if (alive && Array.isArray(d.jobs)) setJobs(d.jobs)
+        if (alive && Array.isArray(d.jobs)) {
+          setJobs(d.jobs)
+          setCharge(true)
+        }
       } catch {
         // réseau : prochain tick
       }
@@ -80,14 +149,29 @@ export default function MesStudio({
     }
   }, [batchId])
 
-  // Échap pour fermer
+  // Échap : ferme l'aperçu PNG s'il est ouvert, sinon le studio.
+  // ← / → : MES précédente / suivante du lot — sauf quand on tape un retour.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        if (pngZoom) setPngZoom(false)
+        else onClose()
+        return
+      }
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return
+      if (e.key === 'ArrowLeft') {
+        if (onPrev) onPrev()
+        else showEdge('Première MES du lot')
+      } else {
+        if (onNext) onNext()
+        else showEdge('Dernière MES du lot')
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, pngZoom, onPrev, onNext, showEdge])
 
   const versions = jobs
     .filter((j) => j.id === rootJobId || (j.type === 'mes-fix' && j.payload?.rootJobId === rootJobId))
@@ -105,6 +189,8 @@ export default function MesStudio({
   const current =
     versions.find((v) => v.id === viewJobId) ?? latestDone ?? versions[versions.length - 1] ?? null
   const meta = versions.find((v) => v.id === rootJobId)?.payload ?? current?.payload ?? {}
+  // PNG produit d'origine — porté par le job MES racine, identique pour toutes les versions
+  const pp = versions.find((v) => v.id === rootJobId)?.result?.productPath
   const w = meta.size?.w
   const h = meta.size?.h
   const title = w && h ? `${meta.coloris ?? ''} · ${w}B${h}` : meta.coloris ?? 'MES'
@@ -142,6 +228,7 @@ export default function MesStudio({
 
   const currentDone = current?.status === 'done' && current.result?.deliveryPath
   const dp = current?.result?.deliveryPath
+
   // MP déjà demandé pour cette MES (dans ce studio ou ailleurs) → un seul passage
   const mpDone =
     mpSent || jobs.some((j) => j.type === 'marketplace' && j.payload?.rootJobId === rootJobId)
@@ -158,9 +245,6 @@ export default function MesStudio({
         <div className="flex items-center gap-3 px-5 py-3 border-b border-border shrink-0">
           <div>
             <h2 className="font-bold text-text-primary">Studio MES — {title}</h2>
-            <p className="text-xs text-text-secondary">
-              Envoie un retour à Nano Banana Pro, compare les versions, garde celle qui te plaît.
-            </p>
           </div>
           <button
             onClick={onClose}
@@ -183,15 +267,29 @@ export default function MesStudio({
         <div className="flex-1 flex min-h-0 max-[800px]:flex-col">
           {/* Zone image + galerie */}
           <div className="flex-1 flex flex-col min-w-0 bg-surface">
-            <div className="flex-1 grid place-items-center min-h-0 p-4 relative">
+            <div ref={zoneRef} className="flex-1 grid place-items-center min-h-0 p-4 relative">
               {current == null ? (
-                <p className="text-text-secondary text-sm">Aucune version.</p>
+                charge ? (
+                  <p className="text-text-secondary text-sm">Aucune version.</p>
+                ) : (
+                  <Chargement plein={false} />
+                )
               ) : currentDone && dp ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  ref={imgRef}
                   src={imgUrl(dp)}
                   alt={title}
-                  className={`max-h-[58vh] max-w-full object-contain rounded-[12px] shadow-sm ${working ? 'opacity-50' : ''}`}
+                  onMouseMove={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect()
+                    setLoupe({
+                      x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+                      y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+                      ar: r.height / r.width,
+                    })
+                  }}
+                  onMouseLeave={() => setLoupe(null)}
+                  className={`max-h-[58vh] max-w-full object-contain rounded-[12px] shadow-sm cursor-crosshair ${working ? 'opacity-50' : ''}`}
                 />
               ) : current.status === 'error' ? (
                 <div className="text-center text-brand-red text-sm max-w-md">
@@ -201,7 +299,7 @@ export default function MesStudio({
               ) : (
                 <div className="text-center text-text-secondary">
                   <div className="animate-spin h-10 w-10 border-4 border-border border-t-brand-green rounded-full mx-auto mb-3" />
-                  <p className="font-medium">Nano Banana Pro travaille…</p>
+                  <p className="font-medium"><PhraseAttente /></p>
                   <p className="text-xs mt-1">La nouvelle version s&apos;affichera ici (≈ 1 à 2 min).</p>
                 </div>
               )}
@@ -209,16 +307,21 @@ export default function MesStudio({
                 <div className="absolute inset-0 grid place-items-center pointer-events-none">
                   <div className="bg-white/95 rounded-[12px] px-5 py-4 text-center shadow-lg">
                     <div className="animate-spin h-7 w-7 border-4 border-border border-t-brand-green rounded-full mx-auto mb-2" />
-                    <p className="text-sm font-medium text-text-secondary">Nouvelle version en cours…</p>
+                    <p className="text-sm font-medium text-text-secondary"><PhraseAttente /></p>
                   </div>
                 </div>
+              )}
+              {edgeHint && (
+                <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white text-xs font-bold px-3.5 py-1.5 rounded-full pointer-events-none animate-fade-in-up whitespace-nowrap">
+                  {edgeHint}
+                </span>
               )}
             </div>
 
             {/* Galerie des versions */}
             <div className="shrink-0 border-t border-border bg-white px-4 py-3">
               <p className="text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
-                🕘 Versions ({versions.length})
+                Versions ({versions.length})
               </p>
               <div className="flex gap-2.5 overflow-x-auto">
                 {versions.map((v) => {
@@ -241,17 +344,18 @@ export default function MesStudio({
                         <img src={imgUrl(v.result!.deliveryPath!, 240)} alt={`V${n}`} loading="lazy" decoding="async" className="w-full h-[74px] object-cover" />
                       ) : (
                         <span className="w-full h-[74px] grid place-items-center bg-surface text-[11px] text-text-disabled">
-                          {vworking ? '⏳ en cours' : v.status === 'error' ? '⚠ échec' : `V${n}`}
+                          {vworking ? 'En cours…' : v.status === 'error' ? 'Échec' : `V${n}`}
                         </span>
                       )}
-                      {chosen && <span className="absolute top-1 right-1.5 text-brand-green text-sm">★</span>}
+                      {chosen && (
+                        <span className="absolute top-1 right-1 bg-brand-green text-white text-[10px] font-bold px-1.5 py-px rounded-full">
+                          Choisie
+                        </span>
+                      )}
                       <span className="block px-2 py-1 text-[11px]">
-                        <b>
-                          V{n}
-                          {chosen ? ' ✓' : ''}
-                        </b>
+                        <b>V{n}</b>
                         <span className="block text-text-disabled truncate">
-                          {n === 1 ? 'origine' : instrOf(v) || 'retouche'}
+                          {n === 1 ? 'Origine' : instrOf(v) || 'Retouche'}
                         </span>
                       </span>
                     </button>
@@ -261,11 +365,16 @@ export default function MesStudio({
             </div>
           </div>
 
-          {/* Colonne actions */}
-          <div className="w-[340px] max-[800px]:w-auto shrink-0 border-l max-[800px]:border-l-0 max-[800px]:border-t border-border p-4 overflow-y-auto flex flex-col gap-4">
+          {/* Colonne actions — grisée et recouverte par la loupe pendant le survol de l'image */}
+          <div className="w-[340px] max-[800px]:w-auto shrink-0 border-l max-[800px]:border-l-0 max-[800px]:border-t border-border relative">
+            <div
+              className={`h-full p-4 overflow-y-auto flex flex-col gap-4 transition-opacity ${
+                loupe ? 'opacity-30 grayscale pointer-events-none select-none' : ''
+              }`}
+            >
             <div>
               <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
-                🪄 Envoyer un retour à Nano Banana Pro
+                Demander une retouche
               </label>
               <textarea
                 value={instruction}
@@ -282,23 +391,19 @@ export default function MesStudio({
               >
                 {working ? 'Version en cours…' : busy ? 'Envoi…' : 'Générer la version'}
               </button>
-              <p className="text-[11px] text-text-disabled mt-1.5">
-                Chaque retour crée une <b>nouvelle version</b> ; l&apos;ancienne reste dans l&apos;historique. Le
-                portail est verrouillé (ne change pas).
-              </p>
             </div>
 
             <div className="border-t border-border pt-3">
               <p className="text-[13px] text-text-secondary mb-2">
-                Tu regardes <b>V{current ? numOf(current) : '–'}</b>
-                {isChosen ? ' — c’est ta version choisie.' : chosenJobId ? '.' : '.'}
+                Version affichée : <b>V{current ? numOf(current) : '–'}</b>
+                {isChosen ? ' — version choisie' : ''}
               </p>
               <button
                 onClick={() => current && onChoose(current.id)}
                 disabled={!currentDone || isChosen}
                 className="w-full bg-brand-green text-white rounded-[10px] py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
               >
-                {isChosen ? '★ Version déjà choisie' : `★ Je veux cette version (V${current ? numOf(current) : ''})`}
+                {isChosen ? 'Version déjà choisie' : 'Choisir cette version'}
               </button>
               {currentDone && dp && (
                 <a
@@ -306,7 +411,7 @@ export default function MesStudio({
                   download={fname}
                   className="mt-2 w-full inline-flex items-center justify-center gap-2 bg-white border border-border text-text-secondary rounded-[10px] py-2 text-sm font-bold hover:border-brand-green hover:text-brand-green transition-colors"
                 >
-                  ⬇ Télécharger cette version
+                  Télécharger cette version
                 </a>
               )}
             </div>
@@ -326,18 +431,94 @@ export default function MesStudio({
                 className="w-full text-white rounded-[10px] py-2 text-sm font-bold disabled:opacity-50"
                 style={{ background: '#6d5bb5' }}
               >
-                {mpDone ? '✓ Déjà passée en MP' : '⬜ Passer la version choisie en MP'}
+                {mpDone ? 'Déclinée en MP' : 'Décliner en MP'}
               </button>
-              <p className="text-[11px] text-text-disabled mt-1.5">
-                {mpDone
-                  ? 'Le résultat MP apparaît sur la page de génération.'
-                  : 'Recadrage 1:1 + génération des bords, sur la version que tu as choisie.'}
-              </p>
+              {mpDone && (
+                <p className="text-[11px] text-text-disabled mt-1.5">
+                  Le résultat MP apparaît sur la page de génération.
+                </p>
+              )}
             </div>
+            )}
+
+            {/* PNG produit d'origine (détouré) — clic = aperçu en grand par-dessus le
+                studio. Bloc ÉLASTIQUE (demande Mathias 28/07) : la vignette occupe la
+                hauteur restante de la colonne et rétrécit au besoin, pour que tout
+                tienne toujours SANS ascenseur. */}
+            {pp && (
+              <div className="border-t border-border pt-3 flex-1 min-h-0 flex flex-col">
+                <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2 shrink-0">
+                  PNG produit d&apos;origine
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setPngZoom(true)}
+                  title="Le produit détouré utilisé pour cette MES — cliquer pour agrandir"
+                  className="w-full flex-1 min-h-[56px] overflow-hidden bg-white border border-border rounded-[10px] p-2 cursor-zoom-in hover:border-brand-green transition-colors flex items-center justify-center"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={imgUrl(pp, 480)}
+                    alt="PNG produit d'origine"
+                    loading="lazy"
+                    decoding="async"
+                    className="max-w-full max-h-full object-contain"
+                  />
+                </button>
+                <p className="text-[11px] text-text-disabled mt-1.5 shrink-0">
+                  Cliquer pour l&apos;afficher en grand.
+                </p>
+              </div>
+            )}
+            </div>
+
+            {/* Loupe : vue zoomée centrée sous le curseur, par-dessus les boutons.
+                Près des bords, la partie sans image reste blanche. */}
+            {loupe && currentDone && dp && (
+              <div className="absolute inset-0 z-10 p-2 pointer-events-none">
+                <div
+                  ref={lensRef}
+                  className="w-full h-full rounded-[12px] border-2 border-brand-green bg-white shadow-lg bg-no-repeat"
+                  style={(() => {
+                    // Le point sous le curseur (x, y en 0..1) est placé au centre de la fenêtre
+                    const bgW = (lensBox?.w ?? 320) * loupeZoom
+                    const bgH = bgW * loupe.ar
+                    return {
+                      backgroundImage: `url(${imgUrl(dp)})`,
+                      backgroundSize: `${bgW}px ${bgH}px`,
+                      backgroundPosition: `${(lensBox?.w ?? 320) / 2 - loupe.x * bgW}px ${
+                        (lensBox?.h ?? 320) / 2 - loupe.y * bgH
+                      }px`,
+                    }
+                  })()}
+                />
+                <span className="absolute top-4 left-1/2 -translate-x-1/2 bg-white/90 border border-border rounded-full px-3 py-1 text-[11px] font-bold text-text-secondary shadow-sm whitespace-nowrap">
+                  Loupe ×{loupeZoom} <span className="font-normal text-text-disabled">(molette)</span>
+                </span>
+              </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Aperçu en grand du PNG produit — par-dessus le studio (fond blanc :
+          un produit détouré serait invisible sur le voile noir) */}
+      {pngZoom && pp && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out"
+          onClick={(e) => {
+            e.stopPropagation()
+            setPngZoom(false)
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={imgUrl(pp)}
+            alt="PNG produit en grand"
+            className="max-w-full max-h-full object-contain rounded-[8px] bg-white"
+          />
+        </div>
+      )}
     </div>
   )
 }

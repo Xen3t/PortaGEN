@@ -121,6 +121,24 @@ export default function DecorsPage() {
   // — atelier décor (fenêtre plein écran : création et modification) —
   const [studio, setStudio] = useState<{ jobIds?: number[]; decorId?: number } | null>(null)
 
+  // Rouvrir l'atelier d'une session décor (carte « Mes sessions », 28/07/2026) :
+  // /decors?session=<batchId> recharge les tirages du lot dans le MÊME écran
+  // qu'au lancement. Lu au montage via window.location — pas de useSearchParams,
+  // qui imposerait un <Suspense> à toute la page (même choix que /generation).
+  useEffect(() => {
+    const batch = new URLSearchParams(window.location.search).get('session')
+    if (!batch) return
+    fetch(`/api/jobs?batch=${encodeURIComponent(batch)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const ids = ((d?.jobs ?? []) as { id: number; type: string }[])
+          .filter((j) => j.type === 'decor')
+          .map((j) => j.id)
+        if (ids.length) setStudio({ jobIds: ids })
+      })
+      .catch(() => {})
+  }, [])
+
   // — générations de décors en cours (sessions-v2, 13/07/2026 : la page
   //   Production a disparu, les décors hors gamme se suivent ICI) —
   const [runningJobs, setRunningJobs] = useState<{ id: number; label: string }[]>([])
@@ -144,7 +162,8 @@ export default function DecorsPage() {
                 (j) =>
                   (j.type === 'decor' || j.type === 'decor-fix') &&
                   (j.status === 'queued' || j.status === 'running') &&
-                  !j.batchId &&
+                  // depuis le 28/07/2026 les tirages de décor portent un batchId
+                  // (sessions) — on ne les écarte donc plus sur ce critère
                   j.payload?.lab !== true
               )
               .map((j) => ({
@@ -208,12 +227,6 @@ export default function DecorsPage() {
   useEffect(() => {
     if (page > pageCount) setPage(1)
   }, [page, pageCount])
-
-  // « Utiliser ce décor » : la Génération s'ouvre avec ce décor présélectionné
-  // (rebranché 20/07/2026 — l'ancien flux /creer?decor= n'existe plus).
-  function applyDecor(d: Decor) {
-    router.push(`/generation?decor=${d.id}`)
-  }
 
   async function patchDecor(id: number, fields: Record<string, unknown>) {
     const res = await fetch(`/api/decors/${id}`, {
@@ -505,10 +518,11 @@ export default function DecorsPage() {
             </div>
           )}
 
-          <div className="flex gap-5 items-start">
-            {/* Grille */}
-            <div className="flex-1">
-              <div className={`grid gap-4 ${detail ? 'grid-cols-2 xl:grid-cols-3' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4'}`}>
+          <div>
+            {/* Grille — pleine largeur : les détails s'ouvrent en fenêtre
+                par-dessus (maquette decor-detail-v1, validée le 28/07/2026). */}
+            <div>
+              <div className="stagger grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
                 {pageItems.map((d) => {
                   const isSel = selected.includes(d.id)
                   return (
@@ -534,14 +548,9 @@ export default function DecorsPage() {
                         {d.image_size && (
                           <span className="absolute top-2 right-2 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded">{d.image_size}</span>
                         )}
-                        {/* Badge de typologie (maquette decors-xl-bibliotheque-v2) — XL en sarcelle. */}
-                        <span
-                          className={`absolute bottom-2 left-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm ${
-                            d.type === 'coulissant-xl'
-                              ? 'bg-brand-teal text-white'
-                              : 'bg-white/95 text-text-secondary'
-                          }`}
-                        >
+                        {/* Badge de typologie — même style pour toutes, XL compris
+                            (harmonisation demandée par Mathias le 28/07/2026). */}
+                        <span className="absolute bottom-2 left-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm bg-white/95 text-text-secondary">
                           {TYPE_LABELS[d.type]}
                         </span>
                       </div>
@@ -586,8 +595,9 @@ export default function DecorsPage() {
               </div>
             </div>
 
-            {/* Panneau de détails */}
-            {detail && (
+            {/* Fenêtre de détails — masquée tant que l'atelier est ouvert
+                (elle réapparaît à la fermeture de l'atelier). */}
+            {detail && !studio && (
               <DetailPanel
                 key={detail.id}
                 decor={detail}
@@ -597,9 +607,9 @@ export default function DecorsPage() {
                 onClose={() => setDetailId(null)}
                 onPatch={(fields) => patchDecor(detail.id, fields)}
                 onFav={(e) => toggleFav(detail, e)}
-                onUse={() => applyDecor(detail)}
                 onDelete={() => removeDecor(detail)}
                 onOpenStudio={() => setStudio({ decorId: detail.id })}
+                onZoomMoodboard={(p) => setMbZoom(p)}
               />
             )}
           </div>
@@ -623,15 +633,23 @@ export default function DecorsPage() {
           onClose={() => {
             setStudio(null)
             load()
+            // atelier ouvert depuis une carte session : on nettoie l'adresse pour
+            // qu'un rechargement de la page ne rouvre pas la fenêtre
+            if (window.location.search.includes('session=')) router.replace('/decors')
           }}
           onChanged={load}
-          onUse={(id) => router.push(`/generation?decor=${id}`)}
         />
       )}
     </div>
   )
 }
 
+/**
+ * Détails du décor en FENÊTRE par-dessus la page (maquette decor-detail-v1,
+ * validée le 28/07/2026 — sans emojis) : grande image à gauche avec le
+ * moodboard de référence dessous, infos et réglages à droite, actions
+ * toujours visibles en bas. Échap ou clic hors de la fenêtre pour fermer.
+ */
 function DetailPanel({
   decor,
   gammes,
@@ -640,9 +658,9 @@ function DetailPanel({
   onClose,
   onPatch,
   onFav,
-  onUse,
   onDelete,
   onOpenStudio,
+  onZoomMoodboard,
 }: {
   decor: Decor
   gammes: string[]
@@ -651,13 +669,21 @@ function DetailPanel({
   onClose: () => void
   onPatch: (fields: Record<string, unknown>) => Promise<boolean>
   onFav: (e: React.MouseEvent) => void
-  onUse: () => void
   onDelete: () => void
   onOpenStudio: () => void
+  onZoomMoodboard: (path: string) => void
 }) {
   const [name, setName] = useState(decor.name)
   const [gamme, setGamme] = useState(decor.gamme ?? '')
   const [tagInput, setTagInput] = useState('')
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   async function addTag() {
     const t = tagInput.trim()
@@ -666,161 +692,197 @@ function DetailPanel({
     await onPatch({ tags: [...decor.tags, t] })
   }
 
+  const mbName = decor.moodboard_path?.split(/[\\/]/).pop() ?? null
+
   return (
-    <aside className="w-[340px] shrink-0 bg-white rounded-[16px] border border-border shadow-sm overflow-hidden sticky top-20">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <h2 className="font-medium">Détails du décor</h2>
-        <button onClick={onClose} className="text-text-disabled hover:text-text-secondary">✕</button>
-      </div>
-      <div className="relative">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={imgUrl(decor.file_path, 768)} alt={decor.name} loading="lazy" decoding="async" className="w-full aspect-[3/2] object-cover" />
-        {decor.image_size && (
-          <span className="absolute top-2 left-2 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded">{decor.image_size}</span>
-        )}
-      </div>
-      <div className="p-4 space-y-3 text-sm">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="font-medium truncate" title={decor.name}>{decor.name}</p>
-            <p className="text-xs text-text-disabled">
-              {decor.width && decor.height ? `${decor.width}×${decor.height} px · ` : ''}créé le {fmtDate(decor.created_at)}
-            </p>
+    <div
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-5"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-[16px] w-[min(1150px,96vw)] max-h-[94vh] flex flex-col overflow-hidden shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* En-tête : nom complet + dimensions, plus de nom tronqué */}
+        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-border shrink-0">
+          <div className="flex items-baseline gap-2.5 min-w-0">
+            <h2 className="font-bold text-[17px] truncate" title={decor.name}>{decor.name}</h2>
+            <span className="text-xs text-text-secondary whitespace-nowrap">
+              {decor.width && decor.height ? `${decor.width} × ${decor.height} px · ` : ''}
+              {decor.image_size ? `${decor.image_size} · ` : ''}créé le {fmtDate(decor.created_at)}
+            </span>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${STATUS_STYLES[decor.status]}`}>{STATUS_LABELS[decor.status]}</span>
-            <Star on={decor.favorite} onClick={onFav} />
-          </div>
+          <button onClick={onClose} className="text-text-disabled hover:text-text-primary transition-colors text-xl leading-none px-2" title="Fermer (Échap)">
+            ✕
+          </button>
         </div>
 
-        <label className="block">
-          <span className="text-xs font-medium text-text-secondary">✏ Nom</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => name.trim() && name !== decor.name && onPatch({ name })}
-            className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-1.5 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
-          />
-        </label>
-
-        <label className="block">
-          <span className="text-xs font-medium text-text-secondary">▦ Gamme</span>
-          <input
-            list="gammes-detail"
-            value={gamme}
-            onChange={(e) => setGamme(e.target.value)}
-            onBlur={() => (gamme || null) !== (decor.gamme ?? null) && onPatch({ gamme: gamme || null })}
-            placeholder="Sans gamme"
-            className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-1.5 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
-          />
-          <datalist id="gammes-detail">{gammes.map((r) => <option key={r} value={r} />)}</datalist>
-        </label>
-
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="text-xs font-medium text-text-secondary">Type</span>
-            <select value={decor.type} onChange={(e) => onPatch({ type: e.target.value })} className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-1.5 focus:outline-none focus:border-brand-green focus:bg-white transition-colors">
-              {Object.entries(TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-text-secondary">Angle</span>
-            <select value={decor.angle} onChange={(e) => onPatch({ angle: e.target.value })} className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-1.5 focus:outline-none focus:border-brand-green focus:bg-white transition-colors">
-              {Object.entries(ANGLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </label>
-        </div>
-
-        <div>
-          <span className="text-xs font-medium text-text-secondary">🏷 Tags</span>
-          <div className="mt-1 flex flex-wrap gap-1.5">
-            {decor.tags.map((t) => (
-              <span key={t} className="inline-flex items-center gap-1 bg-surface text-text-secondary rounded-[8px] px-2 py-0.5 text-xs">
-                {t}
-                <button onClick={() => onPatch({ tags: decor.tags.filter((x) => x !== t) })} className="text-text-disabled hover:text-brand-red">×</button>
+        <div className="flex-1 flex min-h-0">
+          {/* Image en grand + moodboard de référence */}
+          <div className="flex-1 min-w-0 bg-surface flex flex-col p-4 gap-3">
+            <div className="relative flex-1 min-h-0 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imgUrl(decor.file_path, 1280)}
+                alt={decor.name}
+                className="max-h-full max-w-full object-contain rounded-[12px] shadow-sm"
+              />
+              {decor.image_size && (
+                <span className="absolute top-2.5 left-2.5 bg-black/70 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">{decor.image_size}</span>
+              )}
+              <span className="absolute bottom-2.5 left-2.5 bg-white/95 text-text-secondary text-[10.5px] font-bold px-2.5 py-0.5 rounded-full shadow-sm">
+                {TYPE_LABELS[decor.type]}
               </span>
-            ))}
-            <input
-              value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') addTag() }}
-              onBlur={addTag}
-              list="tags-detail"
-              placeholder="+ tag"
-              className="border border-dashed border-border bg-surface rounded-[8px] px-2 py-0.5 text-xs w-24 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
-            />
-            <datalist id="tags-detail">{allTags.map((t) => <option key={t} value={t} />)}</datalist>
+            </div>
+            {decor.moodboard_path && (
+              <div className="shrink-0 flex items-center gap-3 bg-white border border-border rounded-[12px] px-3.5 py-2.5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imgUrl(decor.moodboard_path, 240)}
+                  alt="Moodboard de référence"
+                  onClick={() => onZoomMoodboard(decor.moodboard_path!)}
+                  className="w-[92px] h-[60px] object-cover rounded-[8px] shrink-0 cursor-zoom-in transition-transform duration-150 hover:scale-[2.6] hover:shadow-lg relative z-10 origin-bottom-left"
+                />
+                <div className="min-w-0">
+                  <b className="block text-[13px]">Moodboard de référence</b>
+                  <span className="block text-[11.5px] text-text-secondary truncate" title={mbName ?? undefined}>{mbName}</span>
+                </div>
+                <span className="ml-auto text-[11.5px] text-text-disabled whitespace-nowrap">
+                  survoler pour agrandir · cliquer pour ouvrir en grand
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Infos + réglages */}
+          <div className="w-[360px] shrink-0 border-l border-border flex flex-col min-h-0">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${STATUS_STYLES[decor.status]}`}>{STATUS_LABELS[decor.status]}</span>
+                <span className="ml-auto">
+                  <Star on={decor.favorite} onClick={onFav} />
+                </span>
+              </div>
+
+              <label className="block">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Nom</span>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={() => name.trim() && name !== decor.name && onPatch({ name })}
+                  className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2.5 py-2 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Gamme</span>
+                <input
+                  list="gammes-detail"
+                  value={gamme}
+                  onChange={(e) => setGamme(e.target.value)}
+                  onBlur={() => (gamme || null) !== (decor.gamme ?? null) && onPatch({ gamme: gamme || null })}
+                  placeholder="Sans gamme"
+                  className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2.5 py-2 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+                />
+                <datalist id="gammes-detail">{gammes.map((r) => <option key={r} value={r} />)}</datalist>
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Typologie</span>
+                  <select value={decor.type} onChange={(e) => onPatch({ type: e.target.value })} className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-2 focus:outline-none focus:border-brand-green focus:bg-white transition-colors">
+                    {Object.entries(TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Angle</span>
+                  <select value={decor.angle} onChange={(e) => onPatch({ angle: e.target.value })} className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-2 focus:outline-none focus:border-brand-green focus:bg-white transition-colors">
+                    {Object.entries(ANGLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Tags</span>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {decor.tags.map((t) => (
+                    <span key={t} className="inline-flex items-center gap-1 bg-surface text-text-secondary rounded-[8px] px-2 py-0.5 text-xs">
+                      {t}
+                      <button onClick={() => onPatch({ tags: decor.tags.filter((x) => x !== t) })} className="text-text-disabled hover:text-brand-red">×</button>
+                    </span>
+                  ))}
+                  <input
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') addTag() }}
+                    onBlur={addTag}
+                    list="tags-detail"
+                    placeholder="+ tag"
+                    className="border border-dashed border-border bg-surface rounded-[8px] px-2 py-0.5 text-xs w-24 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+                  />
+                  <datalist id="tags-detail">{allTags.map((t) => <option key={t} value={t} />)}</datalist>
+                </div>
+              </div>
+
+              <label className="block">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Statut</span>
+                <select
+                  value={decor.status}
+                  onChange={(e) => onPatch({ status: e.target.value })}
+                  className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-2 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+                >
+                  <option value="a_valider">À valider</option>
+                  <option value="actif" disabled={!isAdmin && decor.status !== 'actif'}>
+                    Actif{isAdmin || decor.status === 'actif' ? '' : ' (validation admin)'}
+                  </option>
+                  <option value="archive">Archivé</option>
+                </select>
+              </label>
+
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Dernière utilisation</span>
+                <p className="mt-0.5 text-text-secondary">
+                  {decor.lastUsedAt ? (
+                    <>
+                      {fmtDate(decor.lastUsedAt)}
+                      {decor.lastUsedJobId && (
+                        <> — <a href={`/production/image/${decor.lastUsedJobId}`} className="text-brand-teal hover:underline">génération #{decor.lastUsedJobId}</a></>
+                      )}
+                    </>
+                  ) : (
+                    'Jamais utilisé'
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Actions — toujours visibles, plus besoin de scroller */}
+            <div className="shrink-0 border-t border-border p-4 space-y-2">
+              <button
+                onClick={onOpenStudio}
+                className="w-full bg-white border border-border text-text-secondary rounded-[10px] py-2 text-sm font-medium hover:bg-surface transition-colors"
+              >
+                Modifier dans l&apos;atelier{decor.versionCount > 1 ? ` (${decor.versionCount} versions)` : ''}
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => onPatch({ status: decor.status === 'archive' ? 'a_valider' : 'archive' })}
+                  className="bg-white border border-border text-text-secondary rounded-[10px] py-2 text-sm hover:bg-surface transition-colors"
+                >
+                  {decor.status === 'archive' ? 'Désarchiver' : 'Archiver'}
+                </button>
+                {isAdmin ? (
+                  <button onClick={onDelete} className="border border-border text-brand-red rounded-[10px] py-2 text-sm hover:bg-brand-red-light transition-colors">
+                    Supprimer
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-text-disabled self-center text-center">Suppression : admin</span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
-
-        <label className="block">
-          <span className="text-xs font-medium text-text-secondary">Statut</span>
-          <select
-            value={decor.status}
-            onChange={(e) => onPatch({ status: e.target.value })}
-            className="mt-1 w-full border border-border bg-surface rounded-[8px] px-2 py-1.5 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
-          >
-            <option value="a_valider">À valider</option>
-            <option value="actif" disabled={!isAdmin && decor.status !== 'actif'}>
-              Actif{isAdmin || decor.status === 'actif' ? '' : ' (validation admin)'}
-            </option>
-            <option value="archive">Archivé</option>
-          </select>
-        </label>
-
-        <div>
-          <span className="text-xs font-medium text-text-secondary">📅 Dernière utilisation</span>
-          <p className="mt-0.5 text-text-secondary">
-            {decor.lastUsedAt ? (
-              <>
-                {fmtDate(decor.lastUsedAt)}
-                {decor.lastUsedJobId && (
-                  <> — <a href={`/production/image/${decor.lastUsedJobId}`} className="text-brand-teal hover:underline">génération #{decor.lastUsedJobId}</a></>
-                )}
-              </>
-            ) : (
-              'Jamais utilisé'
-            )}
-          </p>
-        </div>
-
-        <div className="border-t border-border pt-3">
-          <button
-            onClick={onOpenStudio}
-            className="w-full bg-white border border-border text-text-secondary rounded-[10px] py-2 text-sm font-medium hover:bg-surface transition-colors"
-          >
-            🪄 Modifier ce décor{decor.versionCount > 1 ? ` (${decor.versionCount} versions)` : ''}
-          </button>
-          <p className="text-[11px] text-text-disabled mt-1 text-center">
-            Correction par prompt, historique des versions, retour arrière — en grand.
-          </p>
-        </div>
       </div>
-      <div className="p-4 pt-0 space-y-2">
-        <button
-          onClick={onUse}
-          disabled={decor.status !== 'actif'}
-          title={decor.status !== 'actif' ? 'Seul un décor actif peut être utilisé' : undefined}
-          className="w-full bg-brand-green text-white rounded-[10px] py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
-        >
-          Utiliser ce décor →
-        </button>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => onPatch({ status: decor.status === 'archive' ? 'a_valider' : 'archive' })}
-            className="bg-white border border-border text-text-secondary rounded-[10px] py-2 text-sm hover:bg-surface transition-colors"
-          >
-            {decor.status === 'archive' ? 'Désarchiver' : '⬛ Archiver'}
-          </button>
-          {isAdmin ? (
-            <button onClick={onDelete} className="border border-border text-brand-red rounded-[10px] py-2 text-sm hover:bg-brand-red-light transition-colors">
-              🗑 Supprimer
-            </button>
-          ) : (
-            <span className="text-[11px] text-text-disabled self-center text-center">Suppression : admin</span>
-          )}
-        </div>
-      </div>
-    </aside>
+    </div>
   )
 }

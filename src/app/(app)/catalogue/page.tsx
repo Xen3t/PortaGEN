@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import Silhouette, { familyTypo } from '../Silhouette'
+import Chargement from '@/components/Chargement'
 import {
   CatalogueSearch,
   brandLabel,
@@ -139,7 +140,7 @@ export default function CataloguePage() {
       )}
 
       {products === null ? (
-        <p className="text-text-secondary text-sm">Chargement…</p>
+        <Chargement />
       ) : brandProducts.length === 0 ? (
         <div className="bg-white rounded-[12px] border border-border shadow-sm p-10 text-center max-w-2xl">
           <p className="font-bold text-lg mb-1">PortaGEN {brandLabel(brand)} arrive bientôt</p>
@@ -150,7 +151,7 @@ export default function CataloguePage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="stagger grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {categories.map((cat) => {
             // Silhouette produit (maquette choix-mode-typologie-v1) quand la
             // famille correspond à une typologie connue — sinon carte texte seule.
@@ -159,7 +160,7 @@ export default function CataloguePage() {
               <Link
                 key={cat.family}
                 href={`/catalogue/famille/${familySlug(cat.family)}`}
-                className="bg-white rounded-[12px] border border-border shadow-sm overflow-hidden hover:shadow-md transition-shadow block"
+                className="bg-white rounded-[12px] border border-border shadow-sm overflow-hidden hover:shadow-md hover:-translate-y-0.5 transition-all block"
               >
                 {typo && (
                   <div className="border-b border-border px-[18px] pt-[18px] bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">

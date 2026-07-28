@@ -123,7 +123,6 @@ export async function runMarketplaceStep(opts: MarketplaceOptions): Promise<{ de
       images: [{ source: cropLandscape, mimeType: 'image/jpeg' }],
       aspectRatio: '1:1',
       imageSize: '2K',
-      model: config.imageModel,
       jobId,
     })
     const delivery = await sharp(generated.buffer)

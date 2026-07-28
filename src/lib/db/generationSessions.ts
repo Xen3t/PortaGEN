@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import { getDb, listJobsByBatch } from '@/lib/db'
+import { normalizeDecorPath } from '@/lib/db/decors'
 
 /**
  * Sessions de génération directe (validé le 13/07/2026, maquette sessions-v1) :
@@ -32,9 +33,10 @@ export interface GenerationSessionSummary {
   /**
    * Origine de la session (maquette sessions-v2, validée le 13/07/2026) :
    * « directe » = page Génération, « catalogue » = lancement de gamme depuis
-   * la page produit. La carte catalogue ouvre la page de la gamme.
+   * la page produit, « decor » = tirages de décor (28/07/2026). La carte
+   * catalogue ouvre la page de la gamme, la carte décor ouvre MES Décors.
    */
-  source: 'directe' | 'catalogue'
+  source: 'directe' | 'catalogue' | 'decor' | 'libre'
   /** Nombre d'images du lot (un job Piliers par image déposée). */
   mesCount: number
   /** Nombre de MES finales déjà sorties — la progression « 3/5 images ». */
@@ -182,11 +184,11 @@ export function summarizeGenerationSession(
 }
 
 /**
- * Résumé « carte » d'un lancement de gamme (Catalogue) — maquette sessions-v2,
- * validée le 13/07/2026 : un lancement de gamme = une session, au même titre
- * que la génération directe. Il n'a pas de ligne generation_sessions : tout se
- * lit dans les jobs du batch. Renvoie null si le batch ne contient aucune MES
- * (ex. batch marketplace seul, ou essais du Lab moteur — jamais sur l'accueil).
+ * Résumé « carte » d'un batch SANS ligne generation_sessions : lancement de
+ * gamme (Catalogue, sessions-v2 du 13/07/2026) ou tirages de décor (28/07/2026,
+ * demande Mathias : un lancement de décor = une session). Tout se lit dans les
+ * jobs du batch. Renvoie null si le batch ne contient ni MES ni décor (ex.
+ * batch marketplace seul, ou essais du Lab moteur — jamais sur l'accueil).
  */
 function summarizeCatalogueBatch(
   batchId: string,
@@ -204,6 +206,18 @@ function summarizeCatalogueBatch(
   let mpDone = false
   let busy = false
   let thumbPath: string | null = null
+  // Tirages de décor : comptés à part — un batch 100 % décor devient une
+  // session « decor » (le total/terminé réutilise mesCount/mesDone des cartes).
+  let decorCount = 0
+  let decorDone = 0
+  let decorGamme = ''
+  let decorNom = ''
+  let decorMoodboard = ''
+  // MES Libres (28/07/2026) : un batch 100 % libre devient une session « libre »
+  // — total/terminé = variantes, vignette = première variante sortie.
+  let libreCount = 0
+  let libreDone = 0
+  let libreLabel = ''
 
   for (const j of jobs) {
     let payload: Record<string, unknown> = {}
@@ -217,8 +231,28 @@ function summarizeCatalogueBatch(
     if (payload.lab === true) return null
     if (j.status === 'queued' || j.status === 'running') busy = true
     if (j.status === 'error') anyError = true
-    if (j.type === 'marketplace') mpDone = true
+    if (j.type === 'marketplace' || j.type === 'libre-mp') mpDone = true
     if (typeof payload.moteur === 'string' && payload.moteur) moteur = payload.moteur
+    if (j.type === 'libre') {
+      libreCount++
+      if (!libreLabel && typeof payload.productLabel === 'string') libreLabel = payload.productLabel
+      const img = typeof result.imagePath === 'string' ? result.imagePath : null
+      if (j.status === 'done' && img) {
+        libreDone++
+        if (!thumbPath) thumbPath = img
+      }
+    }
+    if (j.type === 'decor') {
+      decorCount++
+      if (!decorNom && typeof payload.name === 'string') decorNom = payload.name
+      if (!decorGamme && typeof payload.gamme === 'string' && payload.gamme) decorGamme = payload.gamme
+      if (!decorMoodboard && typeof payload.moodboardPath === 'string') decorMoodboard = payload.moodboardPath
+      const img = typeof result.imagePath === 'string' ? result.imagePath : null
+      if (j.status === 'done') {
+        decorDone++
+        if (img && !thumbPath) thumbPath = img
+      }
+    }
     // « pose-fusion » (17/07/2026) : UN job = une MES complète (total ET terminé).
     if (j.type === 'pillars' || j.type === 'pose-fusion') {
       mesCount++
@@ -249,6 +283,46 @@ function summarizeCatalogueBatch(
         const i = parts.indexOf('products')
         if (i >= 0 && i + 2 < parts.length) produit = parts[i + 1]
       }
+    }
+  }
+  // Batch 100 % décor → session « decor » : total/terminé = tirages, vignette =
+  // premier décor sorti (sinon le moodboard), nom = décor sinon gamme.
+  if (mesCount === 0 && decorCount > 0) {
+    return {
+      batchId,
+      produit: decorNom || decorGamme || 'Décor',
+      moteur,
+      decorId: null,
+      decorName: decorGamme || null,
+      createdAt,
+      source: 'decor',
+      mesCount: decorCount,
+      mesDone: decorDone,
+      coloris: [],
+      mpDone: false,
+      busy,
+      failed: !busy && decorDone === 0 && anyError,
+      thumbPath: thumbPath ?? (decorMoodboard ? normalizeDecorPath(decorMoodboard) : null),
+    }
+  }
+  // Batch 100 % MES Libres → session « libre » : réouverture via
+  // /generation?libre=<batch>, nom = type/catégorie saisi au lancement.
+  if (mesCount === 0 && libreCount > 0) {
+    return {
+      batchId,
+      produit: libreLabel || 'MES Libre',
+      moteur: 'libre',
+      decorId: null,
+      decorName: null,
+      createdAt,
+      source: 'libre',
+      mesCount: libreCount,
+      mesDone: libreDone,
+      coloris: [],
+      mpDone,
+      busy,
+      failed: !busy && libreDone === 0 && anyError,
+      thumbPath,
     }
   }
   if (mesCount === 0) return null

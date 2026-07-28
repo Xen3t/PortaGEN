@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import SessionCards from './generation/SessionCards'
 import { SilhouetteModeIcone, type Mode } from './Silhouette'
+import Chargement from '@/components/Chargement'
 
 /**
  * ACCUEIL — page d'arrivée (navigation v2 validée le 12/07/2026) :
@@ -57,7 +58,7 @@ function jobLabel(j: Job): string {
 
 function statusBadge(j: Job): { text: string; cls: string } {
   if (j.status === 'queued' || j.status === 'running') {
-    return { text: '⏳ en cours', cls: 'text-brand-teal' }
+    return { text: '⏳ en cours', cls: 'text-brand-teal anim-respire' }
   }
   if (j.status === 'error') return { text: '✗ en erreur', cls: 'text-brand-red' }
   if (j.status === 'cancelled') return { text: 'annulée', cls: 'text-text-disabled' }
@@ -106,7 +107,7 @@ export default function AccueilPage() {
       {/* Les 3 actions au-dessus des sessions (rework 22/07/2026, validé par
           Mathias — maquette generer-depuis-catalogue-v2) : MES Contrainte,
           MES Libre, MES Décors. L'Accueil ne change pas au-delà de cette rangée. */}
-      <div className="grid md:grid-cols-3 gap-3.5">
+      <div className="stagger grid md:grid-cols-3 gap-3.5">
         {(
           [
             {
@@ -151,7 +152,7 @@ export default function AccueilPage() {
       <SessionCards limit={3} hideWhenEmpty allLink />
 
       {!data ? (
-        <p className="text-sm text-text-secondary">Chargement…</p>
+        <Chargement />
       ) : (
       <div className="grid grid-cols-[1.6fr_1fr] max-md:grid-cols-1 gap-4 items-start">
       <section className="bg-white rounded-[12px] border border-border shadow-sm p-5">

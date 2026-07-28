@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { use, useEffect, useMemo, useState } from 'react'
+import Chargement from '@/components/Chargement'
 import {
   CatalogueSearch,
   ProductCard,
@@ -51,7 +52,7 @@ export default function FamillePage(props: { params: Promise<{ slug: string }> }
       </div>
 
       {products === null ? (
-        <p className="text-text-secondary text-sm">Chargement…</p>
+        <Chargement />
       ) : items.length === 0 ? (
         <p className="text-sm text-text-secondary">
           Aucun produit dans cette catégorie. Essayez « ↻ Actualiser depuis le serveur » sur la
@@ -62,7 +63,7 @@ export default function FamillePage(props: { params: Promise<{ slug: string }> }
           <p className="text-sm text-text-secondary mb-4">
             {items.length} gamme{items.length > 1 ? 's' : ''}
           </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {items.map((p) => (
               <ProductCard key={p.id} product={p} />
             ))}

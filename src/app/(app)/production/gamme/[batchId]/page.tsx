@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import PhraseAttente from '@/components/PhraseAttente'
 
 /**
  * Vue d'un lancement de gamme : toutes les tailles en grille, remplie en
@@ -229,7 +230,7 @@ export default function GammeBatchPage() {
       </p>
     )
   }
-  if (!jobs) return <p className="text-text-secondary">Chargement…</p>
+  if (!jobs) return <p className="text-text-secondary anim-respire">Chargement…</p>
 
   return (
     <div>
@@ -301,7 +302,8 @@ export default function GammeBatchPage() {
               ? t.pillars.result?.compositePath
               : null
           const detailId = integ?.id ?? t.pillars.id
-          const stage =
+          // « phrases » : état d'attente → faux texte tournant à la place du statut fixe.
+          const stage: { text: string; tone: string; phrases?: boolean } =
             t.pillars.status === 'cancelled' || integ?.status === 'cancelled'
               ? { text: 'annulée', tone: 'text-text-disabled' }
               : t.pillars.status === 'error'
@@ -313,13 +315,13 @@ export default function GammeBatchPage() {
               : integ?.status === 'error'
                 ? { text: '⚠ erreur (pose du portail)', tone: 'text-brand-red' }
                 : t.pillars.status !== 'done'
-                  ? { text: 'préparation du décor…', tone: 'text-text-secondary animate-pulse' }
+                  ? { text: 'préparation du décor…', tone: 'text-text-secondary', phrases: true }
                   : !integ
                     ? t.pillars.payload?.productPath
-                      ? { text: 'pose du portail en attente…', tone: 'text-text-secondary animate-pulse' }
+                      ? { text: 'pose du portail en attente…', tone: 'text-text-secondary', phrases: true }
                       : { text: 'décor prêt (pas de portail fourni)', tone: 'text-text-secondary' }
                     : integ.status !== 'done'
-                      ? { text: 'pose du portail en cours…', tone: 'text-text-secondary animate-pulse' }
+                      ? { text: 'pose du portail en cours…', tone: 'text-text-secondary', phrases: true }
                       : integ.reviewStatus === 'approved'
                         ? { text: '✓ validée', tone: 'text-brand-green font-medium' }
                         : integ.reviewStatus === 'rejected'
@@ -357,7 +359,9 @@ export default function GammeBatchPage() {
                 )}
               </Link>
               <div className="px-3 py-2 flex items-center justify-between gap-2">
-                <span className={`text-xs ${stage.tone}`}>{stage.text}</span>
+                <span className={`text-xs ${stage.tone}`}>
+                  {stage.phrases ? <PhraseAttente /> : stage.text}
+                </span>
                 <div className="flex items-center gap-1 shrink-0">
                   {finalDone && integ!.reviewStatus !== 'approved' && (
                     <button

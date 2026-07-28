@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import { getDb } from '@/lib/db'
 import { getSetting, setSetting } from '@/lib/db/settings'
 import type { GabaritSetKey } from '@/lib/gabaritSets'
+import { RALIFY_DEFAUTS, sanitizeRalify, type RalifyReglages } from '@/lib/ralify'
 
 /**
  * Registre des MOTEURS (cadrage docs/CADRAGE-MOTEURS-2026-07-12.md, maquette
@@ -115,6 +116,20 @@ export interface MoteurReglages {
   /** Ombres portées à l'intégration (méthodes rectangle / pose-directe). */
   shadows: 'auto' | 'off'
   /**
+   * Coulissant uniquement (28/07/2026) : opacité de l'ombre dégradée dessinée
+   * sur la lame le long de la face gauche du pilier droit, en % (0 = pas
+   * d'ombre). Indice de profondeur pour Nano : sans elle, le modèle terminait
+   * la lame AVANT le pilier (joint sombre) au lieu de la faire disparaître
+   * derrière (jobs #19-26 du 28/07). Enquête fiabilité du 28/07 après-midi
+   * (jobs #37-38 ratés, tirages répétés sur l'entrée du #38) : 25 % = 2
+   * réussites sur 4 tirages, 40 % = 3/3 — Nano est stochastique, un signal
+   * faible est ignoré. Profil retenu par Mathias (2ᵉ itération 28/07 apm) :
+   * dégradé TRÈS progressif sur 1,5 × la largeur du pilier, 0 → 25 % au
+   * contact — jamais de bloc sombre (le 90 % de la 1ʳᵉ itération rendait
+   * une ombre trop dure). Fiabilité à juger sur gamme complète.
+   */
+  ombrePilierPct: number
+  /**
    * Déclinaison Marketplace (2000×2000) — décision Mathias 13/07/2026 :
    * 'choix' = case à cocher au lancement + bouton 1:1 sur le résultat ;
    * 'toujours' = automatique après chaque MES Site (pas de case) ;
@@ -123,6 +138,12 @@ export interface MoteurReglages {
   marketplace: 'choix' | 'toujours' | 'jamais'
   /** Modèle de nom du livrable final. */
   livraisonName: string
+  /**
+   * RALify (28/07/2026, maquette ralify-v2) : harmonisation colorimétrique du
+   * PNG produit AVANT la génération — règle par coloris + exceptions par nom de
+   * produit + intensité. Config et résolution : src/lib/ralify.ts.
+   */
+  ralify: RalifyReglages
 }
 
 export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
@@ -136,8 +157,10 @@ export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
   poseDebordPct: 2,
   poseSeuilAlpha: 200,
   shadows: 'auto',
+  ombrePilierPct: 25,
   marketplace: 'choix',
   livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
+  ralify: RALIFY_DEFAUTS,
 }
 
 // La clé accepte aussi un JEU DE GABARITS (22/07/2026) : « coulissant-xl »
@@ -204,8 +227,14 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
   if (poseSeuilAlpha !== undefined) out.poseSeuilAlpha = poseSeuilAlpha
   const shadows = pick(src.shadows, ['auto', 'off'] as const)
   if (shadows) out.shadows = shadows
+  const ombrePilierPct = num(src.ombrePilierPct, 0, 100)
+  if (ombrePilierPct !== undefined) out.ombrePilierPct = ombrePilierPct
   const marketplace = pick(src.marketplace, ['choix', 'toujours', 'jamais'] as const)
   if (marketplace) out.marketplace = marketplace
+  if (src.ralify !== undefined) {
+    const ralify = sanitizeRalify(src.ralify)
+    if (ralify) out.ralify = ralify
+  }
   if (typeof src.livraisonName === 'string') {
     // Modèle de NOM DE FICHIER : on refuse dès maintenant les caractères invalides
     // sous Windows et toute traversée de chemin (avant même le câblage pipeline).

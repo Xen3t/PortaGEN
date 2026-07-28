@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import PhraseAttente from './PhraseAttente'
+import Chargement from './Chargement'
 import Link from 'next/link'
 import { parseSizeFromProductName } from '@/lib/productName'
 import type { MoteurKey } from '@/lib/moteurs'
@@ -403,7 +405,7 @@ function JobInspector({
       .catch(() => null)
   }, [promptPath])
 
-  if (!job) return <p className="text-sm text-text-secondary">Chargement de l’essai…</p>
+  if (!job) return <Chargement label="Chargement de l’essai…" />
 
   const r = job.result ?? {}
   const artifacts = ARTIFACT_STEPS.filter((s) => typeof r[s.key] === 'string')
@@ -454,7 +456,7 @@ function JobInspector({
       {active && (
         <div className="bg-white rounded-[12px] border border-border shadow-sm p-10 text-center text-text-secondary mb-4">
           <div className="animate-spin h-7 w-7 border-4 border-border border-t-brand-teal rounded-full mx-auto mb-3" />
-          <div className="font-medium">Génération en cours…</div>
+          <div className="font-medium"><PhraseAttente /></div>
           <p className="text-xs mt-1">La page se met à jour automatiquement.</p>
         </div>
       )}
@@ -684,8 +686,8 @@ function PillarsGrid({
         </h3>
         <div className="flex flex-wrap items-center gap-1.5">
           {active && (
-            <span className="text-xs bg-brand-teal-light text-brand-teal px-2.5 py-1 rounded-full font-semibold animate-pulse">
-              génération en cours…
+            <span className="text-xs bg-brand-teal-light text-brand-teal px-2.5 py-1 rounded-full font-semibold">
+              <PhraseAttente />
             </span>
           )}
           {/* Calques appliqués à TOUTE la grille d'un coup */}

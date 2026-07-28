@@ -18,6 +18,9 @@ const ADMIN_LINKS = [
   // avec un sélecteur de moteur. Gabarits absorbés le 13/07, Prompts le 13/07 —
   // tout s'édite dans la fiche moteur.
   { href: '/admin/reglages', label: 'Réglages' },
+  // Détection des images (24/07/2026) : atelier d'entraînement (maquette
+  // atelier-detection-v4) + aide au renommage nomenclature.
+  { href: '/admin/detection', label: 'Détection des images' },
   { href: '/admin/lab', label: 'LAB' },
   { href: '/admin/couts', label: 'Coûts API' },
   { href: '/admin/feedback', label: 'Feedback' },
@@ -70,7 +73,7 @@ export default function UserMenu({
         <span className={`text-[10px] transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-[12px] shadow-lg border border-border py-1.5 z-40">
+        <div className="anim-menu absolute right-0 top-full mt-2 w-56 bg-white rounded-[12px] shadow-lg border border-border py-1.5 z-40">
           {/* « Créer » retiré le 13/07/2026 (bloc 3.5) : l'ancien flux guidé de MES
               est repris par le catalogue (/creer redirige vers /catalogue).
               « Bibliothèque » retirée le 13/07/2026 : devenue « Décors » dans la

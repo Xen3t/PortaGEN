@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import Silhouette, { familyTypo } from '../Silhouette'
+import Chargement from '@/components/Chargement'
 
 /**
  * Briques partagées du Catalogue : liste allégée mise en CACHE côté navigateur
@@ -184,7 +185,11 @@ export function CatalogueSearch({
         <div className="absolute z-20 mt-1.5 w-full bg-white border border-border rounded-[10px] shadow-lg overflow-hidden">
           {results.length === 0 ? (
             <div className="px-4 py-3 text-sm text-text-secondary">
-              {products === null ? 'Chargement…' : `Aucun produit ne correspond à « ${query} ».`}
+              {products === null ? (
+                <Chargement inline />
+              ) : (
+                `Aucun produit ne correspond à « ${query} ».`
+              )}
             </div>
           ) : (
             results.map((p) => (

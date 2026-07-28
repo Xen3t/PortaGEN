@@ -4,6 +4,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { config } from '@/lib/config'
 import { logApiCall } from '@/lib/db'
+import { getImageModel } from '@/lib/db/settings'
 import { marquerImageIa } from '@/lib/images/marquage'
 
 let ai: GoogleGenAI | null = null
@@ -149,7 +150,7 @@ export async function generateText(opts: GenerateTextOptions): Promise<{
   }
 }
 
-export type AspectRatio = '1:1' | '3:2' | '2:3' | '4:3' | '16:9' | '21:9'
+export type AspectRatio = '1:1' | '3:2' | '2:3' | '4:3' | '4:5' | '16:9' | '21:9'
 export type ImageSize = '1K' | '2K' | '4K'
 
 export interface GenerateImageOptions {
@@ -176,7 +177,9 @@ export interface GeneratedImage {
 }
 
 export async function generateImage(opts: GenerateImageOptions): Promise<GeneratedImage> {
-  const model = opts.model ?? config.imageModel
+  // Modèle image : réglage global Admin → Réglages (Nano Banana Pro / Nano Banana),
+  // sauf si l'appelant impose un modèle précis (Lab).
+  const model = opts.model ?? getImageModel()
   const parts: Part[] = [...(opts.images ?? []).map(toPart), { text: opts.prompt }]
   const started = Date.now()
   try {

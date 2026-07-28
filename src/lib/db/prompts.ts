@@ -20,12 +20,21 @@ export function getActivePrompt(name: string, db: Database.Database = getDb()): 
   return row
 }
 
-export function listPromptNames(db: Database.Database = getDb()): { name: string; version: number; updated: string }[] {
+export function listPromptNames(
+  db: Database.Database = getDb()
+): { name: string; version: number; updated: string; updatedBy: string | null }[] {
+  // Date ET auteur viennent de la ligne de la version active (refonte Prompt
+  // System 28/07/2026, maquette prompt-system-v6 : « 28/07 · Mathias » sur
+  // chaque ligne fermée de la fiche moteur).
   return db
     .prepare(
-      `SELECT name, MAX(version) AS version, MAX(created_at) AS updated FROM prompts GROUP BY name ORDER BY name`
+      `SELECT p.name, p.version, p.created_at AS updated, p.created_by AS updatedBy
+       FROM prompts p
+       JOIN (SELECT name, MAX(version) AS v FROM prompts GROUP BY name) m
+         ON m.name = p.name AND m.v = p.version
+       ORDER BY p.name`
     )
-    .all() as { name: string; version: number; updated: string }[]
+    .all() as { name: string; version: number; updated: string; updatedBy: string | null }[]
 }
 
 export function listPromptVersions(name: string, db: Database.Database = getDb()): PromptRow[] {

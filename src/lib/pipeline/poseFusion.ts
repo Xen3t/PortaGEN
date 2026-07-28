@@ -10,7 +10,10 @@ import { DEFAULT_PARAMS, computeLayout, projection, projectRect, type GabaritPar
 import { overlayGabaritOnDecor, renderGabaritPng } from '@/lib/images/gabarits'
 import { whiteLineBands, horizontalEdgeProfile, bandPatternShift, groundBandShift } from '@/lib/images/analyze'
 import { poserProduit, poserProduitSurCible, type PoseResult } from '@/lib/images/pose'
+import { detecterPieds, recollerPieds } from '@/lib/images/pieds'
 import { prepareProduct } from '@/lib/images/product'
+import { appliquerRalify } from '@/lib/images/ralify'
+import { resolveRalifyCible } from '@/lib/ralify'
 import { parseSizeFromProductName } from '@/lib/productName'
 import { gabaritSetForSize } from '@/lib/gabaritSets'
 import { getMoteurReglages, moteurPromptName, type MoteurKey } from '@/lib/moteurs'
@@ -48,6 +51,12 @@ export interface PoseFusionStepOptions {
   slug?: string
   /** Coloris du produit (détection existante + choix utilisateur) — injecté dans le prompt */
   coloris?: string
+  /**
+   * Nom du produit (RALify, exceptions « nom contient ») : les PNG détourés du
+   * catalogue s'appellent `coloris_taille.png`, le nom n'y est pas — l'appelant
+   * qui le connaît le fournit, le nom de fichier sert de complément.
+   */
+  productName?: string
   /** Moteur produit : ses réglages, ses prompts. Absent = battant. */
   moteur?: MoteurKey
   /** Job existant (créé par le runner) — sinon la fonction crée le sien (scripts CLI) */
@@ -72,8 +81,14 @@ export interface PoseFusionStepResult {
   promptVersion: number
   debordPct: number
   seuilAlpha: number
+  /** Opacité de l'ombre pilier→lame appliquée (%, coulissant ; 0 = sans ombre) */
+  ombrePilierPct: number
+  /** Cible RALify appliquée au PNG produit ('#rrggbb', null = pas de traitement) */
+  ralifyCible: string | null
   /** Pixels de matière restaurés dans les trous d'alpha du PNG fournisseur (pieds alu…) */
   alphaReparePx: number
+  /** Pieds repérés sous le bord bas du produit (ombre de contact + recollage) */
+  piedsDetectes: number
 }
 
 function imageSizeFromDims(width: number, height: number): ImageSize | null {
@@ -210,6 +225,23 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
       expectedSize: opts.size,
     })
 
+    // RALify (28/07/2026, maquette ralify-v2) : la teinte de la matière est
+    // ramenée au RAL cible du moteur (espace LAB, luminance conservée — ombres
+    // et reflets d'origine gardés) AVANT la pose. Cible résolue par coloris
+    // détecté + exceptions par nom de produit ; null = ne pas toucher.
+    const ralifyCible = resolveRalifyCible(
+      moteur.ralify,
+      `${opts.productName ?? ''} ${path.basename(opts.productPath)}`,
+      opts.coloris
+    )
+    let produitPret = prepared.image
+    if (ralifyCible) {
+      const ralify = await appliquerRalify(prepared.image, ralifyCible, moteur.ralify.intensite)
+      produitPret = ralify.image
+      // Artefact de contrôle : ce qui part réellement chez Nano.
+      fs.writeFileSync(path.join(dir, `0-produit-ralify-${stamp}.png`), produitPret)
+    }
+
     let pose: PoseResult
     let posedImage: Buffer
     if (moteurKey === 'coulissant') {
@@ -228,21 +260,60 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
       }
       // Une lame n'a pas de pieds : la réparation « poches enclavées » est coupée,
       // sinon la clairance sous-lame (compartimentée par les galets) serait rebouchée.
-      pose = await poserProduitSurCible(overlay, prepared.image, cible, moteur.poseSeuilAlpha, false)
+      pose = await poserProduitSurCible(overlay, produitPret, cible, moteur.poseSeuilAlpha, false)
       const gabarit = await renderGabaritPng(opts.size, adjustedParams, width, height)
-      posedImage = await sharp(pose.image)
-        .composite([{ input: gabarit }])
-        .png()
-        .toBuffer()
+      // Ombre du pilier droit sur la lame (28/07/2026, réglage Admin « Ombre du
+      // pilier ») : la scène frontale n'offre aucun autre indice de profondeur,
+      // et Nano terminait la lame AVANT le pilier (joint sombre) au lieu de la
+      // faire disparaître derrière (jobs #19-26). La bande dégradée d'occlusion
+      // ambiante le long de la face gauche du pilier lui dit « le pilier est
+      // devant ». Profil retenu par Mathias (28/07 apm, 2ᵉ itération) : dégradé
+      // TRÈS progressif — bande d'1,5 × la largeur du pilier, de 0 à l'opacité
+      // réglée (25 % par défaut) au contact de la face. Jamais de bloc sombre.
+      // 3ᵉ itération (retour Mathias) : la bande descend JUSQU'AU SOL — sinon la
+      // fente sous la lame reste claire au pied du pilier et Nano y montre herbe
+      // et jour, comme si la lame S'ARRÊTAIT au pilier au lieu de filer derrière.
+      const calques: sharp.OverlayOptions[] = [{ input: gabarit }]
+      if (moteur.ombrePilierPct > 0) {
+        const bandW = Math.round(pRight.w * 1.5)
+        const bandH = Math.round(pRight.y + pRight.h - gate.y)
+        const opacite = Math.min(100, moteur.ombrePilierPct) / 100
+        const ombre = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="black" stop-opacity="0"/>
+      <stop offset="1" stop-color="black" stop-opacity="${opacite}"/>
+    </linearGradient>
+  </defs>
+  <rect x="${pRight.x - bandW}" y="${gate.y}" width="${bandW}" height="${bandH}" fill="url(#g)"/>
+</svg>`
+        calques.push({ input: Buffer.from(ombre) })
+      }
+      posedImage = await sharp(pose.image).composite(calques).png().toBuffer()
     } else {
       // BATTANT / PORTILLON : produit posé PAR-DESSUS les aplats (gonds et pieds
       // en débord sur les piliers), débord réglé dans l'Admin.
-      pose = await poserProduit(overlay, prepared.image, gate, {
+      pose = await poserProduit(overlay, produitPret, gate, {
         debord: moteur.poseDebordPct / 100,
         seuilAlpha: moteur.poseSeuilAlpha,
       })
       posedImage = pose.image
     }
+
+    // Protection des PIEDS (28/07/2026, brique src/lib/images/pieds.ts) : Nano
+    // « nettoie » les petits pieds alu malgré la section SUPPORT FEET du prompt
+    // (constat job #33). Repérage ici, recollage des pixels d'origine APRÈS
+    // l'appel (étape 3 bis). L'ombre de contact dessinée AVANT l'appel a été
+    // testée et REJETÉE le 28/07 : Nano transforme le pied ombré en sabot noir.
+    // Coulissant : les aplats piliers sont redessinés PAR-DESSUS la lame — un
+    // galet dans ces zones n'est plus visible dans l'entrée, on l'écarte.
+    const exclusionsPieds =
+      moteurKey === 'coulissant'
+        ? [projectRect(layout.pillarLeft, p), projectRect(layout.pillarRight, p)]
+        : []
+    // Décision Mathias 28/07 : protection des PIEDS UNIQUEMENT — le recollage
+    // des poteaux (brique detecterPoteaux, testée) reste débranché.
+    const pieds = await detecterPieds(pose.etire, pose.cible, exclusionsPieds)
     const posedInputPath = path.join(dir, `1-entree-posee-${stamp}.png`)
     fs.writeFileSync(posedInputPath, posedImage)
 
@@ -262,9 +333,31 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
     })
     const nativeSizeRespected = generated.width === width && generated.height === height
 
+    // 3 bis. Recollage des pieds : le portail ne bouge pas d'un pixel entre
+    // entrée et sortie, on recopie donc les pixels des pieds de l'entrée posée
+    // sur la sortie (masque = alpha du produit rétréci d'un pixel, exposition
+    // recalée sur le rendu, bord haut fondu). Artefact 2b conservé pour
+    // comparer avec la sortie brute.
+    let sortieFinale = generated.buffer
+    if (pieds.length) {
+      const recolle = await recollerPieds(
+        generated.buffer,
+        { width: generated.width, height: generated.height },
+        posedImage,
+        { width, height },
+        pose.etire,
+        pose.cible,
+        pieds
+      )
+      if (recolle) {
+        sortieFinale = recolle
+        fs.writeFileSync(path.join(dir, `2b-sortie-pieds-recolles-${stamp}.png`), sortieFinale)
+      }
+    }
+
     // 4. La sortie brute est l'image finale — la livraison e-commerce est l'unique
     //    transformation appliquée.
-    const delivery = await sharp(generated.buffer)
+    const delivery = await sharp(sortieFinale)
       .resize(config.delivery.width, config.delivery.height, { fit: 'fill' })
       .jpeg(config.deliveryJpeg)
       .toBuffer()
@@ -292,7 +385,10 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
       promptVersion: promptRow.version,
       debordPct: moteur.poseDebordPct,
       seuilAlpha: moteur.poseSeuilAlpha,
+      ombrePilierPct: moteurKey === 'coulissant' ? moteur.ombrePilierPct : 0,
+      ralifyCible,
       alphaReparePx: pose.produit.alphaReparePx,
+      piedsDetectes: pieds.length,
     }
 
     db.prepare(
@@ -320,7 +416,10 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
         promptVersion: promptRow.version,
         debordPct: moteur.poseDebordPct,
         seuilAlpha: moteur.poseSeuilAlpha,
+        ombrePilierPct: result.ombrePilierPct,
+        ralifyCible,
         alphaReparePx: pose.produit.alphaReparePx,
+        piedsDetectes: pieds.length,
       }),
       jobId
     )

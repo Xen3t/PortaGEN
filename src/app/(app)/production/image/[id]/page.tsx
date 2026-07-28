@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { parseSizeFromProductName } from '@/lib/productName'
 import DecorStudio from '@/components/DecorStudio'
+import PhraseAttente from '@/components/PhraseAttente'
 
 /**
  * Détail d'une image (refonte UX 10/07/2026) : l'image finale en grand, les
@@ -133,7 +134,7 @@ export default function ImageDetailPage() {
   }
 
   if (!job) {
-    return <p className="text-text-secondary">Chargement…</p>
+    return <p className="text-text-secondary anim-respire">Chargement…</p>
   }
 
   const r = job.result ?? {}
@@ -258,7 +259,7 @@ export default function ImageDetailPage() {
       {(job.status === 'queued' || job.status === 'running') && (
         <div className="bg-white rounded-[12px] border border-border shadow-sm p-16 text-center text-text-secondary mb-6">
           <div className="animate-spin h-8 w-8 border-4 border-border border-t-brand-teal rounded-full mx-auto mb-4" />
-          <div className="font-medium">Génération en cours…</div>
+          <div className="font-medium"><PhraseAttente /></div>
           <p className="text-xs mt-1">La page se met à jour automatiquement.</p>
         </div>
       )}
@@ -613,7 +614,6 @@ export default function ImageDetailPage() {
             load()
           }}
           onChanged={load}
-          onUse={(id) => router.push(`/generation?decor=${id}`)}
         />
       )}
 

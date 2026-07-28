@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import Silhouette, { familyTypo } from '../../Silhouette'
+import Chargement from '@/components/Chargement'
 import {
   brandLabel,
   familyTitle,
@@ -121,7 +122,7 @@ export default function GenerationCataloguePage() {
       {selbar}
 
       {products === null ? (
-        <p className="text-sm text-text-secondary">Chargement…</p>
+        <Chargement />
       ) : brandProducts.length === 0 ? (
         <p className="text-sm text-text-secondary">
           Le catalogue est vide — passe par l&apos;onglet{' '}
@@ -132,7 +133,7 @@ export default function GenerationCataloguePage() {
         </p>
       ) : !famille ? (
         /* ——— étape famille : mêmes cartes que l'accueil du Catalogue ——— */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="stagger grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {familles.map(({ family, items }) => {
             const typo = familyTypo(family)
             return (
@@ -142,7 +143,7 @@ export default function GenerationCataloguePage() {
                   setFamille(family)
                   setFiltre('')
                 }}
-                className="bg-white rounded-[12px] border border-border shadow-sm overflow-hidden hover:shadow-md transition-shadow block text-left"
+                className="bg-white rounded-[12px] border border-border shadow-sm overflow-hidden hover:shadow-md hover:-translate-y-0.5 transition-all block text-left"
               >
                 {typo && (
                   <div className="border-b border-border px-[18px] pt-[18px] bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
@@ -174,14 +175,14 @@ export default function GenerationCataloguePage() {
               className="flex-1 min-w-56 max-w-md bg-white border border-border rounded-full px-4 py-2 text-sm outline-none focus:border-brand-green"
             />
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <div className="stagger grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {gammes.map((p) => {
               const typo = familyTypo(p.family)
               return (
                 <Link
                   key={p.id}
                   href={`/generation/catalogue/${p.id}`}
-                  className="bg-white rounded-[12px] border border-border shadow-sm p-4 hover:shadow-md transition-shadow flex items-center gap-3"
+                  className="bg-white rounded-[12px] border border-border shadow-sm p-4 hover:shadow-md hover:-translate-y-0.5 transition-all flex items-center gap-3"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="font-bold">{p.name}</div>

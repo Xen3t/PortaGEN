@@ -77,12 +77,12 @@ export default function FeedbackButton() {
 
       {isOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
+          className="anim-voile fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
           onClick={() => !isSending && setIsOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-[16px] shadow-xl w-full max-w-[420px] m-4 p-5"
+            className="anim-modal bg-white rounded-[16px] shadow-xl w-full max-w-[420px] m-4 p-5"
           >
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-base font-bold text-text-primary">Votre retour</h3>

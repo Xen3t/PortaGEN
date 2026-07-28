@@ -27,8 +27,9 @@ export interface UserNotification {
   kind: 'ok' | 'partial' | 'error'
   message: string
   at: string
-  /** 'catalogue' → clic = page produit ; 'decor' → clic = Bibliothèque. */
-  source: 'catalogue' | 'decor'
+  /** 'catalogue' → clic = page produit ; 'decor' → clic = Bibliothèque ;
+   *  'libre' → clic = réouverture du lot (/generation?libre=<batch>). */
+  source: 'catalogue' | 'decor' | 'libre'
 }
 
 interface Payload {
@@ -211,6 +212,72 @@ export function listUserNotifications(
       message: ok ? 'décor prêt — à valider dans la Bibliothèque' : 'échec de génération du décor',
       at: row.updated_at ?? row.created_at,
       source: 'decor',
+    })
+  }
+
+  // MES Libres (28/07/2026) : une notification par LOT terminé — variantes
+  // sorties + éventuelles déclinaisons Marketplace, clic → réouverture du lot.
+  const libreRows = db
+    .prepare(
+      `SELECT * FROM jobs
+       WHERE created_by = ? AND batch_id IS NOT NULL AND type IN ('libre', 'libre-mp')
+       ORDER BY id`
+    )
+    .all(username) as JobRow[]
+  const libreBatches = new Map<
+    string,
+    { label: string; done: number; mpDone: number; errors: number; pending: boolean; maxId: number; at: string }
+  >()
+  for (const row of libreRows) {
+    const batchId = row.batch_id
+    if (!batchId) continue
+    let group = libreBatches.get(batchId)
+    if (!group) {
+      group = { label: '', done: 0, mpDone: 0, errors: 0, pending: false, maxId: row.id, at: row.updated_at ?? row.created_at }
+      libreBatches.set(batchId, group)
+    }
+    if (row.id > group.maxId) group.maxId = row.id
+    const stamp = row.updated_at ?? row.created_at
+    if (stamp > group.at) group.at = stamp
+    if (row.status === 'queued' || row.status === 'running') group.pending = true
+    if (!group.label && row.payload) {
+      try {
+        const p = JSON.parse(row.payload) as { productLabel?: unknown }
+        if (typeof p.productLabel === 'string' && p.productLabel.trim()) group.label = p.productLabel.trim()
+      } catch {
+        // payload illisible : libellé générique
+      }
+    }
+    if (row.type === 'libre' && row.status === 'done') group.done++
+    if (row.type === 'libre-mp' && row.status === 'done') group.mpDone++
+    if (row.status === 'error') group.errors++
+  }
+  for (const [batchId, g] of libreBatches) {
+    if (g.pending) continue
+    if (g.done + g.mpDone + g.errors === 0) continue
+    const parts: string[] = []
+    if (g.done > 0) parts.push(`${g.done} MES Libre${g.done > 1 ? 's' : ''}`)
+    if (g.mpDone > 0) parts.push(`${g.mpDone} Marketplace`)
+    let message: string
+    if (parts.length > 0) {
+      message = `${parts.join(' + ')} prête${g.done + g.mpDone > 1 ? 's' : ''}`
+      if (g.errors > 0) message += ` · ${g.errors} échec${g.errors > 1 ? 's' : ''}`
+    } else {
+      message = `échec de génération (${g.errors})`
+    }
+    out.push({
+      id: g.maxId,
+      batchId,
+      productId: 0,
+      productName: g.label || 'MES Libre',
+      colorisList: [],
+      siteDone: g.done,
+      marketplaceDone: g.mpDone,
+      errorCount: g.errors,
+      kind: g.errors > 0 ? (g.done + g.mpDone > 0 ? 'partial' : 'error') : 'ok',
+      message,
+      at: g.at,
+      source: 'libre',
     })
   }
 

@@ -41,6 +41,11 @@ export async function POST(req: NextRequest) {
   // bibliothèque (garder / archiver / supprimer). Borné à 4 (coût API).
   const count = Math.min(4, Math.max(1, Number.isFinite(Number(body?.count)) ? Number(body.count) : 1))
 
+  // Un lancement = une session (demande Mathias 28/07/2026) : les N tirages
+  // partagent un batch_id, la carte apparaît dans « Mes sessions ». JAMAIS pour
+  // un essai Lab (hors bibliothèque, hors accueil).
+  const batchId = lab ? undefined : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
   const jobIds = Array.from({ length: count }, (_, i) =>
     enqueueNewJob(
       'decor',
@@ -54,9 +59,9 @@ export async function POST(req: NextRequest) {
         lab: lab || undefined,
         moteur,
       },
-      undefined,
+      batchId,
       auth.username
     )
   )
-  return NextResponse.json({ jobId: jobIds[0], jobIds })
+  return NextResponse.json({ jobId: jobIds[0], jobIds, batchId })
 }

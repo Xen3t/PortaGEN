@@ -44,6 +44,13 @@ function seed(db: Database.Database) {
   db.prepare(
     `INSERT INTO detourages (product_id, coloris, size_label, png_path) VALUES (?, 'gris', '300x140', 'data/detourage/1/g.png')`
   ).run(prod.lastInsertRowid)
+  // Détection des images : catalogue + apprentissage conservés (28/07/2026).
+  db.prepare(
+    `INSERT INTO detection_images (product_id, rel_path, embedding) VALUES (?, 'PHOTOS/face.jpg', ?)`
+  ).run(prod.lastInsertRowid, Buffer.from([1, 2, 3]))
+  db.prepare(
+    `INSERT INTO detection_examples (product_id, rel_path, axis, label, source) VALUES (?, 'PHOTOS/face.jpg', 'vue', 'FACE', 'atelier')`
+  ).run(prod.lastInsertRowid)
   // Installation → doit rester.
   db.prepare(`INSERT INTO size_params (label, params) VALUES ('300x140', '{}')`).run()
   db.prepare(`INSERT INTO app_settings (key, value) VALUES ('k', 'v')`).run()
@@ -113,10 +120,15 @@ describe('runReset', () => {
     // Tables générées vidées.
     for (const t of [
       'jobs', 'api_calls', 'generation_sessions', 'decors', 'decor_tags',
-      'decor_versions', 'decor_favorites', 'detourages', 'catalog_products',
+      'decor_versions', 'decor_favorites', 'detourages',
       'catalog_coloris_settings',
     ]) {
       expect((db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n, t).toBe(0)
+    }
+    // Catalogue scanné + détection conservés (les exemples sont accrochés aux
+    // produits par product_id : vider le catalogue perdrait l'apprentissage).
+    for (const t of ['catalog_products', 'detection_images', 'detection_examples']) {
+      expect((db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n, t).toBe(1)
     }
     // Installation conservée.
     expect((db.prepare(`SELECT COUNT(*) AS n FROM users`).get() as { n: number }).n).toBeGreaterThan(0)

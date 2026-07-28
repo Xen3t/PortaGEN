@@ -11,6 +11,7 @@ import {
 } from '@/lib/catalogue/scanProgress'
 import { parseSizeFromProductName } from '@/lib/productName'
 import { detectColoris, colorisDef } from '@/lib/images/coloris'
+import { classifyColoris } from '@/lib/detection/classify'
 import {
   canonicalMesFormat,
   classifyGammeDir,
@@ -247,6 +248,11 @@ function buildColoris(
  * visuel de face — LECTURE SEULE, en-têtes + pixels centraux. Concurrence bornée
  * pour ménager le serveur de fichiers. Ce qui est déjà nommé dans les dossiers
  * n'est jamais deviné (le nom fait foi).
+ *
+ * Depuis le 24/07/2026, la couleur mesurée est d'abord comparée aux EXEMPLES
+ * APPRIS (atelier Admin → Détection des images, gamme par gamme) ; l'ancienne
+ * heuristique à seuils ne sert plus que de repli quand aucun exemple ne
+ * ressemble — c'est ce qui réduit les faux positifs gris/noir.
  */
 export async function detectColorisForGamme(
   gammeDir: string,
@@ -256,6 +262,7 @@ export async function detectColorisForGamme(
     .flatMap((s) => s.coloris)
     .filter((c) => c.coloris === 'non précisé' && (c.facePng || c.faceJpg))
   if (pending.length === 0) return
+  const gammeName = path.basename(gammeDir)
   let cursor = 0
   const worker = async () => {
     while (cursor < pending.length) {
@@ -264,7 +271,15 @@ export async function detectColorisForGamme(
       if (!rel) continue
       try {
         const det = await detectColoris(path.join(gammeDir, rel))
-        if (det.coloris) c.detectedColoris = colorisDef(det.coloris)?.label ?? null
+        const learned = classifyColoris(
+          { L: det.L, tint: det.tint, matFrac: det.matFrac },
+          gammeName
+        )
+        if (learned.coloris) {
+          c.detectedColoris = colorisDef(learned.coloris)?.label ?? learned.coloris
+        } else if (det.coloris) {
+          c.detectedColoris = colorisDef(det.coloris)?.label ?? null
+        }
       } catch {
         // Visuel illisible : reste sans proposition.
       }

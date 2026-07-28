@@ -59,6 +59,26 @@ export function isMarquageIaActif(db: Database.Database = getDb()): boolean {
 }
 
 /**
+ * Modèle de génération d'images (demande Mathias 28/07/2026) : bascule dans
+ * Admin → Réglages généraux entre Nano Banana Pro (gemini-3-pro-image, défaut)
+ * et Nano Banana (gemini-3.1-flash-image — « Nano Banana 2 », le modèle rapide
+ * et beaucoup moins cher de la même famille). Réglage GLOBAL, effet immédiat
+ * sur les prochaines générations.
+ */
+export const IMAGE_MODEL_KEY = 'gemini_image_model'
+export const IMAGE_MODELS = [
+  { id: 'gemini-3-pro-image', label: 'Nano Banana Pro' },
+  { id: 'gemini-3.1-flash-image', label: 'Nano Banana' },
+] as const
+
+export function getImageModel(db: Database.Database = getDb()): string {
+  const raw = getSetting(IMAGE_MODEL_KEY, db)
+  if (raw && IMAGE_MODELS.some((m) => m.id === raw)) return raw
+  // Défaut historique : Nano Banana Pro (surchargable par GEMINI_IMAGE_MODEL en .env).
+  return process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3-pro-image'
+}
+
+/**
  * Tarif Gemini indicatif, en € par MILLION de tokens (entrée / sortie), saisi dans
  * Admin → Réglages moteur. 0 = non configuré → aucun coût en € affiché (les tokens
  * restent toujours visibles). Sert au coût par essai du Lab moteur.

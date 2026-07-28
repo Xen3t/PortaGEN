@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Chargement from '@/components/Chargement'
 
 /**
  * Admin → Feedback : les retours envoyés depuis le bouton flottant « ? »
@@ -93,7 +94,7 @@ export default function AdminFeedbackPage() {
       </div>
 
       {loading ? (
-        <p className="text-text-secondary text-sm text-center py-10">Chargement...</p>
+        <Chargement />
       ) : items.length === 0 ? (
         <div className="bg-white rounded-[12px] shadow-sm p-10 text-center">
           <p className="text-text-secondary text-sm">Aucun retour pour le moment.</p>

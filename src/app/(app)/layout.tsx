@@ -6,6 +6,7 @@ import BrandSwitch from './BrandSwitch'
 import FeedbackButton from './FeedbackButton'
 import MainNav from './MainNav'
 import NotificationBell from './NotificationBell'
+import PageTransition from './PageTransition'
 import UserMenu from './UserMenu'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -26,7 +27,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <UserMenu username={user.username} isAdmin={user.role === 'admin'} />
         </div>
       </header>
-      <main className="w-full max-w-7xl mx-auto px-6 py-8 flex-1">{children}</main>
+      <main className="w-full max-w-7xl mx-auto px-6 py-8 flex-1">
+        <PageTransition>{children}</PageTransition>
+      </main>
       {/* Pied de page signature HoorTRADE — même style que HoorTRADS. */}
       <footer className="flex items-center justify-between px-8 py-3 text-[11px] text-text-disabled border-t border-border/50">
         <span>© 2026 - HOORTRADE</span>

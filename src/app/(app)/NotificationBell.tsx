@@ -29,7 +29,7 @@ interface Notif {
   message: string
   at: string
   /** 'catalogue' → clic = page produit ; 'decor' → clic = Bibliothèque (20/07/2026). */
-  source: 'catalogue' | 'decor'
+  source: 'catalogue' | 'decor' | 'libre'
 }
 
 const SEEN_KEY = 'portagen-notif-seen'
@@ -108,7 +108,13 @@ export default function NotificationBell() {
 
   function openNotif(n: Notif) {
     setOpen(false)
-    router.push(n.source === 'decor' ? '/decors' : `/catalogue/${n.productId}`)
+    router.push(
+      n.source === 'decor'
+        ? '/decors'
+        : n.source === 'libre'
+          ? `/generation?libre=${encodeURIComponent(n.batchId)}`
+          : `/catalogue/${n.productId}`
+    )
   }
 
   const icon = (kind: Notif['kind']) =>
@@ -125,7 +131,8 @@ export default function NotificationBell() {
         title="Notifications"
         className="relative flex items-center text-text-secondary hover:text-text-primary transition-colors px-1"
       >
-        {/* Cloche identique à celle de HoorTRADS (demande Mathias 13/07/2026). */}
+        {/* Cloche identique à celle de HoorTRADS (demande Mathias 13/07/2026).
+            Elle sonne périodiquement tant qu'il reste du non-lu (28/07/2026). */}
         <svg
           width="16"
           height="16"
@@ -135,19 +142,20 @@ export default function NotificationBell() {
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
+          className={unread > 0 ? 'anim-cloche' : undefined}
         >
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
           <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
         {unread > 0 && (
-          <span className="absolute -top-1 -right-1 bg-brand-red text-white text-[10px] font-bold rounded-full min-w-[16px] h-[16px] grid place-items-center px-1">
+          <span className="anim-badge absolute -top-1 -right-1 bg-brand-red text-white text-[10px] font-bold rounded-full min-w-[16px] h-[16px] grid place-items-center px-1">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-[360px] max-w-[calc(100vw-32px)] bg-white rounded-[12px] shadow-lg border border-border z-40 overflow-hidden">
+        <div className="anim-menu absolute right-0 top-full mt-2 w-[360px] max-w-[calc(100vw-32px)] bg-white rounded-[12px] shadow-lg border border-border z-40 overflow-hidden">
           <div className="flex items-center px-4 py-3 border-b border-border">
             <span className="font-bold text-sm">Notifications</span>
             <span className="ml-auto flex items-center gap-3">
@@ -169,7 +177,7 @@ export default function NotificationBell() {
               )}
             </span>
           </div>
-          <div className="max-h-[60vh] overflow-y-auto">
+          <div className="stagger max-h-[60vh] overflow-y-auto">
             {visible.length === 0 ? (
               <p className="px-4 py-6 text-sm text-text-secondary text-center">
                 Aucune notification pour l&apos;instant.
@@ -204,7 +212,12 @@ export default function NotificationBell() {
                       </b>{' '}
                       — {n.message}
                       <small className="block text-text-disabled text-[11.5px] mt-0.5">
-                        {relTime(n.at)} · {n.source === 'decor' ? 'voir la Bibliothèque' : 'voir la gamme'}
+                        {relTime(n.at)} ·{' '}
+                        {n.source === 'decor'
+                          ? 'voir la Bibliothèque'
+                          : n.source === 'libre'
+                            ? 'rouvrir le lot'
+                            : 'voir la gamme'}
                       </small>
                     </span>
                   </button>

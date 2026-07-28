@@ -219,6 +219,20 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Décors Libres (28/07/2026) : une description photographique NOMMÉE et
+    -- PARTAGÉE entre utilisateurs, rechargeable d'un clic sur l'écran MES Libre.
+    -- Rien à voir avec les décors image du mode Contrainte (table decors).
+    -- « profil » = profil de réglages (portail, clim, pergola…) : un décor Libre
+    -- n'est proposé qu'aux produits de son profil.
+    CREATE TABLE IF NOT EXISTS libre_decors (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      profil TEXT NOT NULL DEFAULT 'portail',
+      description TEXT NOT NULL,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Lancements de gamme masqués de « Mes sessions » (16/07/2026) : une carte
     -- Catalogue n'a pas de ligne de session (résumé recalculé depuis les jobs),
     -- son ✕ inscrit donc le lot ici — jobs et images conservés, la gamme reste
@@ -254,6 +268,47 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE (product_id, coloris, size_label)
+    );
+
+    -- Détection des images par apprentissage (chantier 24/07/2026, maquette
+    -- atelier-detection-v4). detection_images = inventaire des images vues sur
+    -- le serveur (LECTURE SEULE) avec leur empreinte visuelle (BLOB Float32,
+    -- DINOv2 local) et la dernière prédiction de vue (mot-clé nomenclature
+    -- HOORTRADE). detection_examples = les exemples appris : un par (image,
+    -- axe), issus des noms conformes, des dossiers, des corrections de fiches
+    -- ou des clics de l'atelier — un clic atelier n'est JAMAIS écrasé par une
+    -- récolte automatique.
+    CREATE TABLE IF NOT EXISTS detection_images (
+      id INTEGER PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES catalog_products(id),
+      rel_path TEXT NOT NULL,
+      mtime_ms INTEGER,
+      size INTEGER,
+      width INTEGER,
+      height INTEGER,
+      embedding BLOB,
+      pred_vue TEXT,
+      pred_vue_conf REAL,
+      pred_vue_why TEXT,
+      -- Vue REFUSÉE en mode lots (image décochée, 27/07/2026) : ne revient plus
+      -- dans les lots de cette vue, passe en tête de la file un par un.
+      bulk_rejected_vue TEXT,
+      error TEXT,
+      analyzed_at TEXT,
+      UNIQUE (product_id, rel_path)
+    );
+
+    CREATE TABLE IF NOT EXISTS detection_examples (
+      id INTEGER PRIMARY KEY,
+      product_id INTEGER NOT NULL REFERENCES catalog_products(id),
+      rel_path TEXT NOT NULL,
+      axis TEXT NOT NULL CHECK (axis IN ('vue', 'coloris', 'famille', 'gamme')),
+      label TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('nom', 'dossier', 'fiche', 'atelier')),
+      features TEXT,
+      gamme TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (product_id, rel_path, axis)
     );
   `)
 
@@ -295,6 +350,14 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
   )
   if (!catCols.includes('new_refs')) {
     db.exec(`ALTER TABLE catalog_products ADD COLUMN new_refs TEXT NOT NULL DEFAULT '[]'`)
+  }
+
+  // Mode lots (27/07/2026) : bases créées avant l'ajout de la colonne de refus.
+  const detCols = (db.prepare(`PRAGMA table_info(detection_images)`).all() as { name: string }[]).map(
+    (c) => c.name
+  )
+  if (!detCols.includes('bulk_rejected_vue')) {
+    db.exec(`ALTER TABLE detection_images ADD COLUMN bulk_rejected_vue TEXT`)
   }
 
   // Moteurs (13/07/2026) : chaque taille appartient à UN moteur — les référentiels
@@ -480,6 +543,11 @@ export const PROMPT_FILES: Record<string, string> = {
   // coloris injecté via {COLORIS}, formulations neutres ajouré/sommet.
   'pose-fusion': 'Prompt Pose Fusion JANUS.txt',
   'decor-tags': 'Prompt Decor Tags.txt',
+  // Enquête maisons illogiques (28/07/2026) : R1 = rôle de la photo de maison
+  // de référence jointe à Nano ; R3 = juge de vraisemblance architecturale.
+  'decor-maison': 'Prompt Decor Maison.txt',
+  'decor-juge': 'Prompt Decor Juge.txt',
+  'decor-maison-extraction': 'Prompt Decor Maison Extraction.txt',
   'decor-correctif': 'Prompt Decor Correctif.txt',
   'portillon-piliers-murets': 'Prompt Piliers et Murets Portillon.txt',
   'portillon-integration': 'Prompt Integration Portillon.txt',
@@ -494,6 +562,23 @@ export const PROMPT_FILES: Record<string, string> = {
   'coulissant-piliers-murets': 'Prompt Piliers et Murets Coulissant.txt',
   'coulissant-integration-simple': 'Prompt Integration Simple Coulissant.txt',
   'coulissant-marketplace-extension': 'Prompt Marketplace Extension Coulissant.txt',
+  // MES Libres (chantier 28/07/2026, maquette mes-libre-v11) : gabarit unique,
+  // placeholders {PRODUCT} {SCENE} {CONDITIONS} {CAMERA} {DETAILS} remplis par
+  // le pipeline depuis le formulaire — HARD LOCK PRODUCT en dernière ligne.
+  'libre-mes': 'Prompt MES Libre.txt',
+  // Extension Marketplace des MES Libres : générique (le produit peut être
+  // n'importe quoi — jamais le prompt « portail » d'un moteur Contrainte).
+  'libre-marketplace-extension': 'Prompt Marketplace Extension Libre.txt',
+  // Détection de la typologie depuis l'image déposée (28/07/2026) : le modèle
+  // répond une clé parmi la liste (battant, pergola, clim…) — corrigeable à l'écran.
+  'libre-typo-detect': 'Prompt Detection Typologie Libre.txt',
+  // Prompt Specialist (28/07/2026, calqué sur le workflow Freepik de Mathias) :
+  // le LLM reçoit les éléments français du formulaire et ÉCRIT le brief photo
+  // final en anglais, HARD LOCK PRODUCT verbatim en dernière ligne.
+  'libre-prompt-specialist': 'Prompt Specialist Libre.txt',
+  // Retouche d'une MES Libre par consigne (studio, 28/07/2026) : édition ciblée
+  // de l'image existante, {INSTRUCTION} injectée, HARD LOCK en dernière ligne.
+  'libre-fix': 'Prompt Retouche Libre.txt',
 }
 
 /**

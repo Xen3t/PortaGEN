@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { parseProduitFromFileName, parseSizeFromProductName } from '@/lib/productName'
+import { COULISSANT_XL_MIN_W } from '@/lib/gabaritSets'
 import Silhouette, {
   PictoIllu,
   SilhouetteMode,
@@ -10,6 +11,8 @@ import Silhouette, {
   type Typo,
 } from '../Silhouette'
 import MesStudio from './MesStudio'
+import MesLibre from './MesLibre'
+import PhraseAttente from '@/components/PhraseAttente'
 
 /**
  * « Génération » — génération DIRECTE, sans catalogue (maquette generation-v4
@@ -34,7 +37,9 @@ interface DecorEntry {
   name: string
   slug: string
   gamme: string | null
-  type: 'battant' | 'coulissant' | 'portillon'
+  // « coulissant-xl » (28/07/2026) : décor à l'échelle XL, réservé aux
+  // coulissants ≥ 450 — jamais mélangé avec les décors standards.
+  type: 'battant' | 'coulissant' | 'portillon' | 'coulissant-xl'
   status: string
   image_size: string | null
 }
@@ -66,7 +71,7 @@ interface Job {
     /** Essai du Labo moteur : jamais affiché dans une session de génération. */
     lab?: boolean
   } | null
-  result: { deliveryPath?: string; sizeLabel?: string } | null
+  result: { deliveryPath?: string; sizeLabel?: string; productPath?: string } | null
   error: string | null
 }
 
@@ -251,7 +256,7 @@ function SizeRows({ jobs, render }: { jobs: Job[]; render: (j: Job) => ReactNode
                 <h4 className="text-xs font-bold text-text-secondary mb-1.5">Largeur {w} cm</h4>
                 {/* Largeur de colonne plafonnée : peu de tailles ≠ vignettes géantes. */}
                 <div
-                  className="grid gap-4"
+                  className="stagger grid gap-4"
                   style={{ gridTemplateColumns: `repeat(${heights.length}, minmax(0, 500px))` }}
                 >
                   {heights.map((h) => {
@@ -270,7 +275,7 @@ function SizeRows({ jobs, render }: { jobs: Job[]; render: (j: Job) => ReactNode
               </div>
             ))}
             {unsized.length > 0 && (
-              <div className="grid gap-4 mt-4 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">
+              <div className="stagger grid gap-4 mt-4 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">
                 {unsized.map((j) => render(j))}
               </div>
             )}
@@ -279,6 +284,33 @@ function SizeRows({ jobs, render }: { jobs: Job[]; render: (j: Job) => ReactNode
       })}
     </>
   )
+}
+
+// Ordre d'affichage des cartes (même logique que SizeRows : coloris par ordre
+// d'arrivée, puis largeur et hauteur croissantes, tailles inconnues à la fin) —
+// les flèches ← / → du Studio MES suivent cet ordre visible à l'écran.
+function displayOrder(jobs: Job[]): Job[] {
+  const byColoris: Job[][] = []
+  const idx = new Map<string, number>()
+  for (const j of jobs) {
+    const k = (j.payload?.coloris ?? '').toLowerCase()
+    if (!idx.has(k)) {
+      idx.set(k, byColoris.length)
+      byColoris.push([])
+    }
+    byColoris[idx.get(k)!].push(j)
+  }
+  const out: Job[] = []
+  for (const js of byColoris) {
+    const sized = js.filter((j) => j.payload?.size)
+    const widths = Array.from(new Set(sized.map((j) => j.payload!.size!.w))).sort((a, b) => a - b)
+    const heights = Array.from(new Set(sized.map((j) => j.payload!.size!.h))).sort((a, b) => a - b)
+    for (const w of widths)
+      for (const h of heights)
+        out.push(...sized.filter((j) => j.payload!.size!.w === w && j.payload!.size!.h === h))
+    out.push(...js.filter((j) => !j.payload?.size))
+  }
+  return out
 }
 
 // —————————————————————————————————————————————— page
@@ -310,10 +342,16 @@ export default function GenerationPage() {
   const [images, setImages] = useState<Img[]>([])
   const [decors, setDecors] = useState<DecorEntry[]>([])
   const [decorId, setDecorId] = useState<number | null>(null)
+  // Décor XL (28/07/2026) : dès qu'une image coulissant fait ≥ 450 cm de large,
+  // le lot exige AUSSI un décor « coulissant-xl » (échelle caméra reculée) — les
+  // images XL partent avec ce décor, les autres avec le décor standard.
+  const [decorXlId, setDecorXlId] = useState<number | null>(null)
   // — fenêtre « Choisir un décor » (maquette choix-decor-v1 validée le 13/07/2026,
   //   sans favoris) : recherche + filtre gamme, décors rangés par typologie.
   //   Un décor d'une autre typologie reste sélectionnable, avec avertissement.
+  //   pickFor : 'std' = décor du lot, 'xl' = décor des tailles XL (que des décors XL).
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickFor, setPickFor] = useState<'std' | 'xl'>('std')
   const [pickId, setPickId] = useState<number | null>(null)
   const [pickSearch, setPickSearch] = useState('')
   const [pickGamme, setPickGamme] = useState('')
@@ -358,14 +396,21 @@ export default function GenerationPage() {
   // /generation?session=<batch> ramène l'écran de résultats tel qu'à la fin de la
   // génération : téléchargements, studio, passage MP. Si des jobs tournent encore,
   // on retombe sur l'écran de progression qui basculera tout seul.
+  // Le temps que la session arrive, on masque le choix du mode derrière un
+  // écran de chargement (demande Mathias 28/07/2026) — sinon l'écran « Générer »
+  // apparaît une seconde avant de sauter aux résultats.
+  const [sessionLoading, setSessionLoading] = useState(false)
   useEffect(() => {
     const sid = new URLSearchParams(window.location.search).get('session')
     if (!sid) return
     let alive = true
+    setSessionLoading(true)
     fetch(`/api/generation/sessions/${encodeURIComponent(sid)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (!alive || !d?.session) return
+        if (!alive) return
+        setSessionLoading(false)
+        if (!d?.session) return
         const s = d.session
         setMode('con')
         setView('gen')
@@ -377,10 +422,23 @@ export default function GenerationPage() {
         setStage(s.busy ? 'proc' : 'result')
         setBusyPoll(true) // déclenche le chargement des jobs (s'arrête seul si tout est fini)
       })
-      .catch(() => {})
+      .catch(() => {
+        if (alive) setSessionLoading(false)
+      })
     return () => {
       alive = false
     }
+  }, [])
+
+  // — réouverture d'une session MES LIBRE (28/07/2026) — /generation?libre=<batch>
+  // ouvre directement le mode Libre sur l'écran de résultats du lot.
+  const [libreBatch, setLibreBatch] = useState<string | null>(null)
+  useEffect(() => {
+    const lb = new URLSearchParams(window.location.search).get('libre')
+    if (!lb) return
+    setMode('lib')
+    setView('gen')
+    setLibreBatch(lb)
   }, [])
 
   // Décor présélectionné par l'URL (« Utiliser ce décor » de la Bibliothèque /
@@ -398,7 +456,17 @@ export default function GenerationPage() {
           .filter((x: DecorEntry) => x.status === 'actif')
           .sort((a: DecorEntry, b: DecorEntry) => b.id - a.id)
         setDecors(actifs)
-        setDecorId((cur) => cur ?? actifs[0]?.id ?? null)
+        // La case « décor du lot » ne prend jamais un décor XL : si l'URL
+        // (?decor=<id>) en désignait un, il bascule dans la case décor XL.
+        const premierStd = actifs.find((x) => x.type !== 'coulissant-xl')?.id ?? null
+        setDecorId((cur) => {
+          const found = actifs.find((x) => x.id === cur)
+          if (found?.type === 'coulissant-xl') {
+            setDecorXlId(found.id)
+            return premierStd
+          }
+          return cur ?? premierStd
+        })
       })
       .catch(() => {})
   }, [])
@@ -701,11 +769,18 @@ export default function GenerationPage() {
     }
   }
 
+  // Tailles XL du lot (28/07/2026) : coulissants ≥ 450 cm — ils exigent un
+  // décor « coulissant-xl » et partent avec, les autres avec le décor standard.
+  const xlCount =
+    typo === 'coulissant' ? images.filter((i) => i.w >= COULISSANT_XL_MIN_W).length : 0
+  const stdCount = images.length - xlCount
+
   async function generate() {
-    if (!decorId || images.length === 0) return
+    if (!canGenerate) return
     setNotice(null)
     const fd = new FormData()
-    fd.append('decorId', String(decorId))
+    if (stdCount > 0 && decorId != null) fd.append('decorId', String(decorId))
+    if (xlCount > 0 && decorXlId != null) fd.append('decorXlId', String(decorXlId))
     fd.append('moteur', typo)
     fd.append('produit', produit.trim())
     fd.append('autoMp', autoMp ? '1' : '0')
@@ -732,21 +807,30 @@ export default function GenerationPage() {
     }
   }
 
-  const canGenerate = images.length > 0 && decorId != null
+  // Chaque « côté » du lot exige son décor : standard s'il y a des tailles
+  // standards, XL s'il y a des tailles XL.
+  const canGenerate =
+    images.length > 0 && (stdCount === 0 || decorId != null) && (xlCount === 0 || decorXlId != null)
 
   // — sélecteur de décor : un bouton dans le panneau, tout se passe dans la
   //   fenêtre de sélection (demande Mathias 22/07/2026) —
   const selectedDecor = decors.find((d) => d.id === decorId) ?? null
+  const selectedDecorXl = decors.find((d) => d.id === decorXlId) ?? null
+  const decorsXl = decors.filter((d) => d.type === 'coulissant-xl')
 
-  function openPicker() {
-    setPickId(decorId)
+  function openPicker(target: 'std' | 'xl' = 'std') {
+    setPickFor(target)
+    setPickId(target === 'xl' ? decorXlId : decorId)
     setPickSearch('')
     setPickGamme('')
     setPickTab('')
     setPickerOpen(true)
   }
 
+  // La fenêtre ne mélange jamais les échelles : cible XL → que des décors XL,
+  // cible standard → tout sauf les XL.
   const pickList = decors.filter((d) => {
+    if ((d.type === 'coulissant-xl') !== (pickFor === 'xl')) return false
     const q = pickSearch.trim().toLowerCase()
     if (q && !`${d.name} ${d.slug} ${d.gamme ?? ''}`.toLowerCase().includes(q)) return false
     if (pickGamme && (d.gamme ?? '') !== pickGamme) return false
@@ -765,8 +849,19 @@ export default function GenerationPage() {
   // —————————————————————————————————————————————— rendu
   return (
     <div className="max-w-6xl mx-auto">
+      {/* Réouverture d'une session : écran de chargement basique le temps que la
+          session arrive, pour ne jamais montrer le choix du mode entre-temps. */}
+      {sessionLoading && (
+        <section className="min-h-[60vh] grid place-items-center animate-fade-in-up">
+          <div className="text-center">
+            <span className="inline-block w-10 h-10 rounded-full border-4 border-brand-green-light border-t-brand-green animate-spin mb-4" />
+            <p className="text-sm font-semibold text-text-secondary anim-respire">Chargement de la session…</p>
+          </div>
+        </section>
+      )}
+
       {/* ÉTAPE 1 — MODE */}
-      {view === 'mode' && (
+      {!sessionLoading && view === 'mode' && (
         <section className="animate-fade-in-up">
           <h1 className="text-[34px] leading-tight font-bold tracking-tight mb-7">Générer</h1>
           {/* Maquette choix-mode-typologie-v1 validée le 13/07/2026 : panneaux
@@ -1091,32 +1186,64 @@ export default function GenerationPage() {
                       <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
                         Décor
                       </label>
-                      {decors.length > 0 ? (
-                        <button
-                          onClick={openPicker}
-                          className="w-full rounded-[8px] border border-border bg-white px-3 py-2.5 text-[13px] font-bold text-text-secondary hover:text-brand-green hover:border-brand-green transition-colors"
-                        >
-                          {selectedDecor
-                            ? `Décor : ${selectedDecor.name} — changer`
-                            : `Choisir un décor (${decors.length})`}
-                        </button>
-                      ) : (
-                        <p className="text-[11.5px] text-text-disabled mt-1.5">
-                          Aucun décor actif —{' '}
-                          <Link href="/decors" className="text-brand-green font-bold">
-                            crées-en un depuis la page Décors ↗
-                          </Link>
-                        </p>
-                      )}
-                      {selectedDecor && selectedDecor.type !== typo && (
+                      {(stdCount > 0 || images.length === 0) &&
+                        (decors.length > 0 ? (
+                          <button
+                            onClick={() => openPicker('std')}
+                            className="w-full rounded-[8px] border border-border bg-white px-3 py-2.5 text-[13px] font-bold text-text-secondary hover:text-brand-green hover:border-brand-green transition-colors"
+                          >
+                            {selectedDecor
+                              ? `Décor : ${selectedDecor.name} — changer`
+                              : `Choisir un décor`}
+                          </button>
+                        ) : (
+                          <p className="text-[11.5px] text-text-disabled mt-1.5">
+                            Aucun décor actif —{' '}
+                            <Link href="/decors" className="text-brand-green font-bold">
+                              crées-en un depuis la page Décors ↗
+                            </Link>
+                          </p>
+                        ))}
+                      {selectedDecor && TYPO_INFO[selectedDecor.type as Typo] && selectedDecor.type !== typo && (
                         <p className="text-[11.5px] font-semibold text-amber-700 bg-amber-100 rounded-[8px] px-2.5 py-1.5 mt-2">
-                          ⚠ Décor pensé pour un {TYPO_INFO[selectedDecor.type].titre.toLowerCase()},
+                          ⚠ Décor pensé pour un {TYPO_INFO[selectedDecor.type as Typo].titre.toLowerCase()},
                           pas pour un {TYPO_INFO[typo].titre.toLowerCase()} — le cadrage peut être
                           raté.
                         </p>
                       )}
+                      {/* Tailles XL détectées (28/07/2026) : le lot exige aussi un décor
+                          à l'échelle XL — les images ≥ 450 partiront avec lui. */}
+                      {xlCount > 0 && (
+                        <div className="mt-2">
+                          <p className="text-[11.5px] font-semibold text-amber-700 bg-amber-100 rounded-[8px] px-2.5 py-1.5 mb-2">
+                            ⚠ {xlCount} taille{xlCount > 1 ? 's' : ''} XL détectée
+                            {xlCount > 1 ? 's' : ''} (largeur ≥ {COULISSANT_XL_MIN_W} cm) — ces
+                            images ont besoin d&apos;un décor XL (échelle adaptée aux grandes
+                            lames).
+                          </p>
+                          {decorsXl.length > 0 ? (
+                            <button
+                              onClick={() => openPicker('xl')}
+                              className="w-full rounded-[8px] border border-border bg-white px-3 py-2.5 text-[13px] font-bold text-text-secondary hover:text-brand-green hover:border-brand-green transition-colors"
+                            >
+                              {selectedDecorXl
+                                ? `Décor XL : ${selectedDecorXl.name} — changer`
+                                : `Choisir un décor XL (${decorsXl.length})`}
+                            </button>
+                          ) : (
+                            <p className="text-[11.5px] text-text-disabled">
+                              Aucun décor XL actif —{' '}
+                              <Link href="/decors" className="text-brand-green font-bold">
+                                crées-en un depuis la page Décors (Coulissant XL) ↗
+                              </Link>
+                            </p>
+                          )}
+                        </div>
+                      )}
                       <p className="text-[11.5px] text-text-disabled mt-1.5">
-                        Même décor pour toutes les images — c&apos;est ce qui donne l&apos;effet catalogue.
+                        {xlCount > 0 && stdCount > 0
+                          ? 'Un décor pour les tailles standards, un décor XL pour les grandes — chaque image part avec le sien.'
+                          : 'Même décor pour toutes les images — c’est ce qui donne l’effet catalogue.'}
                       </p>
                     </div>
 
@@ -1173,9 +1300,11 @@ export default function GenerationPage() {
                 <span className="text-xs text-text-disabled">
                   {images.length === 0
                     ? 'Dépose d’abord au moins une image.'
-                    : decorId == null
+                    : stdCount > 0 && decorId == null
                       ? 'Choisis un décor.'
-                      : `≈ ${images.length} MES Site à générer · le produit d’origine n’est pas modifié`}
+                      : xlCount > 0 && decorXlId == null
+                        ? `Choisis un décor XL pour les tailles ≥ ${COULISSANT_XL_MIN_W} cm.`
+                        : `≈ ${images.length} MES Site à générer · le produit d’origine n’est pas modifié`}
                 </span>
               </div>
             </>
@@ -1187,6 +1316,9 @@ export default function GenerationPage() {
               const doneN = jobs.filter((j) => isMesJob(j) && j.status === 'done').length
               const failN = jobs.filter((j) => j.status === 'error').length
               const total = expected || images.length || 1
+              const ready = jobs.filter(
+                (j) => isMesJob(j) && j.status === 'done' && j.result?.deliveryPath
+              )
               return (
                 <div className="animate-fade-in-up">
                   <h1 className="text-2xl font-bold tracking-tight mb-1">Génération en cours…</h1>
@@ -1200,10 +1332,58 @@ export default function GenerationPage() {
                       {doneN} / {total} mise{total > 1 ? 's' : ''} en situation prête{doneN > 1 ? 's' : ''}
                     </p>
                     <p className="text-sm text-text-secondary max-w-md">
-                      Le produit d&apos;origine n&apos;est jamais modifié — le moteur crée de nouvelles images.
+                      <PhraseAttente />
                       {failN > 0 && <span className="block text-brand-red mt-1">{failN} en erreur (détail à la fin).</span>}
                     </p>
                   </div>
+
+                  {/* Les MES déjà prêtes s'affichent au fil de l'eau, même grille que le résultat. */}
+                  {ready.length > 0 && (
+                    <div className="mt-6">
+                      <h2 className="text-[13px] font-bold flex items-center gap-2 mb-3">
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-brand-green-light text-brand-green">
+                          WEB
+                        </span>
+                        Déjà prête{ready.length > 1 ? 's' : ''}{' '}
+                        <span className="text-text-secondary font-normal text-[12.5px]">
+                          · les suivantes arrivent…
+                        </span>
+                      </h2>
+                      <SizeRows
+                        jobs={ready}
+                        render={(j) => {
+                          const dp = j.result!.deliveryPath!
+                          return (
+                            <div
+                              key={j.id}
+                              className="bg-white border border-border rounded-[12px] shadow-sm overflow-hidden animate-fade-in-up"
+                            >
+                              <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border">
+                                <span className="font-bold text-[13px]">{labelOf(j)}</span>
+                                <span className="ml-auto text-[11.5px] text-text-secondary tabular-nums">
+                                  2000×1330
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setLightbox(imgUrl(dp))}
+                                className="block w-full cursor-zoom-in"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={imgUrl(dp, 960)}
+                                  alt={labelOf(j)}
+                                  loading="lazy"
+                                  decoding="async"
+                                  className="w-full aspect-[3/2] object-cover bg-surface"
+                                />
+                              </button>
+                            </div>
+                          )
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
               )
             })()}
@@ -1305,6 +1485,9 @@ export default function GenerationPage() {
                         const vnum = vs.findIndex((v) => v.id === disp.id) + 1
                         const dp = disp.result?.deliveryPath
                         const dispDone = disp.status === 'done' && !!dp
+                        // PNG produit d'origine (détouré) — porté par le job MES racine,
+                        // identique pour toutes les versions.
+                        const pp = root.result?.productPath
                         const fname = fnameOf(root, 'site', typo)
                         return (
                           <div key={root.id} className="bg-white border border-border rounded-[12px] shadow-sm overflow-hidden">
@@ -1318,21 +1501,42 @@ export default function GenerationPage() {
                               <span className="ml-auto text-[11.5px] text-text-secondary tabular-nums">2000×1330</span>
                             </div>
                             {dispDone ? (
-                              <button
-                                type="button"
-                                onClick={() => setStudioRoot(root.id)}
-                                title="Retours & versions"
-                                className="block w-full cursor-pointer group relative"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={imgUrl(dp!, 960)} alt={labelOf(root)} loading="lazy" decoding="async" className="w-full aspect-[3/2] object-cover bg-surface" />
-                                <span className="absolute inset-0 grid place-items-center bg-black/0 group-hover:bg-black/30 opacity-0 group-hover:opacity-100 text-white text-[13px] font-bold transition-all">
-                                  <span className="flex items-center gap-1.5">
-                                    <PictoIllu name="loupe" size={15} />
-                                    Ouvrir · retours &amp; versions
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={() => setStudioRoot(root.id)}
+                                  title="Retours & versions"
+                                  className="block w-full cursor-pointer group relative"
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={imgUrl(dp!, 960)} alt={labelOf(root)} loading="lazy" decoding="async" className="w-full aspect-[3/2] object-cover bg-surface" />
+                                  <span className="absolute inset-0 grid place-items-center bg-black/0 group-hover:bg-black/30 opacity-0 group-hover:opacity-100 text-white text-[13px] font-bold transition-all">
+                                    <span className="flex items-center gap-1.5">
+                                      <PictoIllu name="loupe" size={15} />
+                                      Ouvrir · retours &amp; versions
+                                    </span>
                                   </span>
-                                </span>
-                              </button>
+                                </button>
+                                {/* PNG produit lié — vignette en bas à droite de la MES,
+                                    juste au-dessus du bouton MP ; clic = aperçu en grand */}
+                                {pp && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setLightbox(imgUrl(pp))}
+                                    title="PNG produit d'origine — cliquer pour agrandir"
+                                    className="absolute bottom-2 right-2 z-10 w-20 rounded-[8px] border border-border bg-white/95 shadow-sm p-1 cursor-zoom-in hover:border-brand-green transition-colors"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={imgUrl(pp, 240)}
+                                      alt="PNG produit d'origine"
+                                      loading="lazy"
+                                      decoding="async"
+                                      className="w-full h-12 object-contain"
+                                    />
+                                  </button>
+                                )}
+                              </div>
                             ) : root.status === 'error' ? (
                               <div className="aspect-[3/2] bg-brand-red-light grid place-items-center text-brand-red text-sm px-4 text-center">
                                 Échec — {root.error ?? 'erreur'}
@@ -1479,48 +1683,46 @@ export default function GenerationPage() {
         </section>
       )}
 
-      {/* ÉTAPE 3 — LIBRE (brouillon) */}
+      {/* ÉTAPE 3 — LIBRE : studio visuel adaptatif (maquette mes-libre-v11 validée
+          le 28/07/2026) — produit en références, scène décrite au formulaire,
+          aperçu vivant, jobs « libre » par variante. */}
       {view === 'gen' && mode === 'lib' && (
         <section className="animate-fade-in-up">
-          <Chemin onBack={goMode} parents={[{ label: 'Générer', onClick: goMode }]} here="MES Libre">
-            <span
-              className="pill ml-2"
-              style={{ borderColor: 'var(--color-brand-red)', color: 'var(--color-brand-red)', cursor: 'default' }}
-            >
-              <PictoIllu name="wip" size={14} className="mr-1" />
-              Work in progress
-            </span>
-          </Chemin>
-          <div className="bg-brand-red-light border border-brand-red/30 rounded-[12px] px-5 py-4 flex items-center gap-3.5">
-            <PictoIllu name="wip" size={26} />
-            <div className="text-sm text-text-secondary">
-              <b className="text-brand-red">Écran en réflexion — pas encore construit.</b> Le mode Libre viendra
-              après les battants (priorité #4 du cadrage) : formulaire (angle de vue, profondeur de champ,
-              lumière) + plusieurs variantes → tu choisis. Pas de gabarits ni de tailles.
-            </div>
-          </div>
-          <button onClick={goMode} className="pill mt-5">
-            ← Revenir au choix du mode
-          </button>
+          <Chemin onBack={goMode} parents={[{ label: 'Générer', onClick: goMode }]} here="MES Libre" />
+          <MesLibre initialBatch={libreBatch} />
         </section>
       )}
 
-      {/* Studio MES : clic sur une MES → grand + retours + versions */}
-      {studioRoot != null && batchId && (
-        <MesStudio
-          batchId={batchId}
-          produit={typo}
-          mpEnabled={mpMode !== 'jamais'}
-          rootJobId={studioRoot}
-          chosenJobId={chosen[studioRoot] ?? null}
-          onChoose={chooseVersion}
-          onMP={(id) => {
-            setMpAskedRoots((prev) => new Set(prev).add(studioRoot))
-            void mpJobs([id])
-          }}
-          onClose={closeStudio}
-        />
-      )}
+      {/* Studio MES : clic sur une MES → grand + retours + versions.
+          ← / → passent à la MES précédente / suivante du lot (ordre de la grille). */}
+      {studioRoot != null &&
+        batchId &&
+        (() => {
+          const roots = displayOrder(jobs.filter(isMesJob))
+          const pos = roots.findIndex((r) => r.id === studioRoot)
+          return (
+            <MesStudio
+              key={studioRoot}
+              batchId={batchId}
+              produit={typo}
+              mpEnabled={mpMode !== 'jamais'}
+              rootJobId={studioRoot}
+              chosenJobId={chosen[studioRoot] ?? null}
+              onChoose={chooseVersion}
+              onMP={(id) => {
+                setMpAskedRoots((prev) => new Set(prev).add(studioRoot))
+                void mpJobs([id])
+              }}
+              onClose={closeStudio}
+              onPrev={pos > 0 ? () => setStudioRoot(roots[pos - 1].id) : undefined}
+              onNext={
+                pos >= 0 && pos < roots.length - 1
+                  ? () => setStudioRoot(roots[pos + 1].id)
+                  : undefined
+              }
+            />
+          )
+        })()}
 
       {/* Fenêtre « Choisir un décor » — tous les décors rangés par typologie,
           recherche + filtre gamme. Sélection puis « Utiliser ce décor ». */}
@@ -1535,11 +1737,18 @@ export default function GenerationPage() {
           >
             <div className="bg-white border-b border-border px-5 pt-4">
               <div className="flex items-center gap-3">
-                <h3 className="text-[17px] font-bold m-0">Choisir un décor</h3>
+                <h3 className="text-[17px] font-bold m-0">
+                  {pickFor === 'xl' ? 'Choisir un décor XL' : 'Choisir un décor'}
+                </h3>
                 <span className="text-xs text-text-secondary">
                   {pickList.length} décor{pickList.length > 1 ? 's' : ''} actif
                   {pickList.length > 1 ? 's' : ''}
                 </span>
+                {pickFor === 'xl' && (
+                  <span className="text-[10px] font-bold uppercase tracking-wide bg-brand-green-light text-brand-green rounded-full px-2 py-0.5">
+                    échelle XL · coulissants ≥ {COULISSANT_XL_MIN_W} cm
+                  </span>
+                )}
                 <button
                   onClick={() => setPickerOpen(false)}
                   className="ml-auto text-text-disabled hover:text-text-primary text-xl leading-none"
@@ -1573,6 +1782,9 @@ export default function GenerationPage() {
                   ))}
                 </select>
               </div>
+              {/* Les onglets typologie n'ont pas de sens pour les décors XL :
+                  la fenêtre XL montre une seule liste. */}
+              {pickFor === 'std' && (
               <div className="flex gap-1">
                 <button
                   onClick={() => setPickTab('')}
@@ -1603,6 +1815,7 @@ export default function GenerationPage() {
                   )
                 })}
               </div>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-10 py-6">
@@ -1614,27 +1827,43 @@ export default function GenerationPage() {
                   Modifie la recherche ou les filtres — ou crée un nouveau décor.
                 </div>
               ) : (
-                typoOrder
-                  .filter((t) => !pickTab || pickTab === t)
-                  .map((t) => {
-                    const items = pickList.filter((d) => d.type === t)
+                (pickFor === 'xl'
+                  ? (['xl'] as ('xl' | Typo)[])
+                  : typoOrder.filter((t) => !pickTab || pickTab === t)
+                ).map((t) => {
+                    const items = t === 'xl' ? pickList : pickList.filter((d) => d.type === t)
                     if (items.length === 0 && pickTab !== t) return null
                     return (
                       <div key={t} className="mb-5 last:mb-0">
                         <div className="flex items-center gap-2 mb-2.5 text-[13.5px] font-bold">
-                          <PictoIllu name={t} size={16} />
-                          {TYPO_INFO[t].titre}{' '}
-                          <span className="text-xs text-text-secondary font-normal">
-                            · {items.length}
-                          </span>
-                          {t === typo ? (
-                            <span className="text-[10px] font-bold uppercase tracking-wide bg-brand-green-light text-brand-green rounded-full px-2 py-0.5">
-                              typologie en cours
-                            </span>
+                          {t === 'xl' ? (
+                            <>
+                              <PictoIllu name="coulissant" size={16} />
+                              Décors XL{' '}
+                              <span className="text-xs text-text-secondary font-normal">
+                                · {items.length}
+                              </span>
+                              <span className="text-[10px] font-bold uppercase tracking-wide bg-brand-green-light text-brand-green rounded-full px-2 py-0.5">
+                                pour les coulissants ≥ {COULISSANT_XL_MIN_W} cm
+                              </span>
+                            </>
                           ) : (
-                            <span className="text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">
-                              ⚠ pas prévu pour un {TYPO_INFO[typo].titre.toLowerCase()}
-                            </span>
+                            <>
+                              <PictoIllu name={t} size={16} />
+                              {TYPO_INFO[t].titre}{' '}
+                              <span className="text-xs text-text-secondary font-normal">
+                                · {items.length}
+                              </span>
+                              {t === typo ? (
+                                <span className="text-[10px] font-bold uppercase tracking-wide bg-brand-green-light text-brand-green rounded-full px-2 py-0.5">
+                                  typologie en cours
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 rounded-full px-2 py-0.5">
+                                  ⚠ pas prévu pour un {TYPO_INFO[typo].titre.toLowerCase()}
+                                </span>
+                              )}
+                            </>
                           )}
                         </div>
                         <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-4">
@@ -1691,14 +1920,18 @@ export default function GenerationPage() {
             </div>
 
             <div className="bg-white border-t border-border px-5 py-3 flex items-center gap-3 flex-wrap">
-              {picked && picked.type !== typo ? (
+              {picked && pickFor === 'std' && picked.type !== typo && TYPO_INFO[picked.type as Typo] ? (
                 <span className="text-xs font-semibold text-amber-700 bg-amber-100 rounded-[8px] px-2.5 py-1.5">
-                  ⚠ Décor pensé pour un {TYPO_INFO[picked.type].titre.toLowerCase()}, pas pour un{' '}
+                  ⚠ Décor pensé pour un {TYPO_INFO[picked.type as Typo].titre.toLowerCase()}, pas pour un{' '}
                   {TYPO_INFO[typo].titre.toLowerCase()} — le cadrage peut être raté.
                 </span>
               ) : (
                 <span className="text-xs text-text-disabled">
-                  Le décor choisi s&apos;applique à tout le lot.
+                  {pickFor === 'xl'
+                    ? `Ce décor sera utilisé pour les ${xlCount} image${xlCount > 1 ? 's' : ''} XL du lot.`
+                    : stdCount > 0 && xlCount > 0
+                      ? 'Ce décor s’applique aux tailles standards du lot.'
+                      : 'Le décor choisi s’applique à tout le lot.'}
                 </span>
               )}
               <span className="ml-auto flex gap-2">
@@ -1710,7 +1943,7 @@ export default function GenerationPage() {
                 </button>
                 <button
                   onClick={() => {
-                    if (pickId != null) setDecorId(pickId)
+                    if (pickId != null) (pickFor === 'xl' ? setDecorXlId : setDecorId)(pickId)
                     setPickerOpen(false)
                   }}
                   disabled={picked == null}
@@ -1731,7 +1964,8 @@ export default function GenerationPage() {
           onClick={() => setLightbox(null)}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightbox} alt="Aperçu en grand" className="max-w-full max-h-full object-contain rounded-[8px]" />
+          {/* Fond blanc : les PNG produit détourés resteraient invisibles sur le voile noir */}
+          <img src={lightbox} alt="Aperçu en grand" className="max-w-full max-h-full object-contain rounded-[8px] bg-white" />
         </div>
       )}
 

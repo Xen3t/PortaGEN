@@ -627,14 +627,6 @@ function CreerPageInner() {
             loadDecors()
           }}
           onChanged={() => loadDecors()}
-          onUse={(id) => {
-            setStudio(null)
-            loadDecors().then((actifs) => {
-              const found = actifs.find((x) => x.id === id)
-              if (found) setDecor(found)
-              setStep(1)
-            })
-          }}
         />
       )}
     </div>

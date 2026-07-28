@@ -4,11 +4,14 @@ import { useEffect, useRef, useState } from 'react'
 
 /**
  * Remise à zéro de l'application (maquette remise-a-zero-v2 validée le
- * 15/07/2026) : section en BAS de la page Admin → Réglages, sous les moteurs.
- * Efface tout ce que l'app a produit (MES, décors, détourages, catalogue,
- * historique) après une sauvegarde complète base + images dans
- * data/sauvegardes/. L'installation (comptes, prompts, gabarits, réglages)
- * n'est pas touchée.
+ * 15/07/2026) : rubrique « Système » de la page Admin → Réglages — depuis la
+ * refonte arborescence (maquette reglages-refonte-v1, proposition C validée le
+ * 28/07/2026), elle s'affiche seule dans le panneau, sans accordéon (le titre
+ * est porté par l'en-tête du panneau).
+ * Efface tout ce que l'app a produit (MES, décors, détourages, historique)
+ * après une sauvegarde complète base + images dans data/sauvegardes/.
+ * L'installation (comptes, prompts, gabarits, réglages), le catalogue scanné
+ * et l'apprentissage de la détection des images ne sont pas touchés.
  */
 
 /** Poids lisible en français (« 1,5 Go », « 320 Mo »). */
@@ -26,7 +29,6 @@ const STEPS = [
 ]
 
 export default function ResetApp() {
-  const [open, setOpen] = useState(false)
   const [bytes, setBytes] = useState<number | null>(null)
   const [modal, setModal] = useState<'off' | 'confirm' | 'progress'>('off')
   const [step, setStep] = useState(1)
@@ -118,30 +120,7 @@ export default function ResetApp() {
       )}
 
       <section className="bg-white rounded-[12px] border border-border shadow-sm">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            className="flex-1 p-5 text-left group"
-          >
-            <h2 className="text-[17px] font-bold text-brand-red group-hover:opacity-80 transition-opacity">
-              Remise à zéro de l&apos;application
-            </h2>
-          </button>
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            aria-label={open ? 'Replier la section' : 'Déplier la section'}
-            className={`text-text-secondary text-[11px] p-5 transition-transform ${
-              open ? 'rotate-180' : ''
-            }`}
-          >
-            ▼
-          </button>
-        </div>
-        {open && (
-          <div className="px-5 pb-5">
+        <div className="p-5">
             <p className="text-xs text-text-secondary mb-4">
               Efface tout ce que l&apos;application a produit et la remet comme au premier jour.
               L&apos;installation (comptes, prompts, gabarits, réglages) n&apos;est pas touchée.
@@ -159,7 +138,7 @@ export default function ResetApp() {
                     ['L’historique des jobs et des appels API', '· stats de coûts'],
                     ['Tous les décors de la bibliothèque', '· versions et favoris compris'],
                     ['Tous les détourages PNG', null],
-                    ['Le catalogue scanné', '· re-scannable à tout moment'],
+                    ['Les réglages et corrections par coloris du catalogue', null],
                   ].map(([label, small]) => (
                     <li key={label as string} className="relative pl-5">
                       <span className="absolute left-0 top-px text-brand-red font-bold text-[11px]">✕</span>
@@ -181,6 +160,7 @@ export default function ResetApp() {
                     ['Les réglages', '· généraux et par moteur'],
                     ['La palette de coloris', null],
                     ['Les retours utilisateurs (Feedback)', null],
+                    ['Le catalogue scanné et la détection des images', '· apprentissage conservé'],
                   ].map(([label, small]) => (
                     <li key={label as string} className="relative pl-5">
                       <span className="absolute left-0 top-px text-brand-green font-bold text-xs">✓</span>
@@ -217,8 +197,7 @@ export default function ResetApp() {
             >
               Remettre à zéro…
             </button>
-          </div>
-        )}
+        </div>
       </section>
 
       {modal !== 'off' && (
@@ -235,10 +214,11 @@ export default function ResetApp() {
                 <h2 className="text-lg font-bold mb-2.5">Remettre l&apos;application à zéro ?</h2>
                 <p className="text-[13.5px] text-text-secondary mb-3">
                   <b className="text-text-primary">
-                    Toutes les MES, tous les décors, tous les détourages et le catalogue
+                    Toutes les MES, tous les décors et tous les détourages
                   </b>{' '}
                   vont être effacés, ainsi que tout l&apos;historique de génération. Les comptes,
-                  prompts, gabarits et réglages sont conservés.
+                  prompts, gabarits, réglages, le catalogue et l&apos;apprentissage de la détection
+                  des images sont conservés.
                 </p>
                 <p className="text-[13.5px] text-text-secondary">
                   Une sauvegarde complète (base{poids ? ` + ${poids} d’images` : ' + images'}) sera

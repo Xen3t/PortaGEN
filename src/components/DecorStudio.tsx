@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import PhraseAttente from './PhraseAttente'
 
 /**
  * Atelier décor — fenêtre plein écran par-dessus l'interface (demande Mathias
@@ -69,7 +70,6 @@ export default function DecorStudio({
   isAdmin,
   onClose,
   onChanged,
-  onUse,
 }: {
   /** Mode création : jobs de génération à suivre (un tirage par job) */
   jobIds?: number[]
@@ -78,8 +78,6 @@ export default function DecorStudio({
   isAdmin: boolean
   onClose: () => void
   onChanged: () => void
-  /** « Utiliser ce décor » : ouvre la Génération avec ce décor présélectionné (rebranché 20/07/2026). */
-  onUse: (decorId: number) => void
 }) {
   const [slots, setSlots] = useState<Slot[]>(() =>
     jobIds?.length
@@ -125,6 +123,10 @@ export default function DecorStudio({
       const data = await res.json().catch(() => null)
       if (res.ok && data?.decor) {
         patchSlot(key, { decor: data.decor, versions: data.versions ?? [] })
+      } else if (res.status === 404) {
+        // décor supprimé entre-temps (session rouverte après un « jeter ») :
+        // le tirage disparaît au lieu de rester bloqué « en attente »
+        patchSlot(key, { gone: true })
       }
     },
     [patchSlot]
@@ -136,11 +138,13 @@ export default function DecorStudio({
   }, [decorId, loadDecor])
 
   // Polling des jobs en cours (génération et corrections) — l'atelier se met à
-  // jour tout seul, l'utilisateur ne quitte jamais la fenêtre.
+  // jour tout seul, l'utilisateur ne quitte jamais la fenêtre. Premier passage
+  // immédiat : une session rouverte (jobs déjà terminés) affiche ses décors
+  // sans attendre le tick suivant.
   useEffect(() => {
     const watching = slots.some((s) => !s.gone && (s.jobId || s.fixJobId))
     if (!watching) return
-    const timer = setInterval(async () => {
+    const tick = async () => {
       for (const slot of slots) {
         if (slot.gone) continue
         const watchedId = slot.jobId ?? slot.fixJobId
@@ -154,11 +158,17 @@ export default function DecorStudio({
           patchSlot(slot.key, { jobId: null, fixJobId: null, error: null })
           if (dId) await loadDecor(slot.key, dId)
           changedRef.current()
-        } else if (job.status === 'error') {
-          patchSlot(slot.key, { jobId: null, fixJobId: null, error: job.error ?? 'Erreur inconnue' })
+        } else if (job.status === 'error' || job.status === 'cancelled') {
+          patchSlot(slot.key, {
+            jobId: null,
+            fixJobId: null,
+            error: job.error ?? (job.status === 'cancelled' ? 'Tirage annulé' : 'Erreur inconnue'),
+          })
         }
       }
-    }, 2500)
+    }
+    void tick()
+    const timer = setInterval(tick, 2500)
     return () => clearInterval(timer)
   }, [slots, loadDecor, patchSlot])
 
@@ -311,7 +321,7 @@ export default function DecorStudio({
                 {slot && slot.jobId && !decor ? (
                   <div className="text-center text-text-secondary">
                     <div className="animate-spin h-10 w-10 border-4 border-border border-t-brand-teal rounded-full mx-auto mb-4" />
-                    <p className="font-medium">Génération en cours…</p>
+                    <p className="font-medium"><PhraseAttente /></p>
                     <p className="text-xs mt-1">Le décor s&apos;affichera ici dès qu&apos;il sera prêt (≈ 1 à 2 min).</p>
                   </div>
                 ) : slot?.error && !decor ? (
@@ -356,7 +366,7 @@ export default function DecorStudio({
                         <div className="absolute inset-0 flex items-center justify-center">
                           <div className="bg-white/95 rounded-[12px] px-5 py-4 text-center shadow-default">
                             <div className="animate-spin h-7 w-7 border-4 border-border border-t-brand-teal rounded-full mx-auto mb-2" />
-                            <p className="text-sm font-medium text-text-secondary">Correction en cours…</p>
+                            <p className="text-sm font-medium text-text-secondary"><PhraseAttente /></p>
                             <p className="text-[11px] text-text-disabled">L&apos;image se remplacera toute seule.</p>
                           </div>
                         </div>
@@ -486,14 +496,6 @@ export default function DecorStudio({
                         ✓ Garder ce décor (valider)
                       </button>
                     )}
-                    <button
-                      onClick={() => onUse(decor.id)}
-                      disabled={working || decor.status !== 'actif'}
-                      title={decor.status !== 'actif' ? 'Validez d’abord le décor' : undefined}
-                      className="w-full bg-brand-teal text-white rounded-[10px] py-2 text-sm font-bold hover:bg-brand-teal-hover transition-colors disabled:opacity-50"
-                    >
-                      Utiliser ce décor →
-                    </button>
                     <button
                       onClick={discard}
                       disabled={working}

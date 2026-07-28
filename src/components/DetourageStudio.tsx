@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Chargement from './Chargement'
 
 /**
  * Poste de détourage plein écran (chantier 2) — conforme à maquettes/detourage-v4.html.
@@ -220,7 +221,7 @@ export default function DetourageStudio({
           {queue && queue.length === 0 && (
             <p className="text-text-secondary">Aucun visuel à détourer pour cette gamme.</p>
           )}
-          {!queue && <p className="text-text-secondary">Chargement…</p>}
+          {!queue && <Chargement inline />}
           {it && (
             <>
               <button

@@ -150,8 +150,22 @@ describe('réglages moteur — invariance des défauts', () => {
       poseDebordPct: 2, // débord piliers validé par Mathias le 17/07/2026
       poseSeuilAlpha: 200, // nettoyage des pixels fantômes (méthode 1 validée)
       shadows: 'auto',
+      ombrePilierPct: 25, // ombre pilier→lame coulissant : dégradé 0→25 % sur 1,5× la largeur du pilier (profil Mathias 28/07)
       marketplace: 'choix', // case au lancement + bouton 1:1 (décision 13/07/2026)
       livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
+      // RALify (28/07/2026) : ACTIVÉ par défaut — validation Mathias du 28/07
+      // (démos ARLBERG/EIGER), survit à une remise à zéro.
+      ralify: {
+        actif: true,
+        intensite: 100,
+        regles: {
+          gris: { traiter: true, cible: '#434a50' }, // RAL 7016
+          noir: { traiter: true, cible: '#0e0e10' }, // RAL 9005
+          blanc: { traiter: true, cible: '#f1f0ea' }, // RAL 9016 (décision 28/07)
+          teck: { traiter: false, cible: null }, // bois : pas de RAL
+        },
+        exceptions: [],
+      },
     })
     expect(r).toEqual(MOTEUR_REGLAGES_DEFAUTS)
   })
@@ -204,6 +218,11 @@ describe('sanitizeMoteurReglages', () => {
     expect(sanitizeMoteurReglages({ poseSeuilAlpha: 200 })).toEqual({ poseSeuilAlpha: 200 })
     expect(sanitizeMoteurReglages({ poseSeuilAlpha: 0 })).toEqual({})
     expect(sanitizeMoteurReglages({ poseSeuilAlpha: 256 })).toEqual({})
+    // Ombre pilier→lame (coulissant, 28/07/2026) : 0-100 %, 0 = désactivée.
+    expect(sanitizeMoteurReglages({ ombrePilierPct: 40 })).toEqual({ ombrePilierPct: 40 })
+    expect(sanitizeMoteurReglages({ ombrePilierPct: 0 })).toEqual({ ombrePilierPct: 0 })
+    expect(sanitizeMoteurReglages({ ombrePilierPct: 101 })).toEqual({})
+    expect(sanitizeMoteurReglages({ ombrePilierPct: -5 })).toEqual({})
   })
 
   it('borne et arrondit les champs numériques', () => {

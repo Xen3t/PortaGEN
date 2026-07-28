@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { use, useCallback, useEffect, useMemo, useState } from 'react'
 import { familyTitle } from '../../../catalogue/catalogueUi'
 import { PictoIllu } from '../../../Silhouette'
+import Chargement from '@/components/Chargement'
 
 /**
  * « Depuis le catalogue » — étape 2 : quelles tailles ? (rework 22/07/2026,
@@ -338,7 +339,7 @@ export default function GenerationDepuisCataloguePage(props: {
       </p>
     )
   }
-  if (!detail) return <p className="text-sm text-text-secondary">Chargement…</p>
+  if (!detail) return <Chargement />
 
   const lettre = familyLetter(detail.family)
   const nomen = (w: number, h: number) => `${w}${lettre}${h}`

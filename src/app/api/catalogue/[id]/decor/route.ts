@@ -96,6 +96,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const name =
     typeof body?.name === 'string' && body.name.trim() ? body.name.trim().slice(0, 120) : baseName
 
+  // Un lancement = une session (demande Mathias 28/07/2026) : les N tirages
+  // partagent un batch_id, la carte apparaît dans « Mes sessions ».
+  const batchId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
   const jobIds = Array.from({ length: count }, (_, i) =>
     enqueueNewJob(
       'decor',
@@ -109,9 +113,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         nameSuffix: count > 1 ? ` · tirage ${i + 1}` : undefined,
         moteur: xl ? 'coulissant-xl' : undefined,
       },
-      undefined,
+      batchId,
       auth.username
     )
   )
-  return NextResponse.json({ jobIds })
+  return NextResponse.json({ jobIds, batchId })
 }

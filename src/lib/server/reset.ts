@@ -7,11 +7,17 @@ import { getDb } from '@/lib/db'
 /**
  * Remise à zéro de l'application (Admin → Réglages, maquette remise-a-zero-v2
  * validée le 15/07/2026) : efface tout ce que l'app a PRODUIT — MES et images
- * générées, sessions, historique jobs/API, décors, détourages, catalogue
- * scanné — et conserve l'installation : comptes, prompts, gabarits
- * (size_params), images CANNY (data/moteurs/), réglages (app_settings),
- * palette de coloris, feedback, bibliothèque d'images produit (data/products,
- * déposée par l'équipe, pas produite par l'app).
+ * générées, sessions, historique jobs/API, décors, détourages, réglages par
+ * coloris du catalogue — et conserve l'installation : comptes, prompts,
+ * gabarits (size_params), images CANNY (data/moteurs/), réglages
+ * (app_settings), palette de coloris, feedback, bibliothèque d'images produit
+ * (data/products, déposée par l'équipe, pas produite par l'app).
+ *
+ * Le catalogue scanné (catalog_products) et la détection des images
+ * (detection_images, detection_examples) sont CONSERVÉS (demande Mathias
+ * 28/07/2026) : l'apprentissage de la détection est accroché aux produits par
+ * product_id — vider le catalogue changerait les ids au re-scan et perdrait
+ * ou mélangerait les exemples appris.
  *
  * Une sauvegarde complète (base + images) est créée AVANT toute suppression
  * dans data/sauvegardes/<date>/ (choix Mathias 15/07/2026 : base + images
@@ -33,7 +39,6 @@ const CLEARED_TABLES = [
   'detourages',
   'catalog_coloris_settings',
   'catalog_coloris_override',
-  'catalog_products',
   'generation_sessions',
   'hidden_session_batches',
   'api_calls',

@@ -69,8 +69,12 @@ html[data-brand='sicaan'] {
   }
 }
 
+/* fill-mode « backwards » et JAMAIS « both » : « both » conserve le transform
+   final pour toujours, et un parent avec transform devient le référentiel des
+   fenêtres `position: fixed` qu'il contient — les modales (Studio MES…) se
+   retrouvaient enfermées dans la colonne de page (bug Mathias 28/07/2026). */
 .animate-fade-in-up {
-  animation: fade-in-up 0.4s ease-out both;
+  animation: fade-in-up 0.4s ease-out backwards;
 }
 
 /* Animations des illustrations SilhouetteMode (page Générer, 22/07/2026) :
@@ -187,6 +191,162 @@ html[data-brand='sicaan'] {
 }
 .group:hover .anim-etincelle-2 {
   animation: etincelle-pop 0.3s ease-out 0.2s backwards;
+}
+
+/* ===== Vie de l'app (28/07/2026, demande Mathias : « des choses qui donnent
+   de la vie ») : micro-animations réutilisables dans toute l'interface. ===== */
+
+/* Entrée de page : rejouée à chaque navigation (PageTransition dans le layout). */
+.anim-page {
+  /* backwards, pas both : sinon le transform retenu emprisonne les modales
+     `position: fixed` de TOUTES les pages (voir .animate-fade-in-up). */
+  animation: fade-in-up 0.35s ease-out backwards;
+}
+
+/* Grilles vivantes : les vignettes/cartes apparaissent en cascade.
+   À poser sur le conteneur (grid ou liste) — les enfants s'enchaînent. */
+.stagger > * {
+  animation: fade-in-up 0.4s ease-out backwards;
+}
+.stagger > *:nth-child(1) {
+  animation-delay: 0.04s;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 0.08s;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 0.12s;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 0.16s;
+}
+.stagger > *:nth-child(5) {
+  animation-delay: 0.2s;
+}
+.stagger > *:nth-child(6) {
+  animation-delay: 0.24s;
+}
+.stagger > *:nth-child(7) {
+  animation-delay: 0.28s;
+}
+.stagger > *:nth-child(8) {
+  animation-delay: 0.32s;
+}
+.stagger > *:nth-child(9) {
+  animation-delay: 0.36s;
+}
+.stagger > *:nth-child(10) {
+  animation-delay: 0.4s;
+}
+/* Au-delà de 10 : tout le reste arrive ensemble, pas d'attente interminable. */
+.stagger > *:nth-child(n + 11) {
+  animation-delay: 0.44s;
+}
+
+/* Menus déroulants (cloche, menu utilisateur) : dépliage depuis le haut droit. */
+@keyframes menu-deplie {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+}
+.anim-menu {
+  transform-origin: top right;
+  animation: menu-deplie 0.18s ease-out both;
+}
+
+/* Fenêtres modales : le voile fond, le panneau surgit en douceur. */
+@keyframes voile-fond {
+  from {
+    opacity: 0;
+  }
+}
+.anim-voile {
+  animation: voile-fond 0.2s ease-out both;
+}
+@keyframes modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+}
+.anim-modal {
+  animation: modal-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Cloche de notifications : petite sonnerie périodique tant qu'il reste
+   du non-lu (le reste du temps elle est immobile). */
+@keyframes cloche-sonne {
+  0%,
+  12%,
+  100% {
+    transform: rotate(0);
+  }
+  2% {
+    transform: rotate(13deg);
+  }
+  4% {
+    transform: rotate(-11deg);
+  }
+  6% {
+    transform: rotate(8deg);
+  }
+  8% {
+    transform: rotate(-5deg);
+  }
+  10% {
+    transform: rotate(2deg);
+  }
+}
+.anim-cloche {
+  transform-origin: top center;
+  animation: cloche-sonne 5s ease-in-out 0.8s infinite;
+}
+
+/* Pastille rouge (compteur) : pop à l'apparition. */
+@keyframes badge-pop {
+  from {
+    transform: scale(0);
+  }
+  70% {
+    transform: scale(1.25);
+  }
+}
+.anim-badge {
+  animation: badge-pop 0.3s ease-out both;
+}
+
+/* Respiration douce pour les états « en cours » / « chargement ». */
+@keyframes respire {
+  50% {
+    opacity: 0.45;
+  }
+}
+.anim-respire {
+  animation: respire 1.6s ease-in-out infinite;
+}
+
+/* Toute l'app : les boutons répondent sous le doigt (léger enfoncement).
+   La propriété `scale` ne touche pas aux translate/rotate des utilitaires. */
+button {
+  transition-property: scale;
+  transition-duration: 0.15s;
+}
+button:not(:disabled):active {
+  scale: 0.96;
+}
+
+/* Accessibilité : si le système demande de réduire les animations, tout
+   s'affiche instantanément. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Pastilles de sous-navigation (page Génération, 13/07/2026) */

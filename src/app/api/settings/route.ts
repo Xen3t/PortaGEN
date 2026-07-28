@@ -4,11 +4,14 @@ import {
   CONCURRENCY_KEY,
   CONCURRENCY_MAX,
   CONCURRENCY_MIN,
+  IMAGE_MODEL_KEY,
+  IMAGE_MODELS,
   MARQUAGE_IA_KEY,
   PRICE_IN_KEY,
   PRICE_OUT_KEY,
   SERVER_ROOT_KEY,
   getConcurrencyPerUser,
+  getImageModel,
   getPricing,
   getServerRoot,
   isMarquageIaActif,
@@ -25,6 +28,8 @@ export async function GET(req: NextRequest) {
     pricing: getPricing(),
     serverRoot: getServerRoot(),
     marquageIa: isMarquageIaActif(),
+    imageModel: getImageModel(),
+    imageModels: IMAGE_MODELS,
   })
 }
 
@@ -69,6 +74,17 @@ export async function PATCH(req: NextRequest) {
     setSetting(MARQUAGE_IA_KEY, body.marquageIa ? '1' : '0')
   }
 
+  // Modèle de génération d'images : Nano Banana Pro ou Nano Banana (réglage global).
+  if (body?.imageModel !== undefined) {
+    if (!IMAGE_MODELS.some((m) => m.id === body.imageModel)) {
+      return NextResponse.json(
+        { error: `Modèle invalide (attendu : ${IMAGE_MODELS.map((m) => m.id).join(' ou ')})` },
+        { status: 400 }
+      )
+    }
+    setSetting(IMAGE_MODEL_KEY, String(body.imageModel))
+  }
+
   // Racine du serveur de fichiers (catalogue vivant) — l'app n'y accède qu'en LECTURE.
   if (body?.serverRoot !== undefined) {
     const value = String(body.serverRoot).trim()
@@ -84,5 +100,6 @@ export async function PATCH(req: NextRequest) {
     pricing: getPricing(),
     serverRoot: getServerRoot(),
     marquageIa: isMarquageIaActif(),
+    imageModel: getImageModel(),
   })
 }

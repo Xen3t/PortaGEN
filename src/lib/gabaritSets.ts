@@ -36,11 +36,13 @@ export function gabaritSetForSize(moteur: MoteurKey, widthCm: number): GabaritSe
  * Défauts PAR JEU, appliqués par-dessus les défauts du code (DEFAULT_PARAMS) et
  * SOUS les réglages admin (globaux puis dérogations). XL : scène de 480 cm de
  * haut ≈ 722 cm de large au ratio MES — une lame de 6 m + ses piliers y tient.
- * groundY 184 : la ligne de sol tombe sur le trottoir du Canny XL (caméra
- * reculée = trottoir remonté à ~61,6 % de la hauteur, ×0,8 du standard à 77 % —
- * même invariant que le standard, où groundY 74 / scène 320 aligne la ligne de
- * sol sur le trottoir du Canny historique).
+ * groundY 160 : la ligne de sol tombe sur le trottoir du Canny XL v2 (24/07/2026),
+ * remonté aux DEUX TIERS de la hauteur (66,7 % = caméra à ~14 m, recul
+ * physiquement cohérent — la v1 à 61,7 % impliquait ~21 m, impossible « across
+ * the street », et Nano ne la suivait jamais ; voir scripts/derive-canny-xl.ts).
+ * Même invariant que le standard (groundY 74 / scène 320 → trottoir à 76,9 %) :
+ * ligne de sol à (sceneH − groundY) / sceneH ⇒ (480 − 160) / 480 = 2/3.
  */
 export const GABARIT_SET_DEFAULTS: Partial<Record<GabaritSetKey, Partial<GabaritParams>>> = {
-  'coulissant-xl': { sceneH: 480, groundY: 184 },
+  'coulissant-xl': { sceneH: 480, groundY: 160 },
 }

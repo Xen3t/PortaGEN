@@ -1,10 +1,16 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
+import sharp from 'sharp'
 import { config } from '@/lib/config'
 import { getDb } from '@/lib/db'
 import { getActivePrompt } from '@/lib/db/prompts'
-import { generateText, generateImage, type ImageSize } from '@/lib/genai/client'
+import {
+  generateText,
+  generateImage,
+  type ImageSize,
+  type GeneratedImage,
+} from '@/lib/genai/client'
 import {
   whiteLineBands,
   horizontalEdgeProfile,
@@ -16,6 +22,7 @@ import { buildCanny, type CorridorInfo } from '@/lib/images/canny'
 import { getMoteurReglages } from '@/lib/moteurs'
 import { NATIVE_DIMS } from '@/lib/pipeline/nativeFormats'
 import { cannyRefPath } from '@/lib/server/cannyRef'
+import { extraireMaisonRef } from '@/lib/pipeline/maisonRef'
 import { registerDecor } from '@/lib/db/decors'
 import { autoTagDecor } from '@/lib/pipeline/autoTags'
 
@@ -63,9 +70,76 @@ export function insertAddenda(promptText: string, addenda: string): string {
   return promptText.slice(0, idx).trimEnd() + addenda + '\n\n' + promptText.slice(idx)
 }
 
+/** Verdict du juge de vraisemblance architecturale (R3, 28/07/2026). */
+export interface ArchitectureVerdict {
+  roofBuildable: boolean
+  volumeJunctions: boolean
+  doorAtGround: boolean
+  windowsAligned: boolean
+  pass: boolean
+  reasons: string
+}
+
+/**
+ * R3 : juge décor automatique — un appel vision note la constructibilité de la
+ * maison (toit, jonctions de volumes, porte, travées). Non bloquant : prompt
+ * absent (serveur pas encore redémarré) ou réponse illisible → null, le
+ * pipeline continue comme avant.
+ */
+async function judgeArchitecture(
+  imageBuffer: Buffer,
+  jobId: number,
+  model: string | undefined,
+  db: Database.Database
+): Promise<{ verdict: ArchitectureVerdict; promptVersion: number } | null> {
+  let promptRow
+  try {
+    promptRow = getActivePrompt('decor-juge', db)
+  } catch {
+    return null
+  }
+  try {
+    // Le jugement porte sur la volumétrie : 1280 px suffisent, et l'appel
+    // vision coûte d'autant moins de tokens.
+    const small = await sharp(imageBuffer)
+      .resize({ width: 1280, withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer()
+    const res = await generateText({
+      system: promptRow.content,
+      prompt: 'Inspect the attached image and answer with the JSON only.',
+      images: [{ source: small, mimeType: 'image/jpeg' }],
+      model,
+      jobId,
+    })
+    const match = res.text.match(/\{[\s\S]*\}/)
+    if (!match) return null
+    const v = JSON.parse(match[0]) as Record<string, unknown>
+    return {
+      promptVersion: promptRow.version,
+      verdict: {
+        roofBuildable: !!v.roofBuildable,
+        volumeJunctions: !!v.volumeJunctions,
+        doorAtGround: !!v.doorAtGround,
+        windowsAligned: !!v.windowsAligned,
+        pass: !!v.pass,
+        reasons: String(v.reasons ?? ''),
+      },
+    }
+  } catch (err) {
+    console.warn('[decor] juge architecture :', err)
+    return null
+  }
+}
+
 export interface DecorStepOptions {
   /** Moodboard JPG/PNG (une page : ambiances + pastilles + descriptif) */
   moodboardPath: string
+  /**
+   * Photo de maison de référence envoyée à Nano (R1). Non fourni : détection
+   * automatique du fichier « <moodboard> - Maison.jpg » à côté du moodboard.
+   */
+  housePhotoPath?: string
   /** CANNY trottoir de référence (sera redimensionné au format natif) */
   cannyPath?: string
   imageSize?: ImageSize
@@ -114,6 +188,10 @@ export interface DecorStepResult {
   /** Fraction de végétation mesurée dans le couloir d'allée (0..1, null si pas de couloir) */
   corridorGreenFraction: number | null
   nativeSizeRespected: boolean
+  /** Photo de maison de référence effectivement envoyée (R1), null sinon */
+  housePhotoPath: string | null
+  /** Verdicts du juge architecture (R3), un par tirage effectué ; null si juge inactif */
+  architectureVerdicts: ArchitectureVerdict[] | null
 }
 
 /** Plus grande taille active DU JEU (cm) — pilote la largeur du corridor. */
@@ -222,8 +300,29 @@ export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepRes
       ? 'Décor généré SANS contrainte de largeur de couloir (couloir désactivé)'
       : null
     const archiRow = getActivePrompt('decor-architecture')
+    // R1 (28/07/2026) : photo de maison de référence — bloc « decor-maison »
+    // ajouté au prompt ET photo jointe en 2e image de la génération. Fichier
+    // « <moodboard> - Maison.jpg » s'il existe, sinon extraction automatique
+    // depuis la page (vision → découpe, mise en cache sous ce même nom).
+    // Échec ou prompt absent : photo ignorée, comportement historique.
+    const housePhotoPath =
+      opts.housePhotoPath ?? (await extraireMaisonRef(opts.moodboardPath, jobId, opts.textModel, db))
+    let maisonRow: ReturnType<typeof getActivePrompt> | null = null
+    if (housePhotoPath) {
+      try {
+        maisonRow = getActivePrompt('decor-maison', db)
+      } catch {
+        console.warn('[decor] prompt decor-maison absent — photo de maison ignorée')
+      }
+    }
+    // Ordre des addenda (28/07/2026) : architecture puis maison, et le COULOIR
+    // EN DERNIER — la photo de maison tirait l'allée vers sa largeur « réelle »
+    // (essais VEYMONT 38 % / ANTELAO 52 % de végétation couloir) ; la contrainte
+    // d'ouverture doit rester la dernière consigne avant le verrou CANNY.
     const addenda =
-      couloir.text + (archiRow.content.trim() ? `\n\n${archiRow.content.trim()}` : '')
+      (archiRow.content.trim() ? `\n\n${archiRow.content.trim()}` : '') +
+      (maisonRow ? `\n\n${maisonRow.content.trim()}` : '') +
+      couloir.text
     promptText = insertAddenda(promptText, addenda)
 
     // Essais Lab : artefacts sous lab/ — HORS du dossier decor/ scanné par la
@@ -237,27 +336,50 @@ export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepRes
     const cannySentPath = path.join(artifactDir, `canny-${native.width}x${native.height}.png`)
     fs.writeFileSync(cannySentPath, cannyNative)
 
-    // 4. Génération du décor.
-    const img = await generateImage({
-      prompt: promptText,
-      images: [{ source: cannyNative, mimeType: 'image/png' }],
-      aspectRatio: '3:2',
-      imageSize,
-      model: opts.imageModel,
-      jobId,
-      artifactName: `decor-${imageSize}`,
-      artifactDir: relDir,
-    })
+    // 4. Génération du décor — avec juge architecture (R3, 28/07/2026) : après
+    //    chaque tirage, un appel vision vérifie la constructibilité de la
+    //    maison ; verdict négatif → UN re-tirage automatique, puis on garde le
+    //    dernier tirage quoi qu'il arrive (le verdict reste visible sur le job).
+    const refImages = [
+      { source: cannyNative, mimeType: 'image/png' } as const,
+      ...(maisonRow && housePhotoPath ? [{ source: housePhotoPath }] : []),
+    ]
+    let img: GeneratedImage | null = null
+    const architectureVerdicts: ArchitectureVerdict[] = []
+    let jugePromptVersion: number | null = null
+    for (let tirage = 1; tirage <= 2; tirage++) {
+      img = await generateImage({
+        prompt: promptText,
+        images: refImages,
+        aspectRatio: '3:2',
+        imageSize,
+        model: opts.imageModel,
+        jobId,
+        artifactName: `decor-${imageSize}`,
+        artifactDir: relDir,
+      })
+      const juge = await judgeArchitecture(img.buffer, jobId, opts.textModel, db)
+      if (!juge) break // juge inactif ou réponse illisible : non bloquant
+      jugePromptVersion = juge.promptVersion
+      architectureVerdicts.push(juge.verdict)
+      if (juge.verdict.pass) break
+    }
+    if (!img) throw new Error('Génération du décor : aucun tirage produit')
 
     // 5. Contrôle qualité dimensionnel : position du trottoir vs CANNY.
     //    Le gabarit de bandes vient du CANNY original (fichier de référence).
+    //    Fenêtre XL ±15 % (24/07/2026) : les décors XL dérivent bien au-delà des
+    //    ±5 % standards (jobs #153/#155 : +10,5 % / +4,4 %) — à ±5 % la mesure se
+    //    calait sur les joints de l'allée et affichait un faux « +16 px ». Le
+    //    chiffre est informatif (jugement des essais), il ne place rien.
     const bands = (await whiteLineBands(cannyPath)).filter((b) => b.yNorm > 0.5)
     let offsetPxDelivery: number | null = null
     if (bands.length > 0) {
       const profile = await horizontalEdgeProfile(img.buffer)
       const match = bandPatternShift(
         profile,
-        bands.map((b) => b.yNorm)
+        bands.map((b) => b.yNorm),
+        jeu === 'coulissant-xl' ? 0.15 : undefined
       )
       if (match) {
         offsetPxDelivery = Math.round(match.shiftNorm * config.delivery.height)
@@ -285,6 +407,8 @@ export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepRes
       sidewalkOffsetPxDelivery: offsetPxDelivery,
       corridorGreenFraction,
       nativeSizeRespected,
+      housePhotoPath: maisonRow && housePhotoPath ? housePhotoPath : null,
+      architectureVerdicts: architectureVerdicts.length ? architectureVerdicts : null,
     }
 
     // 7. Bibliothèque de décors : le décor naît « À valider » (circuit de statuts).
@@ -333,6 +457,17 @@ export async function runDecorStep(opts: DecorStepOptions): Promise<DecorStepRes
         promptVersion: promptRow.version,
         architecturePromptVersion: archiRow.version,
         corridorPromptVersion: couloir.version,
+        maisonReference:
+          maisonRow && housePhotoPath ? path.relative(config.rootDir, housePhotoPath) : undefined,
+        maisonPromptVersion: maisonRow?.version,
+        architectureJudge: architectureVerdicts.length
+          ? {
+              promptVersion: jugePromptVersion,
+              verdicts: architectureVerdicts,
+              retirage: architectureVerdicts.length > 1,
+              pass: architectureVerdicts[architectureVerdicts.length - 1].pass,
+            }
+          : undefined,
         corridorWarning: corridorWarning ?? undefined,
         corridorWidthCm,
         corridor,

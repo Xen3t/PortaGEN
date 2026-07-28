@@ -235,7 +235,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const { jobIds, batchId } = launchGammeJobs({
     decorPath,
-    items: [{ size: { w, h }, productPath, extra: { coloris, format } }],
+    // productName : sert aux exceptions RALify « nom du produit contient »
+    // (le PNG détouré local s'appelle coloris_taille.png, le nom n'y est pas).
+    items: [{ size: { w, h }, productPath, extra: { coloris, format, productName: product.name } }],
     align,
     slug,
     moteur: moteur.key,

@@ -76,6 +76,8 @@ export interface PoseResult {
   cible: { x: number; y: number; w: number; h: number }
   /** Produit nettoyé (pour artefacts de contrôle) */
   produit: ProduitNettoye
+  /** Produit nettoyé ÉTIRÉ à la taille de pose (PNG) — repérage des pieds */
+  etire: Buffer
 }
 
 /**
@@ -295,6 +297,38 @@ export async function nettoyerProduit(
       }
     }
   }
+  // MANGEUR DE PIXELS BLANCS (constat Mathias 28/07/2026) : le seuillage tue
+  // aussi les voiles blancs SEMI-TRANSPARENTS légitimes du produit (inserts
+  // décoratifs ARLBERG : alpha 1-49, luminance ~240). Discriminant : un pilier
+  // fantôme ou une frange de détourage touche l'EXTÉRIEUR de la silhouette ;
+  // un insert est ENCLAVÉ dans la matière opaque. On inonde l'extérieur à
+  // travers les pixels vidés : tout pixel vidé NON joignable qui avait un
+  // alpha fantôme (1-199) retrouve son alpha D'ORIGINE (translucidité
+  // conservée — rien n'est rebouché en opaque).
+  {
+    const joignable = new Uint8Array(W * H)
+    const pile: number[] = []
+    for (let x = 0; x < W; x++) pile.push(x, (H - 1) * W + x)
+    for (let y = 0; y < H; y++) pile.push(y * W, y * W + W - 1)
+    while (pile.length) {
+      const i = pile.pop() as number
+      if (joignable[i] || data[i * ch + 3] !== 0) continue
+      joignable[i] = 1
+      const y = Math.floor(i / W)
+      const x = i - y * W
+      if (x > 0) pile.push(i - 1)
+      if (x < W - 1) pile.push(i + 1)
+      if (y > 0) pile.push(i - W)
+      if (y < H - 1) pile.push(i + W)
+    }
+    for (let i = 0; i < W * H; i++) {
+      if (data[i * ch + 3] === 0 && !joignable[i] && alphaOrig[i] > 0 && alphaOrig[i] < seuilAlpha) {
+        data[i * ch + 3] = alphaOrig[i]
+        alphaReparePx++
+      }
+    }
+  }
+
   const image = await sharp(data, {
     raw: { width: W, height: H, channels: ch },
     limitInputPixels: false,
@@ -347,7 +381,7 @@ export async function poserProduitSurCible(
     .composite([{ input: etire, left: cible.x, top: cible.y }])
     .png()
     .toBuffer()
-  return { image, cible, produit }
+  return { image, cible, produit, etire }
 }
 
 /**

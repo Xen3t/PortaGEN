@@ -89,6 +89,26 @@ describe('bandPatternShift', () => {
     expect(bandPatternShift(profile, bands)).toBeNull()
   })
 
+  // Régression du 24/07/2026 (décor XL vogel, job #153) : trottoir dessiné à
+  // +10,5 % de la hauteur sous le Canny, hors de la fenêtre standard ±5 %. Dans
+  // la petite fenêtre, les joints du pavage de l'allée « répondent » sur les 3
+  // bandes → la mesure annonçait un faux +16 px. La fenêtre XL ±15 % doit
+  // retrouver la vraie dérive (le vrai motif, plus contrasté, gagne au score).
+  it('fenêtre XL ±15 % : retrouve la vraie dérive +10,5 % là où ±5 % cale sur les joints d’allée', async () => {
+    const { bandPatternShift } = await import('@/lib/images/analyze')
+    const h = 1000
+    const bands = [0.617, 0.675, 0.696]
+    const profile = new Array(h).fill(1)
+    for (const b of bands) profile[Math.round(b * h) + 105] = 60 // vrai trottoir à +10,5 %
+    for (const b of bands) profile[Math.round(b * h) + 12] = 20 // joints d'allée, faibles mais nets
+    const narrow = bandPatternShift(profile, bands)
+    expect(narrow).not.toBeNull()
+    expect(Math.round(narrow!.shiftNorm * h)).toBe(12) // le mensonge documenté
+    const wide = bandPatternShift(profile, bands, 0.15)
+    expect(wide).not.toBeNull()
+    expect(Math.round(wide!.shiftNorm * h)).toBe(105) // la vérité avec la fenêtre XL
+  })
+
   it('calcule son seuil de bruit sur la moitié INFÉRIEURE : le haut chargé ne fait pas échouer', async () => {
     const { bandPatternShift } = await import('@/lib/images/analyze')
     const h = 1000

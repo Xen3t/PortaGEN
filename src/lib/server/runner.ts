@@ -54,7 +54,17 @@ function initOnce(): void {
 }
 
 export function enqueueNewJob(
-  type: 'decor' | 'decor-fix' | 'pillars' | 'integration' | 'pose-fusion' | 'marketplace' | 'mes-fix',
+  type:
+    | 'decor'
+    | 'decor-fix'
+    | 'pillars'
+    | 'integration'
+    | 'pose-fusion'
+    | 'marketplace'
+    | 'mes-fix'
+    | 'libre'
+    | 'libre-mp'
+    | 'libre-fix',
   payload: unknown,
   batchId?: string,
   createdBy?: string
@@ -238,6 +248,21 @@ async function processJob(id: number): Promise<void> {
     } else if (job.type === 'mes-fix') {
       const { runMesFixStep } = await import('@/lib/pipeline/mesFix')
       await runMesFixStep({ ...payload, jobId: id })
+    } else if (job.type === 'libre') {
+      // MES Libres (28/07/2026) : un job = une variante — produit en références,
+      // scène décrite, gabarit « libre-mes », HARD LOCK en fin de prompt.
+      const { runLibreStep } = await import('@/lib/pipeline/libre')
+      await runLibreStep({ ...payload, jobId: id })
+    } else if (job.type === 'libre-mp') {
+      // Déclinaison Marketplace d'une MES Libre : carré 2000×2000, prompt
+      // d'extension générique (jamais celui d'un moteur Contrainte).
+      const { runLibreMpStep } = await import('@/lib/pipeline/libre')
+      await runLibreMpStep({ ...payload, jobId: id })
+    } else if (job.type === 'libre-fix') {
+      // Retouche d'une MES Libre par consigne (studio) : nouvelle VERSION de la
+      // MES racine, produit HARD LOCK via les références du lot.
+      const { runLibreFixStep } = await import('@/lib/pipeline/libre')
+      await runLibreFixStep({ ...payload, jobId: id })
     } else {
       updateJob(id, { status: 'error', error: `Type de job inconnu : ${job.type}` })
     }

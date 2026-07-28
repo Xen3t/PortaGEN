@@ -11,6 +11,8 @@ import {
 import { COULISSANT_XL_MIN_W } from '@/lib/gabaritSets'
 import DetourageStudio from '@/components/DetourageStudio'
 import DecorStudio from '@/components/DecorStudio'
+import Chargement from '@/components/Chargement'
+import PhraseAttente from '@/components/PhraseAttente'
 import { swatchFor } from '@/lib/catalogue/colorisPalette'
 
 /**
@@ -690,32 +692,6 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
     }
   }
 
-  // Décor gardé/validé dans le studio → le choisir comme décor par défaut du
-  // coloris, dans la case de SON jeu : un décor XL remplit « décor XL », jamais
-  // le décor standard (incompatibles, décision 22/07/2026).
-  async function pickGeneratedDecor(decorId: number) {
-    setStudioJobs(null)
-    try {
-      const d = await fetch('/api/decors').then((r) => (r.ok ? r.json() : null))
-      if (!d) return
-      const active = (d.decors as DecorEntry[]).filter((x) => x.status === 'actif')
-      setDecors(active)
-      setIsAdmin(d.role === 'admin')
-      const found = active.find((x) => x.id === decorId)
-      if (found) {
-        setDraft((prev) =>
-          prev
-            ? found.type === 'coulissant-xl'
-              ? { ...prev, decorXlId: found.id }
-              : { ...prev, decorId: found.id }
-            : prev
-        )
-      }
-    } catch {
-      // rechargement échoué : le décor reste choisissable manuellement dans la grille
-    }
-  }
-
   function regenerateAll() {
     if (!regenPrompt) return
     const cells = regenPrompt.cells
@@ -802,7 +778,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
   }
 
   if (error) return <p className="text-sm text-brand-red">{error}</p>
-  if (!detail || !stats) return <p className="text-sm text-text-secondary">Chargement…</p>
+  if (!detail || !stats) return <Chargement />
 
   const letter = familyLetter(detail.family)
   const refLabel = (e: RefEntry) => `${detail.name} ${e.w}${letter}${e.h}`
@@ -1145,7 +1121,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                             </div>
                           ) : siteRunning ? (
                             <span className="w-full aspect-[3/2] grid place-items-center rounded-[8px] border border-dashed border-brand-teal/50 bg-brand-teal-light text-xs font-bold text-brand-teal text-center px-2">
-                              ⏳ {siteGen?.stage === 'integration' ? 'pose en cours…' : 'préparation…'}
+                              <PhraseAttente />
                             </span>
                           ) : needsDetour ? (
                             <button
@@ -1603,7 +1579,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-2">
                     Décor par défaut{' '}
-                    <span className="bg-brand-teal text-white rounded-full px-2 py-0.5 text-[10px]">XL</span>
+                    <span className="bg-brand-green-light text-brand-green rounded-full px-2 py-0.5 text-[10px] font-bold">XL</span>
                     <span className="normal-case tracking-normal font-normal text-text-disabled">
                       {' '}· tailles XL (450 – 600)
                     </span>
@@ -1620,7 +1596,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                         }`}
                         title={d.name}
                       >
-                        <span className="absolute top-1 left-1 bg-brand-teal text-white rounded-full px-1.5 text-[9px] font-bold">XL</span>
+                        <span className="absolute top-1 left-1 bg-brand-green-light text-brand-green rounded-full px-1.5 text-[9px] font-bold">XL</span>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={`/api/artifacts?p=${encodeURIComponent(d.file_path)}&w=240`}
@@ -2091,7 +2067,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
               <h3 className="text-[15px] font-bold m-0 flex-1">
                 🎨 Générer un décor {genDecor.xl ? 'XL ' : ''}— {detail.name}
                 {genDecor.xl && (
-                  <span className="ml-2 bg-brand-teal text-white rounded-full px-2 py-0.5 text-[10px] align-middle">
+                  <span className="ml-2 bg-brand-green-light text-brand-green rounded-full px-2 py-0.5 text-[10px] font-bold align-middle">
                     échelle XL · caméra reculée
                   </span>
                 )}
@@ -2201,7 +2177,6 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
             loadDecors()
           }}
           onChanged={loadDecors}
-          onUse={(id) => void pickGeneratedDecor(id)}
         />
       )}
 

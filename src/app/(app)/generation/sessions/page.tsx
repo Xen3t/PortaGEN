@@ -7,6 +7,7 @@ import SessionCards from '../SessionCards'
  * « Toutes les sessions » (validé 13/07/2026, maquette sessions-v1) : l'historique
  * complet des sessions de génération directe de l'utilisateur — l'accueil n'en
  * montre que les dernières. Mêmes cartes, mêmes actions (rouvrir, supprimer).
+ * Barre de filtres typologie + date de création (maquette sessions-v3, 28/07/2026).
  */
 export default function SessionsPage() {
   return (
@@ -16,13 +17,8 @@ export default function SessionsPage() {
           ← Accueil
         </Link>
       </div>
-      <div className="flex items-baseline gap-3 flex-wrap mb-4">
-        <h1 className="text-2xl font-bold tracking-tight">Mes sessions de génération</h1>
-        <span className="text-sm text-text-secondary">
-          rouvre une session pour retélécharger ou passer en MP
-        </span>
-      </div>
-      <SessionCards limit={200} showTitle={false} />
+      <h1 className="text-2xl font-bold tracking-tight mb-4">Mes sessions de génération</h1>
+      <SessionCards limit={200} showTitle={false} showFilters />
     </div>
   )
 }
