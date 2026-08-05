@@ -11,17 +11,43 @@ import {
   patchMoteurReglages,
   sanitizeMoteurReglages,
 } from '@/lib/moteurs'
+import {
+  MOTEURS_DA,
+  getMoteurDaReglages,
+  isMoteurDaKey,
+  moteurDaDef,
+  moteurDaForLettre,
+  moteurDaPromptName,
+} from '@/lib/moteursDa'
 
 describe('registre des moteurs', () => {
-  it('déclare les trois moteurs actifs avec leur nom de code', () => {
+  it('déclare les trois moteurs legacy actifs, étiquetés (legacy) depuis la bascule du 05/08', () => {
     expect(MOTEURS.map((m) => m.key)).toEqual(['battant', 'coulissant', 'portillon'])
     expect(moteurDef('battant')?.status).toBe('actif')
-    expect(moteurDef('battant')?.codeName).toBe('JANUS')
+    expect(moteurDef('battant')?.codeName).toBe('JANUS (legacy)')
     expect(moteurDef('coulissant')?.status).toBe('actif')
-    expect(moteurDef('coulissant')?.codeName).toBe('TERMINUS')
+    expect(moteurDef('coulissant')?.codeName).toBe('TERMINUS (legacy)')
     expect(moteurDef('portillon')?.status).toBe('actif')
-    expect(moteurDef('portillon')?.codeName).toBe('FORCULUS')
+    expect(moteurDef('portillon')?.codeName).toBe('FORCULUS (legacy)')
     expect(moteurDef('inconnu')).toBeUndefined()
+  })
+
+  it('déclare les trois moteurs décor autour (séparation totale 05/08) — noms nus, clés propres', () => {
+    expect(MOTEURS_DA.map((m) => m.key)).toEqual(['janus', 'terminus', 'forculus'])
+    expect(moteurDaDef('janus')?.codeName).toBe('JANUS')
+    expect(moteurDaDef('terminus')?.codeName).toBe('TERMINUS')
+    expect(moteurDaDef('forculus')?.codeName).toBe('FORCULUS')
+    // Jamais de collision avec les clés legacy.
+    expect(isMoteurDaKey('battant')).toBe(false)
+    expect(moteurDaDef('battant')).toBeUndefined()
+    // Détection par lettre de nomenclature (300B140 → janus…).
+    expect(moteurDaForLettre('B')).toBe('janus')
+    expect(moteurDaForLettre('C')).toBe('terminus')
+    expect(moteurDaForLettre('P')).toBe('forculus')
+    // Prompts TOUJOURS préfixés par la clé (pas d'exception « battant »).
+    expect(moteurDaPromptName('janus', 'decor-autour')).toBe('janus-decor-autour')
+    // Réglages : défaut integrationMethod = decor-autour (la méthode du moteur).
+    expect(getMoteurDaReglages('janus').integrationMethod).toBe('decor-autour')
   })
 
   it('aiguille automatiquement famille catalogue → moteur', () => {

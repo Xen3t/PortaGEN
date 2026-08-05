@@ -24,6 +24,18 @@ interface Job {
   createdAt: string
 }
 
+/** Appels Gemini + tokens de sortie d'une période (bandeau en tête, 05/08/2026). */
+interface TokenCount {
+  calls: number
+  outputTokens: number
+}
+interface TokenStats {
+  jour: TokenCount
+  j7: TokenCount
+  j30: TokenCount
+  total: TokenCount
+}
+
 function fmtDate(iso: string): string {
   const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z')
   if (Number.isNaN(d.getTime())) return iso
@@ -55,7 +67,7 @@ function hasReview(job: Job): boolean {
 }
 
 function jobTitle(job: Job): string {
-  // Les essais du Lab moteur restent tracés ici (seul endroit, avec le Lab lui-même).
+  // Les essais de l'ancien Lab moteur (détruit le 05/08/2026) restent tracés ici.
   const labPrefix = job.payload?.lab === true ? '🧪 Lab · ' : ''
   if (job.type === 'decor') {
     const p = (job.payload?.slug as string) ?? ''
@@ -79,6 +91,7 @@ function jobTitle(job: Job): string {
 
 export default function AdminJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([])
+  const [tokens, setTokens] = useState<TokenStats | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
@@ -115,6 +128,24 @@ export default function AdminJobsPage() {
         })
     load()
     const t = setInterval(load, 3000)
+    return () => {
+      active = false
+      clearInterval(t)
+    }
+  }, [])
+
+  // Chiffres de tokens (remplacent la page Coûts API supprimée le 05/08/2026) :
+  // rafraîchis toutes les 30 s seulement, les agrégats n'ont pas besoin du rythme des jobs.
+  useEffect(() => {
+    let active = true
+    const load = () =>
+      fetch('/api/tokens')
+        .then((r) => r.json())
+        .then((d) => {
+          if (active && d.total) setTokens(d)
+        })
+    load()
+    const t = setInterval(load, 30_000)
     return () => {
       active = false
       clearInterval(t)
@@ -159,6 +190,35 @@ export default function AdminJobsPage() {
         <div className="bg-brand-red-light text-brand-red text-sm rounded-[8px] px-4 py-3 mb-4 flex justify-between gap-4">
           <span>{notice}</span>
           <button onClick={() => setNotice(null)} className="text-brand-red/60 hover:text-brand-red transition-colors">✕</button>
+        </div>
+      )}
+      {/* Tokens Gemini en tête (demande Mathias 05/08/2026, remplace la page
+          Coûts API supprimée) : tokens de sortie = l'essentiel de la facture. */}
+      {tokens && (
+        <div className="bg-white rounded-[12px] border border-border shadow-sm px-5 py-4 mb-4 flex flex-wrap items-center gap-x-10 gap-y-3">
+          {(
+            [
+              ['Aujourd’hui', tokens.jour],
+              ['7 derniers jours', tokens.j7],
+              ['30 derniers jours', tokens.j30],
+              ['Depuis le début', tokens.total],
+            ] as const
+          ).map(([label, t]) => (
+            <div key={label}>
+              <p className="text-[10.5px] font-bold uppercase tracking-wider text-text-disabled mb-0.5">
+                {label}
+              </p>
+              <p className="text-lg font-semibold leading-tight">
+                {t.outputTokens.toLocaleString('fr-FR')}
+                <span className="ml-1.5 text-xs font-normal text-text-secondary">
+                  tokens sortie · {t.calls.toLocaleString('fr-FR')} appel{t.calls > 1 ? 's' : ''}
+                </span>
+              </p>
+            </div>
+          ))}
+          <p className="ml-auto max-w-52 text-xs text-text-disabled">
+            Les tokens de sortie (images) font l’essentiel de la facture Gemini.
+          </p>
         </div>
       )}
       <div className="flex flex-wrap items-center gap-3 mb-4">

@@ -21,8 +21,7 @@ const ADMIN_LINKS = [
   // Détection des images (24/07/2026) : atelier d'entraînement (maquette
   // atelier-detection-v4) + aide au renommage nomenclature.
   { href: '/admin/detection', label: 'Détection des images' },
-  { href: '/admin/lab', label: 'LAB' },
-  { href: '/admin/couts', label: 'Coûts API' },
+  // « LAB » et « Coûts API » supprimés le 05/08/2026 (demande Mathias).
   { href: '/admin/feedback', label: 'Feedback' },
   { href: '/admin/utilisateurs', label: 'Utilisateurs' },
 ]

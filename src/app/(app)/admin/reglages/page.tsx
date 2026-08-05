@@ -23,8 +23,26 @@ import type { MoteurKey, MoteurReglages } from '@/lib/moteurs'
  * export. La fiche TERMINUS ajoute les rubriques Gabarits XL et Canny XL.
  */
 
+/**
+ * Séparation totale (05/08/2026, bascule « décor autour ») : la liste sert les
+ * DEUX générations de moteurs — legacy (battant/coulissant/portillon, méthode
+ * Canny+piliers+pose-fusion, affichés « (legacy) ») et décor autour
+ * (janus/terminus/forculus). Clés DA redéclarées localement : le registre
+ * serveur (src/lib/moteursDa.ts) tire better-sqlite3, interdit au bundle client.
+ */
+type MoteurDaKey = 'janus' | 'terminus' | 'forculus'
+type AnyMoteurKey = MoteurKey | MoteurDaKey
+const DA_KEYS: readonly string[] = ['janus', 'terminus', 'forculus']
+const isDaKey = (k: string): k is MoteurDaKey => DA_KEYS.includes(k)
+/** Homologue legacy d'un moteur décor autour (aperçus RALify : mêmes produits). */
+const DA_TO_LEGACY: Record<MoteurDaKey, MoteurKey> = {
+  janus: 'battant',
+  terminus: 'coulissant',
+  forculus: 'portillon',
+}
+
 interface MoteurEntry {
-  key: MoteurKey
+  key: AnyMoteurKey
   label: string
   /** Nom de code (ex. Battant = « JANUS », baptisé le 13/07/2026). */
   codeName?: string
@@ -32,6 +50,8 @@ interface MoteurEntry {
   productCount: number
   /** Famille d'affichage (héritée de l'API — non affichée depuis la refonte C). */
   famille: string
+  /** Génération du moteur : legacy ou décor autour (absent = legacy). */
+  methode?: 'legacy' | 'decor-autour'
 }
 
 interface PromptMeta {
@@ -121,7 +141,6 @@ const MOTEUR_ANCHOR = (rub: MoteurRubrique) => `m-${rub}`
 
 const APP_RUBRIQUES: { rub: AppRubrique; label: string }[] = [
   { rub: 'generations', label: 'Générations & modèle' },
-  { rub: 'tarif', label: 'Tarif Gemini' },
   { rub: 'marquage', label: 'Marquage IA' },
   { rub: 'serveur', label: 'Serveur de fichiers' },
 ]
@@ -213,7 +232,7 @@ function SubHeading({ children }: { children: React.ReactNode }) {
 
 export default function MoteursPage() {
   const [moteurs, setMoteurs] = useState<MoteurEntry[]>([])
-  const [selected, setSelected] = useState<MoteurKey>('battant')
+  const [selected, setSelected] = useState<AnyMoteurKey>('battant')
   // Contexte affiché (refonte « affichage complet », maquette reglages-full-v1
   // validée le 29/07/2026) : le panneau empile TOUTES les rubriques du contexte
   // et l'arborescence sert de signets. `activeAnchor` = rubrique surlignée par le
@@ -274,9 +293,12 @@ export default function MoteursPage() {
     fetch(`/api/moteurs/${selected}/reglages`)
       .then((r) => r.json())
       .then((d) => setReglages(d.reglages ?? null))
-    fetch(`/api/moteurs/${selected}/canny`)
-      .then((r) => r.json())
-      .then((d) => setCanny(d.canny ?? null))
+    // Un moteur décor autour n'a NI Canny ni gabarits-scène (pipeline collapsé).
+    if (!isDaKey(selected)) {
+      fetch(`/api/moteurs/${selected}/canny`)
+        .then((r) => r.json())
+        .then((d) => setCanny(d.canny ?? null))
+    }
     setCannyXl(null)
     setReglagesXl(null)
     setDirtyXl(false)
@@ -520,6 +542,11 @@ export default function MoteursPage() {
   }
 
   const current = moteurs.find((m) => m.key === selected)
+  // Moteur décor autour sélectionné : fiche dédiée (RALify + Prompt System +
+  // Export), jamais les rubriques legacy (Canny, gabarits-scène, intégration).
+  const isDa = isDaKey(selected)
+  // Indexations legacy (PRODUIT_PAR_MOTEUR, aperçu RALify) : clé legacy sûre.
+  const legacySelected: MoteurKey = isDaKey(selected) ? DA_TO_LEGACY[selected] : selected
 
   /**
    * Ligne prompt : libellé, version active, date · auteur de la dernière
@@ -532,12 +559,22 @@ export default function MoteursPage() {
    */
   // Résumé de l'en-tête « Prompt System » (maquette v6) : nombre de prompts du
   // moteur et dernière modification, tous prompts confondus.
-  const promptDefs: { name: string; label: string; exact?: boolean }[] = [
-    ...(selected === 'coulissant' ? PROMPTS_DECOR_COULISSANT : PROMPTS_DECOR),
-    ...PROMPTS_PILIERS,
-    ...promptsIntegration(PRODUIT_PAR_MOTEUR[selected]),
-    ...PROMPTS_MARKETPLACE,
+  // Moteur décor autour : UN prompt (le rendu complet), nom EXACT `<clé>-decor-autour`.
+  const promptDefsDa: { name: string; label: string; exact?: boolean }[] = [
+    {
+      name: `${selected}-decor-autour`,
+      exact: true,
+      label: `Décor autour — rendu complet (${PRODUIT_PAR_MOTEUR[legacySelected]} posé, Nano peint l’entrée)`,
+    },
   ]
+  const promptDefs: { name: string; label: string; exact?: boolean }[] = isDa
+    ? promptDefsDa
+    : [
+        ...(selected === 'coulissant' ? PROMPTS_DECOR_COULISSANT : PROMPTS_DECOR),
+        ...PROMPTS_PILIERS,
+        ...promptsIntegration(PRODUIT_PAR_MOTEUR[legacySelected]),
+        ...PROMPTS_MARKETPLACE,
+      ]
   const promptMetas = promptDefs
     .map((p) =>
       promptVersions[p.exact ? p.name : selected === 'battant' ? p.name : `${selected}-${p.name}`]
@@ -616,7 +653,7 @@ export default function MoteursPage() {
   /* ===== En-tête du panneau : rappel du contexte affiché ===== */
 
   const nomMoteur = current
-    ? `${selected === 'portillon' ? 'Portillon' : `Portail ${current.label}`}${
+    ? `${current.label === 'Portillon' ? 'Portillon' : `Portail ${current.label}`}${
         current.codeName ? ` « ${current.codeName} »` : ''
       }`
     : ''
@@ -629,13 +666,26 @@ export default function MoteursPage() {
   }
 
   /** Clic sur un moteur : le sélectionne et affiche sa fiche complète (1ʳᵉ rubrique en haut). */
-  function pickMoteur(key: MoteurKey) {
-    const first = MOTEUR_ANCHOR('detection')
+  function pickMoteur(key: AnyMoteurKey) {
+    // Fiche décor autour : pas de rubrique Détection — on arrive sur RALify.
+    const first = MOTEUR_ANCHOR(isDaKey(key) ? 'ralify' : 'detection')
     setSelected(key)
     setCtx('moteur')
     setActiveAnchor(first)
     setPendingScroll(first)
   }
+
+  // Ordre de la nav (demande Mathias 05/08, révisé le jour même) : les moteurs
+  // décor autour GROUPÉS EN HAUT, les legacy GROUPÉS EN BAS — Battant,
+  // Coulissant, Portillon, puis Battant (legacy), Coulissant (legacy),
+  // Portillon (legacy).
+  const navMoteurs = [...moteurs].sort(
+    (a, b) =>
+      (a.methode === 'decor-autour' ? 0 : 1) - (b.methode === 'decor-autour' ? 0 : 1) ||
+      a.label.localeCompare(b.label, 'fr')
+  )
+  // Rubriques d'une fiche décor autour : RALify, Prompt System, Export.
+  const DA_RUBRIQUES: MoteurRubrique[] = ['ralify', 'prompts', 'export']
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -671,9 +721,10 @@ export default function MoteursPage() {
           <p className="text-[10.5px] font-bold uppercase tracking-wider text-text-disabled px-1 mt-4 mb-1.5">
             Moteurs
           </p>
-          {moteurs.map((m) => {
+          {navMoteurs.map((m) => {
             const active = m.key === selected
             const onFiche = active && ctx === 'moteur'
+            const mDa = m.methode === 'decor-autour'
             return (
               <div key={m.key}>
                 <button
@@ -686,7 +737,14 @@ export default function MoteursPage() {
                       : 'text-text-primary font-semibold hover:bg-surface'
                   }`}
                 >
-                  <span className="flex-1 truncate">{m.label}</span>
+                  {/* Séparation totale 05/08 : le legacy porte l'étiquette, le
+                      moteur décor autour garde le nom nu. */}
+                  <span className="flex-1 truncate">
+                    {m.label}
+                    {m.methode === 'legacy' && (
+                      <span className="text-text-disabled font-semibold"> (legacy)</span>
+                    )}
+                  </span>
                   {m.status === 'preparation' ? (
                     <span className="text-[9.5px] font-bold uppercase tracking-wide text-amber-700 bg-amber-100 rounded-full px-2 py-px whitespace-nowrap">
                       prépa
@@ -700,12 +758,15 @@ export default function MoteursPage() {
                   )}
                 </button>
                 {/* Rubriques du moteur déplié = signets vers ses blocs — les XL n'existent que sur TERMINUS.
+                    Fiche décor autour : rubriques réduites (RALify, Prompt System, Export).
                     Déplié SEULEMENT quand on consulte vraiment sa fiche (onFiche), pas juste parce
                     qu'il est sélectionné par défaut : au chargement (contexte Application) le Battant
                     reste ainsi fermé. */}
                 {onFiche && m.status === 'actif' && (
                   <div className="ml-3.5 border-l-2 border-border pl-2 my-1 space-y-px">
-                    {MOTEUR_RUBRIQUES.filter((r) => !r.xl || m.key === 'coulissant').map((r) => {
+                    {MOTEUR_RUBRIQUES.filter((r) =>
+                      mDa ? DA_RUBRIQUES.includes(r.rub) : !r.xl || m.key === 'coulissant'
+                    ).map((r) => {
                       const on = ctx === 'moteur' && activeAnchor === MOTEUR_ANCHOR(r.rub)
                       return (
                         <button
@@ -800,6 +861,126 @@ export default function MoteursPage() {
                       ? 'Mêmes réglages que le Battant, avec une intégration propre : le vantail se cache derrière le pilier.'
                       : 'Ses propres tailles, gabarits, palette de coloris et Prompt System.'}
                   </p>
+                </div>
+              ) : isDa ? (
+                /* ============ Fiche MOTEUR DÉCOR AUTOUR (séparation totale 05/08) ============
+                   La nouvelle génération (JANUS/TERMINUS/FORCULUS) n'a NI Canny, NI
+                   gabarits-scène, NI étapes piliers/intégration : RALify, SON prompt
+                   « décor autour », et l'export. Les rubriques legacy restent sur les
+                   moteurs « (legacy) », inchangées. */
+                <div className="space-y-5">
+                  <Card id={MOTEUR_ANCHOR('ralify')}>
+                    <CardTitle
+                      extra={
+                        <Seg
+                          value={reglages?.ralify.actif ? 'on' : 'off'}
+                          options={[
+                            { value: 'on', label: 'Activé' },
+                            { value: 'off', label: 'Désactivé' },
+                          ]}
+                          onChange={(val) =>
+                            reglages && setField('ralify', { ...reglages.ralify, actif: val === 'on' })
+                          }
+                          disabled={!reglages}
+                        />
+                      }
+                    >
+                      RALify
+                    </CardTitle>
+                    {/* Aperçus sur les PNG produits de l'homologue legacy (mêmes produits
+                        catalogue) — les RÉGLAGES édités sont bien ceux de CE moteur. */}
+                    <RalifySection
+                      moteur={legacySelected}
+                      value={reglages?.ralify ?? null}
+                      coloris={coloris}
+                      onChange={(r) => setField('ralify', r)}
+                      disabled={!reglages}
+                    />
+                  </Card>
+
+                  <Card id={MOTEUR_ANCHOR('prompts')}>
+                    <CardTitle
+                      extra={
+                        dernierPrompt ? (
+                          <span className="text-xs text-text-disabled font-normal">
+                            dernier modifié le {fmtDbDate(dernierPrompt.updated)}
+                            {dernierPrompt.updatedBy ? ` par ${dernierPrompt.updatedBy}` : ''}
+                          </span>
+                        ) : undefined
+                      }
+                    >
+                      Prompt System
+                    </CardTitle>
+                    <p className="text-[13px] text-text-secondary mb-3">
+                      La méthode « décor autour » tient en <b className="text-text-primary">un seul appel</b> :
+                      le produit est posé à sa vraie échelle sur un plan gris, Nano peint l’entrée tout
+                      autour (élévation à plat, produit verrouillé). Ce prompt est TOUT le rendu.
+                    </p>
+                    <PromptRows list={promptDefsDa} />
+                  </Card>
+
+                  <Card id={MOTEUR_ANCHOR('export')}>
+                    <CardTitle>Export &amp; générations</CardTitle>
+                    <div className="flex flex-wrap gap-x-8 gap-y-4">
+                      <div>
+                        <FieldLabel>Qualité Nano</FieldLabel>
+                        <span className="inline-block bg-surface border border-border rounded-[8px] px-3 py-2 text-sm text-text-secondary">
+                          2K / 4K — au choix au lancement
+                        </span>
+                      </div>
+                      <div>
+                        <FieldLabel>Générations par taille</FieldLabel>
+                        <input
+                          type="number"
+                          min={1}
+                          max={6}
+                          value={reglages?.generationsParTaille ?? 3}
+                          onChange={(e) =>
+                            setField('generationsParTaille', Math.min(6, Math.max(1, Number(e.target.value) || 1)))
+                          }
+                          disabled={!reglages}
+                          className="w-20 border border-border bg-white rounded-[8px] px-3 py-2 text-sm text-right tabular-nums focus:outline-none focus:border-brand-green transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>Déclinaison Marketplace (2000 × 2000)</FieldLabel>
+                        <Seg
+                          value={reglages?.marketplace ?? 'choix'}
+                          options={[
+                            { value: 'choix', label: 'Au choix' },
+                            { value: 'toujours', label: 'Automatique' },
+                            { value: 'jamais', label: 'Jamais' },
+                          ]}
+                          onChange={(v) => setField('marketplace', v)}
+                          disabled={!reglages}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-72">
+                        <FieldLabel>Nom du livrable</FieldLabel>
+                        <input
+                          type="text"
+                          value={reglages?.livraisonName ?? ''}
+                          onChange={(e) => setField('livraisonName', e.target.value)}
+                          disabled={!reglages}
+                          title="Modèle de nom du livrable"
+                          className="w-full border border-border bg-white rounded-[8px] px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand-green transition-colors"
+                        />
+                      </div>
+                    </div>
+                  </Card>
+
+                  {dirty && (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={save}
+                        disabled={busy || !reglages}
+                        className="bg-brand-green text-white text-sm font-bold rounded-[10px] px-5 py-2.5 hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+                      >
+                        Enregistrer les réglages du moteur
+                      </button>
+                      <span className="text-xs text-brand-teal">Modifications non enregistrées.</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-5">

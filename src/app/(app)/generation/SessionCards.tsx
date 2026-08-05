@@ -22,7 +22,7 @@ export interface SessionSummary {
   moteur: string
   decorName: string | null
   createdAt: string
-  source: 'directe' | 'catalogue' | 'decor' | 'libre'
+  source: 'directe' | 'catalogue' | 'decor' | 'libre' | 'decor-autour'
   mesCount: number
   mesDone: number
   coloris: string[]
@@ -33,10 +33,15 @@ export interface SessionSummary {
 }
 
 const MOTEUR_LABELS: Record<string, string> = {
-  battant: 'Battant',
-  coulissant: 'Coulissant',
-  'coulissant-xl': 'Coulissant XL',
-  portillon: 'Portillon',
+  // Séparation totale (05/08/2026) : les clés historiques = la méthode legacy,
+  // les clés janus/terminus/forculus = les moteurs « décor autour ».
+  battant: 'Battant (legacy)',
+  coulissant: 'Coulissant (legacy)',
+  'coulissant-xl': 'Coulissant XL (legacy)',
+  portillon: 'Portillon (legacy)',
+  janus: 'Battant',
+  terminus: 'Coulissant',
+  forculus: 'Portillon',
   libre: 'MES Libre',
 }
 
@@ -281,7 +286,9 @@ export default function SessionCards({
                   ? `/decors?session=${encodeURIComponent(s.batchId)}`
                   : s.source === 'libre'
                     ? `/generation?libre=${encodeURIComponent(s.batchId)}`
-                    : `/generation?session=${encodeURIComponent(s.batchId)}`
+                    : s.source === 'decor-autour'
+                      ? `/generation/decor-autour?session=${encodeURIComponent(s.batchId)}`
+                      : `/generation?session=${encodeURIComponent(s.batchId)}`
             const unit = s.source === 'decor' ? 'tirage' : s.source === 'libre' ? 'variante' : 'image'
             const count = s.busy
               ? `${s.mesDone}/${s.mesCount} ${unit}s`
@@ -325,6 +332,10 @@ export default function SessionCards({
                     ) : s.source === 'libre' ? (
                       <span className="absolute top-2 right-2 rounded-full text-[10.5px] font-bold px-2 py-0.5 bg-brand-green-light text-brand-green">
                         Libre
+                      </span>
+                    ) : s.source === 'decor-autour' ? (
+                      <span className="absolute top-2 right-2 rounded-full text-[10.5px] font-bold px-2 py-0.5 bg-brand-green text-white">
+                        Décor autour
                       </span>
                     ) : (
                       <span className="absolute top-2 right-2 bg-white/95 border border-border rounded-full text-[10.5px] font-bold px-2 py-0.5 text-text-secondary">

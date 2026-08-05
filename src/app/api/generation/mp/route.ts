@@ -34,8 +34,10 @@ export async function POST(req: NextRequest) {
 
   for (const id of ids) {
     const job = getJob(id)
-    // On accepte la MES d'origine (intégration / pose-fusion) ET une version retouchée (mes-fix).
-    const isMesRoot = job?.type === 'integration' || job?.type === 'pose-fusion'
+    // On accepte la MES d'origine (intégration / pose-fusion / decor-autour —
+    // nouveau mode 05/08/2026) ET une version retouchée (mes-fix).
+    const isMesRoot =
+      job?.type === 'integration' || job?.type === 'pose-fusion' || job?.type === 'decor-autour'
     if (!job || (!isMesRoot && job.type !== 'mes-fix') || job.status !== 'done' || !job.result) {
       errors.push(`Job ${id} : MES Site indisponible`)
       continue

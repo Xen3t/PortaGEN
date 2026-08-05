@@ -156,6 +156,47 @@ html[data-brand='sicaan'] {
   animation-delay: 0.85s;
 }
 
+/* Décor autour : le portail est déjà là, au centre (même place que sur les
+   illus Contrainte et Libre) — le décor se construit autour dans un second
+   temps : le trottoir glisse, la maison se pose, les piliers se montent,
+   et le ciel (soleil, nuage) apparaît en touche finale. */
+@keyframes trottoir-glisse {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+}
+.anim-trottoir {
+  animation: trottoir-glisse 0.4s ease-out 0.3s backwards;
+}
+.anim-maison-autour {
+  animation: maison-pose 0.5s ease-out 0.7s backwards;
+}
+@keyframes pilier-monte {
+  from {
+    transform: scaleY(0);
+  }
+}
+.anim-pilier {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: pilier-monte 0.4s ease-out backwards;
+}
+.anim-pilier-1 {
+  animation-delay: 1.15s;
+}
+.anim-pilier-2 {
+  animation-delay: 1.3s;
+}
+.anim-soleil-autour {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: soleil-pop 0.5s ease-out 1.6s backwards;
+}
+.anim-nuage-autour {
+  animation: nuage-derive 0.8s ease-out 1.75s backwards;
+}
+
 /* Petits pictos SVG (PictoIllu, remplacement des PNG le 22/07/2026) :
    l'élément principal surgit, le détail apparaît juste après. */
 @keyframes picto-pop {

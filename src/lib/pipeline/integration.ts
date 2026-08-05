@@ -209,11 +209,14 @@ export async function runIntegrationStep(
     // 13/07/2026) ; un appel explicite (Lab, API) garde la priorité.
     const moteurKey: MoteurKey = opts.moteur ?? 'battant'
     const moteur = getMoteurReglages(moteurKey)
-    // « pose-fusion » est un TYPE DE JOB à part (aiguillé au lancement, chantier
-    // 17/07/2026) : un job Intégration appelé directement (Lab, bouton Intégrer)
-    // avec ce réglage retombe sur « simple ».
+    // « pose-fusion » (17/07/2026) et « decor-autour » (05/08/2026) sont des TYPES
+    // DE JOB à part (aiguillés au lancement) : un job Intégration appelé directement
+    // (Lab, bouton Intégrer) avec l'un de ces réglages retombe sur « simple ».
     const method =
-      opts.method ?? (moteur.integrationMethod === 'pose-fusion' ? 'simple' : moteur.integrationMethod)
+      opts.method ??
+      (moteur.integrationMethod === 'pose-fusion' || moteur.integrationMethod === 'decor-autour'
+        ? 'simple'
+        : moteur.integrationMethod)
     const strokeW = Math.max(3, Math.round(width / 840))
 
     if (method === 'simple') {

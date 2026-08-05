@@ -60,6 +60,7 @@ export function enqueueNewJob(
     | 'pillars'
     | 'integration'
     | 'pose-fusion'
+    | 'decor-autour'
     | 'marketplace'
     | 'mes-fix'
     | 'libre'
@@ -244,6 +245,13 @@ async function processJob(id: number): Promise<void> {
       // réglage moteur le demande (aiguillage dans launchGammeJobs).
       const { runPoseFusionStep } = await import('@/lib/pipeline/poseFusion')
       await runPoseFusionStep({ ...payload, jobId: id })
+      maybeEnqueueAutoMp(id, payload)
+    } else if (job.type === 'decor-autour') {
+      // Bascule « décor autour » (05/08/2026) : NOUVEAU mode à côté du legacy —
+      // produit posé à sa vraie échelle sur plan gris, Nano peint tout autour.
+      // UN job = une MES complète (pipeline collapsé : ni décor Canny ni piliers).
+      const { runDecorAutourStep } = await import('@/lib/pipeline/decorAutour')
+      await runDecorAutourStep({ ...payload, jobId: id })
       maybeEnqueueAutoMp(id, payload)
     } else if (job.type === 'marketplace') {
       const { runMarketplaceStep } = await import('@/lib/pipeline/marketplace')

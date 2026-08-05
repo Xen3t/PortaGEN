@@ -7,12 +7,9 @@ import {
   IMAGE_MODEL_KEY,
   IMAGE_MODELS,
   MARQUAGE_IA_KEY,
-  PRICE_IN_KEY,
-  PRICE_OUT_KEY,
   SERVER_ROOT_KEY,
   getConcurrencyPerUser,
   getImageModel,
-  getPricing,
   getServerRoot,
   isMarquageIaActif,
   setSetting,
@@ -25,7 +22,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     concurrencyPerUser: getConcurrencyPerUser(),
     bounds: { min: CONCURRENCY_MIN, max: CONCURRENCY_MAX },
-    pricing: getPricing(),
     serverRoot: getServerRoot(),
     marquageIa: isMarquageIaActif(),
     imageModel: getImageModel(),
@@ -47,23 +43,6 @@ export async function PATCH(req: NextRequest) {
       )
     }
     setSetting(CONCURRENCY_KEY, String(value))
-  }
-
-  // Tarif Gemini indicatif (€ / million de tokens) : 0 = non configuré.
-  for (const [field, key] of [
-    ['priceEurPerMTokIn', PRICE_IN_KEY],
-    ['priceEurPerMTokOut', PRICE_OUT_KEY],
-  ] as const) {
-    if (body?.[field] !== undefined) {
-      const value = Number(body[field])
-      if (!Number.isFinite(value) || value < 0 || value > 10000) {
-        return NextResponse.json(
-          { error: 'Tarif invalide (nombre entre 0 et 10 000 € par million de tokens)' },
-          { status: 400 }
-        )
-      }
-      setSetting(key, String(value))
-    }
   }
 
   // Marquage IA des images (IPTC DigitalSourceType) — réglage global, jamais par moteur.
@@ -97,7 +76,6 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     concurrencyPerUser: getConcurrencyPerUser(),
-    pricing: getPricing(),
     serverRoot: getServerRoot(),
     marquageIa: isMarquageIaActif(),
     imageModel: getImageModel(),

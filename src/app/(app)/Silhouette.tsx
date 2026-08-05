@@ -79,13 +79,15 @@ export default function Silhouette({ typo }: { typo: Typo }) {
   )
 }
 
-export type Mode = 'contrainte' | 'libre' | 'decors'
+export type Mode = 'contrainte' | 'decor-autour' | 'libre' | 'decors'
 
 /**
  * Illustrations des panneaux de la page Générer, même langage que les
  * silhouettes typologie : Contrainte = produit coté (gabarits, pose précise),
- * Libre = scène d'ambiance autour du produit, Décors = arrière-plan seul
- * (maison, haies — sans produit ni piliers).
+ * Décor autour = le portail seul au centre puis le décor se construit autour
+ * (trottoir, maison, murs, piliers — retour Mathias 05/08), Libre = scène
+ * d'ambiance autour du produit, Décors = arrière-plan seul (maison, haies —
+ * sans produit ni piliers).
  */
 /** Soleil + nuage — le ciel de l'illustration Libre, animé à l'affichage. */
 function Ciel() {
@@ -118,9 +120,11 @@ export function SilhouetteMode({ mode }: { mode: Mode }) {
     strokeWidth: 1.5,
     strokeDasharray: '4 3',
   }
+  const rayon = { stroke: '#b6bdc6', strokeWidth: 2, strokeLinecap: 'round' as const }
   return (
     <svg viewBox="0 0 220 112" className="block w-full h-auto" aria-hidden>
-      <line x1={0} y1={104} x2={220} y2={104} {...sol} />
+      {/* decor-autour : pas de sol statique, c'est le trottoir animé qui l'apporte */}
+      {mode !== 'decor-autour' && <line x1={0} y1={104} x2={220} y2={104} {...sol} />}
       {mode === 'contrainte' && (
         <>
           <rect x={8} y={30} width={20} height={74} rx={2} {...pilier} />
@@ -140,6 +144,43 @@ export function SilhouetteMode({ mode }: { mode: Mode }) {
             <line x1={32} y1={23} x2={32} y2={39} {...guide} />
             <line x1={188} y1={23} x2={188} y2={39} {...guide} />
           </g>
+        </>
+      )}
+      {mode === 'decor-autour' && (
+        <>
+          {/* le portail est déjà là, au centre — EXACTEMENT à la même place
+              et à la même taille que sur Contrainte et Libre (même Vantaux,
+              mêmes piliers ; demande Mathias 05/08) — puis Nano construit le
+              décor autour : le trottoir glisse, la maison se pose derrière,
+              les piliers se montent, le ciel apparaît en touche finale */}
+          <g className="anim-soleil-autour">
+            <line x1={29.1} y1={12} x2={32} y2={12} {...rayon} />
+            <line x1={12} y1={12} x2={14.9} y2={12} {...rayon} />
+            <line x1={22} y1={2} x2={22} y2={4.9} {...rayon} />
+            <line x1={22} y1={19.1} x2={22} y2={22} {...rayon} />
+            <line x1={27} y1={7} x2={29.1} y2={4.9} {...rayon} />
+            <line x1={14.9} y1={4.9} x2={17} y2={7} {...rayon} />
+            <line x1={27} y1={17} x2={29.1} y2={19.1} {...rayon} />
+            <line x1={14.9} y1={19.1} x2={17} y2={17} {...rayon} />
+            <circle cx={22} cy={12} r={5} {...pilier} />
+          </g>
+          <g className="anim-nuage-autour">
+            <ellipse cx={190} cy={10} rx={12} ry={6} {...pilier} />
+            <ellipse cx={203} cy={14} rx={8} ry={4} {...pilier} />
+          </g>
+          <g className="anim-maison-autour">
+            <polygon points="64,42 110,12 156,42" {...pilier} />
+            <rect x={68} y={42} width={84} height={62} {...pilier} />
+            <rect x={103} y={22} width={14} height={9} fill="#fff" stroke="#b6bdc6" strokeWidth={1.5} />
+          </g>
+          {/* le bord haut du trottoir arrive PILE à la base des piliers
+              (y=104), derrière le portail */}
+          <g className="anim-trottoir">
+            <rect x={0} y={104} width={220} height={7} {...pilier} />
+          </g>
+          <rect className="anim-pilier anim-pilier-1" x={8} y={30} width={20} height={74} rx={2} {...pilier} />
+          <rect className="anim-pilier anim-pilier-2" x={192} y={30} width={20} height={74} rx={2} {...pilier} />
+          <Vantaux />
         </>
       )}
       {mode === 'libre' && (

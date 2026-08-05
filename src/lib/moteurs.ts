@@ -34,25 +34,30 @@ export interface MoteurDef {
   famille: string
 }
 
+// Bascule « décor autour » (05/08/2026, séparation TOTALE demandée par Mathias) :
+// ces moteurs portent l'ANCIENNE méthode (décor Canny + piliers + pose-fusion) et
+// s'affichent désormais « (legacy) ». Clés, réglages, prompts et pipelines
+// INCHANGÉS — seule l'étiquette bouge. La nouvelle génération (JANUS/TERMINUS/
+// FORCULUS sans étiquette) vit dans src/lib/moteursDa.ts.
 export const MOTEURS: ReadonlyArray<MoteurDef> = [
   // « JANUS » : dieu romain des portails et des passages (janua = la porte),
   // aux DEUX visages — comme les deux vantaux d'un battant — et dieu des
   // commencements : le premier moteur de PortaGEN. Nom choisi par Claude le
   // 13/07/2026, récompense offerte par Mathias après le câblage du moteur.
-  { key: 'battant', label: 'Battant', codeName: 'JANUS', status: 'actif', famille: 'Portails' },
+  { key: 'battant', label: 'Battant', codeName: 'JANUS (legacy)', status: 'actif', famille: 'Portails' },
   // « TERMINUS » : dieu romain des LIMITES et des bornes sacrées — la borne
   // qu'on ne déplace jamais (même Jupiter lui cédait la place au Capitole).
   // Le portail marque la frontière de la propriété, et la lame court sur son
   // rail jusqu'à son terminus derrière le pilier. Nom choisi par Mathias le
   // 13/07/2026 parmi les propositions de Claude (1ᵉʳ baptême LIMENTINUS, le
   // seuil, remplacé le jour même). Recherche : docs/MOTEUR-COULISSANT-prompt.md.
-  { key: 'coulissant', label: 'Coulissant', codeName: 'TERMINUS', status: 'actif', famille: 'Portails' },
+  { key: 'coulissant', label: 'Coulissant', codeName: 'TERMINUS (legacy)', status: 'actif', famille: 'Portails' },
   // « FORCULUS » : dans la religion romaine, le dieu qui protège le VANTAIL de
   // la porte (forem = le battant de porte) — il forme avec Janus (le passage),
   // Cardea (les gonds) et Limentinus (le seuil) la petite famille divine de la
   // porte romaine. Le vantail unique du portillon, gardé par son propre dieu,
   // petit frère de JANUS. Baptisé par Claude à la construction du moteur (13/07/2026).
-  { key: 'portillon', label: 'Portillon', codeName: 'FORCULUS', status: 'actif', famille: 'Portails' },
+  { key: 'portillon', label: 'Portillon', codeName: 'FORCULUS (legacy)', status: 'actif', famille: 'Portails' },
 ]
 
 export function moteurDef(key: string): MoteurDef | undefined {
@@ -105,10 +110,12 @@ export interface MoteurReglages {
   /**
    * Méthode d'intégration du portail. 'pose-fusion' (chantier du 17/07/2026,
    * docs/CADRAGE-POSE-FUSION-JANUS-2026-07-17.md) : le code pose le produit au
-   * pixel près, un seul appel Nano fait stuc + lumière/ombres. 'simple' reste le
-   * défaut tant que la migration JANUS n'est pas validée par Mathias.
+   * pixel près, un seul appel Nano fait stuc + lumière/ombres. 'decor-autour'
+   * (bascule du 05/08/2026, docs/CADRAGE-DECOR-AUTOUR-2026-08-05.md) : NOUVEAU
+   * mode — plan gris + produit posé à sa vraie échelle, Nano peint TOUT le décor
+   * autour (les méthodes historiques deviennent le legacy, conservées).
    */
-  integrationMethod: 'simple' | 'rectangle' | 'pose-directe' | 'pose-fusion'
+  integrationMethod: 'simple' | 'rectangle' | 'pose-directe' | 'pose-fusion' | 'decor-autour'
   /** Pose-fusion : débordement du produit sur les piliers, % de la largeur PAR CÔTÉ. */
   poseDebordPct: number
   /** Pose-fusion : alpha minimal conservé au nettoyage du PNG produit (0-255). */
@@ -239,6 +246,7 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
     'rectangle',
     'pose-directe',
     'pose-fusion',
+    'decor-autour',
   ] as const)
   if (integrationMethod) out.integrationMethod = integrationMethod
   // Débordement en % avec décimales (mesuré à 3,5 %, ramené à 2 % par Mathias le 17/07).

@@ -5,14 +5,14 @@ import { useEffect, useState } from 'react'
 /**
  * Réglages GÉNÉRAUX de l'application — universels, donc À PART des moteurs
  * (demande Mathias 13/07/2026). Depuis l'« affichage complet » de la page
- * Admin → Réglages (maquette reglages-full-v1 validée le 29/07/2026), les quatre
+ * Admin → Réglages (maquette reglages-full-v1 validée le 29/07/2026), les
  * rubriques sont EMPILÉES en cartes, chacune avec son ancre (app-generations,
- * app-tarif, app-marquage, app-serveur) que les signets de l'arborescence
- * rejoignent. « Générations & modèle » regroupe les générations simultanées et
- * le modèle image.
+ * app-marquage, app-serveur) que les signets de l'arborescence rejoignent.
+ * « Générations & modèle » regroupe les générations simultanées et le modèle
+ * image. « Tarif Gemini » supprimée le 05/08/2026 avec le LAB (demande Mathias).
  */
 
-export type AppRubrique = 'generations' | 'tarif' | 'marquage' | 'serveur'
+export type AppRubrique = 'generations' | 'marquage' | 'serveur'
 
 function SubHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -50,8 +50,6 @@ function AppCard({
 export default function ReglagesApp() {
   const [value, setValue] = useState<number | null>(null)
   const [bounds, setBounds] = useState({ min: 1, max: 20 })
-  const [priceIn, setPriceIn] = useState('')
-  const [priceOut, setPriceOut] = useState('')
   const [serverRoot, setServerRoot] = useState('')
   const [marquageIa, setMarquageIa] = useState<boolean | null>(null)
   // Modèle image global (28/07/2026) : Nano Banana Pro ou Nano Banana.
@@ -66,10 +64,6 @@ export default function ReglagesApp() {
       .then((d) => {
         setValue(d.concurrencyPerUser ?? 10)
         if (d.bounds) setBounds(d.bounds)
-        if (d.pricing) {
-          setPriceIn(d.pricing.inEurPerMTok > 0 ? String(d.pricing.inEurPerMTok) : '')
-          setPriceOut(d.pricing.outEurPerMTok > 0 ? String(d.pricing.outEurPerMTok) : '')
-        }
         if (d.serverRoot) setServerRoot(d.serverRoot)
         if (typeof d.marquageIa === 'boolean') setMarquageIa(d.marquageIa)
         if (d.imageModel) setImageModel(d.imageModel)
@@ -158,26 +152,6 @@ export default function ReglagesApp() {
     )
   }
 
-  async function savePricing() {
-    setBusy(true)
-    setNotice(null)
-    const res = await fetch('/api/settings', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        priceEurPerMTokIn: priceIn.trim() === '' ? 0 : Number(priceIn.replace(',', '.')),
-        priceEurPerMTokOut: priceOut.trim() === '' ? 0 : Number(priceOut.replace(',', '.')),
-      }),
-    })
-    const data = await res.json().catch(() => null)
-    setBusy(false)
-    setNotice(
-      res.ok
-        ? 'Tarif enregistré — le coût en € s’affiche désormais sur les essais du LAB.'
-        : `Erreur : ${data?.error ?? res.status}`
-    )
-  }
-
   return (
     <div className="space-y-5">
       {notice && (
@@ -245,54 +219,6 @@ export default function ReglagesApp() {
                 </button>
               ))}
             </span>
-      </AppCard>
-
-      <AppCard id="app-tarif" title="Tarif Gemini">
-            <p className="text-xs text-text-secondary mb-4">
-              Prix en euros <strong>par million de tokens</strong>, appliqué aux{' '}
-              <strong>appels image</strong> uniquement (les appels texte coûtent des centièmes de
-              centime). Sert au coût affiché sur chaque essai du LAB. Grille Google au 11/07/2026
-              pour Gemini 3 Pro Image : 2&nbsp;$ en entrée et 120&nbsp;$ en sortie image le
-              million, soit ≈ <strong>1,75&nbsp;€</strong> et <strong>105&nbsp;€</strong> au taux
-              du jour (1&nbsp;$ ≈ 0,876&nbsp;€) — à réajuster si la grille ou le taux change.
-            </p>
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label htmlFor="price-in" className="block text-xs font-medium text-text-secondary mb-1">
-                  Entrée (€ / M tokens)
-                </label>
-                <input
-                  id="price-in"
-                  type="text"
-                  inputMode="decimal"
-                  value={priceIn}
-                  onChange={(e) => setPriceIn(e.target.value)}
-                  placeholder="ex. 1,80"
-                  className="w-32 border border-border bg-surface rounded-[8px] px-3 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
-                />
-              </div>
-              <div>
-                <label htmlFor="price-out" className="block text-xs font-medium text-text-secondary mb-1">
-                  Sortie (€ / M tokens)
-                </label>
-                <input
-                  id="price-out"
-                  type="text"
-                  inputMode="decimal"
-                  value={priceOut}
-                  onChange={(e) => setPriceOut(e.target.value)}
-                  placeholder="ex. 110"
-                  className="w-32 border border-border bg-surface rounded-[8px] px-3 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
-                />
-              </div>
-              <button
-                onClick={savePricing}
-                disabled={busy}
-                className="bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
-              >
-                Enregistrer
-              </button>
-            </div>
       </AppCard>
 
       <AppCard id="app-marquage" title="Marquage IA">

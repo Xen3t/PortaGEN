@@ -9,6 +9,12 @@ import {
   type MoteurReglages,
 } from '@/lib/moteurs'
 import { isGabaritSetKey, type GabaritSetKey } from '@/lib/gabaritSets'
+import {
+  getMoteurDaReglages,
+  isMoteurDaKey,
+  moteurDaDef,
+  patchMoteurDaReglages,
+} from '@/lib/moteursDa'
 
 /**
  * Réglages d'un moteur (Admin → Réglages par moteur) : lecture pour tous les
@@ -25,6 +31,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ moteur: str
   const auth = requireApiUser(req)
   if (auth instanceof NextResponse) return auth
   const { moteur } = await ctx.params
+  // Moteurs DÉCOR AUTOUR (séparation totale 05/08) : leurs clés, leurs réglages.
+  if (isMoteurDaKey(moteur)) {
+    return NextResponse.json({ moteur: moteurDaDef(moteur), reglages: getMoteurDaReglages(moteur) })
+  }
   const jeu = parseJeu(moteur)
   const def = jeu ? moteurDef(jeu === 'coulissant-xl' ? 'coulissant' : jeu) : undefined
   if (!jeu || !def) return NextResponse.json({ error: 'Moteur inconnu' }, { status: 404 })
@@ -35,9 +45,14 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ moteur: s
   const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { moteur } = await ctx.params
-  const jeu = parseJeu(moteur)
-  const def = jeu ? moteurDef(jeu === 'coulissant-xl' ? 'coulissant' : jeu) : undefined
-  if (!jeu || !def) return NextResponse.json({ error: 'Moteur inconnu' }, { status: 404 })
+  const isDa = isMoteurDaKey(moteur)
+  const jeu = isDa ? null : parseJeu(moteur)
+  const def = isDa
+    ? moteurDaDef(moteur)
+    : jeu
+      ? moteurDef(jeu === 'coulissant-xl' ? 'coulissant' : jeu)
+      : undefined
+  if (!def) return NextResponse.json({ error: 'Moteur inconnu' }, { status: 404 })
   if (def.status !== 'actif') {
     return NextResponse.json({ error: `Moteur ${def.label} en préparation` }, { status: 400 })
   }
@@ -58,5 +73,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ moteur: s
       { status: 400 }
     )
   }
-  return NextResponse.json({ ok: true, reglages: patchMoteurReglages(jeu, patch) })
+  // Moteur décor autour → SES réglages (moteur.<clé>.reglages) ; legacy inchangé.
+  if (isDa && isMoteurDaKey(moteur)) {
+    return NextResponse.json({ ok: true, reglages: patchMoteurDaReglages(moteur, patch) })
+  }
+  return NextResponse.json({ ok: true, reglages: patchMoteurReglages(jeu!, patch) })
 }

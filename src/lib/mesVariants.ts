@@ -24,12 +24,13 @@ export interface MesVariantJob {
 }
 
 /**
- * Un job porte-t-il la MES finale ? Intégration classique ou « pose-fusion »
- * (chantier 17/07/2026, un seul job décor+aplats+produit). Les retouches
- * (`mes-fix`), piliers et Marketplace ne sont PAS des variantes.
+ * Un job porte-t-il la MES finale ? Intégration classique, « pose-fusion »
+ * (chantier 17/07/2026, un seul job décor+aplats+produit) ou « decor-autour »
+ * (05/08/2026 — les générations multiples s'appliquent aussi au nouveau mode).
+ * Les retouches (`mes-fix`), piliers et Marketplace ne sont PAS des variantes.
  */
 export function isMesRoot(type: string): boolean {
-  return type === 'integration' || type === 'pose-fusion'
+  return type === 'integration' || type === 'pose-fusion' || type === 'decor-autour'
 }
 
 /** Numéro de génération d'un job (1 par défaut, lancement mono-génération). */

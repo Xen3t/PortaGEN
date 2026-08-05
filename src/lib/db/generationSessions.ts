@@ -33,10 +33,12 @@ export interface GenerationSessionSummary {
   /**
    * Origine de la session (maquette sessions-v2, validée le 13/07/2026) :
    * « directe » = page Génération, « catalogue » = lancement de gamme depuis
-   * la page produit, « decor » = tirages de décor (28/07/2026). La carte
-   * catalogue ouvre la page de la gamme, la carte décor ouvre MES Décors.
+   * la page produit, « decor » = tirages de décor (28/07/2026), « decor-autour »
+   * = nouveau mode « décor autour » (bascule 05/08/2026 — la carte ouvre
+   * /generation/decor-autour). La carte catalogue ouvre la page de la gamme,
+   * la carte décor ouvre MES Décors.
    */
-  source: 'directe' | 'catalogue' | 'decor' | 'libre'
+  source: 'directe' | 'catalogue' | 'decor' | 'libre' | 'decor-autour'
   /** Nombre d'images du lot (un job Piliers par image déposée). */
   mesCount: number
   /** Nombre de MES finales déjà sorties — la progression « 3/5 images ». */
@@ -54,7 +56,9 @@ export interface GenerationSessionSummary {
 }
 
 export function createGenerationSession(
-  input: { batchId: string; produit: string; moteur: string; decorId: number; createdBy: string },
+  // decorId null (05/08/2026) : une session « décor autour » n'a pas de décor —
+  // Nano peint l'entrée autour du produit posé.
+  input: { batchId: string; produit: string; moteur: string; decorId: number | null; createdBy: string },
   db: Database.Database = getDb()
 ): void {
   db.prepare(
@@ -145,6 +149,10 @@ export function summarizeGenerationSession(
     return `${col}|${s?.w ?? '?'}x${s?.h ?? '?'}`
   }
 
+  // Bascule « décor autour » (05/08/2026) : un batch decor-autour est une session
+  // du NOUVEAU mode — sa carte ouvre /generation/decor-autour, pas le legacy.
+  let hasDecorAutour = false
+
   for (const j of jobs) {
     let payload: Record<string, unknown> = {}
     let result: Record<string, unknown> = {}
@@ -157,14 +165,16 @@ export function summarizeGenerationSession(
     if (j.status === 'queued' || j.status === 'running') busy = true
     if (j.status === 'error') anyError = true
     if (j.type === 'marketplace') mpDone = true
-    // « pose-fusion » (17/07/2026) : UN job = une MES complète — il compte à la
-    // fois dans le total (comme les piliers) et dans le terminé (comme l'intégration).
-    if (j.type === 'pillars' || j.type === 'pose-fusion') {
+    if (j.type === 'decor-autour') hasDecorAutour = true
+    // « pose-fusion » (17/07/2026) et « decor-autour » (05/08/2026) : UN job = une
+    // MES complète — il compte à la fois dans le total (comme les piliers) et dans
+    // le terminé (comme l'intégration).
+    if (j.type === 'pillars' || j.type === 'pose-fusion' || j.type === 'decor-autour') {
       totalSlots.add(slotKey(payload))
       const col = typeof payload.coloris === 'string' ? payload.coloris : ''
       if (col && !coloris.includes(col)) coloris.push(col)
     }
-    if (j.type === 'integration' || j.type === 'pose-fusion') {
+    if (j.type === 'integration' || j.type === 'pose-fusion' || j.type === 'decor-autour') {
       const dp = typeof result.deliveryPath === 'string' ? result.deliveryPath : null
       if (j.status === 'done' && dp) {
         doneSlots.add(slotKey(payload))
@@ -180,7 +190,7 @@ export function summarizeGenerationSession(
     decorId: row.decor_id,
     decorName: decor?.name ?? null,
     createdAt: row.created_at,
-    source: 'directe',
+    source: hasDecorAutour ? 'decor-autour' : 'directe',
     mesCount: totalSlots.size,
     mesDone: doneSlots.size,
     coloris,
@@ -268,13 +278,14 @@ function summarizeCatalogueBatch(
         if (img && !thumbPath) thumbPath = img
       }
     }
-    // « pose-fusion » (17/07/2026) : UN job = une MES complète (total ET terminé).
-    if (j.type === 'pillars' || j.type === 'pose-fusion') {
+    // « pose-fusion » (17/07/2026) et « decor-autour » (05/08/2026) : UN job =
+    // une MES complète (total ET terminé).
+    if (j.type === 'pillars' || j.type === 'pose-fusion' || j.type === 'decor-autour') {
       totalSlots.add(slotKey(payload))
       const col = typeof payload.coloris === 'string' ? payload.coloris : ''
       if (col && !coloris.includes(col)) coloris.push(col)
     }
-    if (j.type === 'integration' || j.type === 'pose-fusion') {
+    if (j.type === 'integration' || j.type === 'pose-fusion' || j.type === 'decor-autour') {
       const fp =
         (typeof result.deliveryPath === 'string' && result.deliveryPath) ||
         (typeof result.compositePath === 'string' && result.compositePath) ||

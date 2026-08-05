@@ -78,24 +78,3 @@ export function getImageModel(db: Database.Database = getDb()): string {
   return process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3-pro-image'
 }
 
-/**
- * Tarif Gemini indicatif, en € par MILLION de tokens (entrée / sortie), saisi dans
- * Admin → Réglages moteur. 0 = non configuré → aucun coût en € affiché (les tokens
- * restent toujours visibles). Sert au coût par essai du Lab moteur.
- */
-export const PRICE_IN_KEY = 'gemini_price_eur_per_mtok_in'
-export const PRICE_OUT_KEY = 'gemini_price_eur_per_mtok_out'
-
-export interface Pricing {
-  inEurPerMTok: number
-  outEurPerMTok: number
-}
-
-export function getPricing(db: Database.Database = getDb()): Pricing {
-  const inRaw = Number(getSetting(PRICE_IN_KEY, db))
-  const outRaw = Number(getSetting(PRICE_OUT_KEY, db))
-  return {
-    inEurPerMTok: Number.isFinite(inRaw) && inRaw > 0 ? inRaw : 0,
-    outEurPerMTok: Number.isFinite(outRaw) && outRaw > 0 ? outRaw : 0,
-  }
-}

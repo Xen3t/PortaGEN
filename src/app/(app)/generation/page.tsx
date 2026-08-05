@@ -98,13 +98,15 @@ function isMesJob(j: Job): boolean {
  * 100P140 portillon (convention serveur).
  */
 const TYPO_INFO: Record<Typo, { titre: string; moteur: string; lettre: string }> = {
-  battant: { titre: 'Portail battant', moteur: 'Battant « JANUS »', lettre: 'B' },
+  // Séparation totale (05/08/2026) : ces moteurs portent la méthode legacy —
+  // les JANUS/TERMINUS/FORCULUS sans étiquette sont ceux du mode décor autour.
+  battant: { titre: 'Portail battant', moteur: 'Battant « JANUS (legacy) »', lettre: 'B' },
   coulissant: {
     titre: 'Portail coulissant',
-    moteur: 'Coulissant « TERMINUS »',
+    moteur: 'Coulissant « TERMINUS (legacy) »',
     lettre: 'C',
   },
-  portillon: { titre: 'Portillon', moteur: 'Portillon « FORCULUS »', lettre: 'P' },
+  portillon: { titre: 'Portillon', moteur: 'Portillon « FORCULUS (legacy) »', lettre: 'P' },
 }
 
 /* Les pictos PNG Fluent Emoji (13/07/2026) ont été remplacés le 22/07/2026 par
@@ -951,21 +953,76 @@ export default function GenerationPage() {
               22/07 : illustrations SilhouetteMode en tête de panneau, même langage
               que les silhouettes typologie ; plus de bouton, la carte entière
               est cliquable. */}
-          <div className="grid md:grid-cols-3 gap-[18px]">
+          {/* Bascule « décor autour » (05/08/2026) : 4 cartes SUR UNE LIGNE
+              (demande Mathias). L'ancien mode Contrainte et l'ancien MES Décors
+              sont conservés TELS QUELS et simplement étiquetés « (legacy) » —
+              on n'écrase jamais l'ancien. Ordre (demande Mathias 05/08) : la
+              nouvelle méthode « Décor Écrin » d'abord, les legacy regroupés
+              côte à côte en fin de ligne. */}
+          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-[18px]">
+            {/* MES Contrainte (NOUVEAU) — méthode « décor autour » : flux in-app
+                complet (dépôt → jobs → avant/après → MP → téléchargements). Le
+                labo /decor-autour reste accessible à part pour les essais. La PAGE
+                s'appelle « MES Écrin » (renommage Mathias 05/08) ; le renommage de
+                la carte a été annulé par Mathias (« retour en arrière » 05/08). */}
+            <Link
+              href="/generation/decor-autour"
+              className="group relative text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
+            >
+              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+                <SilhouetteMode mode="decor-autour" />
+              </div>
+              <div className="px-5 pt-4">
+                <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.06em] text-brand-green mb-2.5 whitespace-nowrap">
+                  <span className="w-[7px] h-[7px] rounded-full bg-current" />
+                  Décor Écrin · vraie échelle
+                </span>
+                <h3 className="text-[20px] leading-[1.15] font-bold tracking-tight mb-1.5 whitespace-nowrap">
+                  MES Contrainte
+                </h3>
+                <p className="text-sm text-text-secondary">
+                  Le produit est posé à sa vraie échelle, Nano peint tout le décor autour.
+                  Nouvelle méthode — <b className="text-text-primary">bascule en cours</b>.
+                </p>
+              </div>
+            </Link>
+
+            <button
+              onClick={() => pickMode('lib')}
+              className="group flex flex-col text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
+            >
+              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+                <SilhouetteMode mode="libre" />
+              </div>
+              <div className="px-5 pt-4">
+                <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.06em] text-brand-green mb-2.5 whitespace-nowrap">
+                  <span className="w-[7px] h-[7px] rounded-full bg-current" />
+                  Scène décrite · formulaire
+                </span>
+                <h3 className="text-[20px] leading-[1.15] font-bold tracking-tight mb-1.5 whitespace-nowrap">MES Libre</h3>
+                <p className="text-sm text-text-secondary">
+                  Ambiance, angle, lumière — peu de règles, plusieurs variantes générées,{' '}
+                  <b className="text-text-primary">tu choisis</b>. Le produit reste verrouillé.
+                </p>
+              </div>
+            </button>
+
+            {/* MES Contrainte (LEGACY) — décor Canny + piliers + pose/fusion, inchangé. */}
             <button
               onClick={() => pickMode('con')}
-              className="group text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
+              className="group flex flex-col text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
             >
               <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
                 <SilhouetteMode mode="contrainte" />
               </div>
-              <div className="px-7 pt-5">
-                <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
+              <div className="px-5 pt-4">
+                <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.06em] text-text-secondary mb-2.5 whitespace-nowrap">
                   <span className="w-[7px] h-[7px] rounded-full bg-current" />
                   Effet catalogue · gabarits
                 </span>
-                <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">
-                  MES Contrainte
+                <h3 className="text-[20px] leading-[1.15] font-bold tracking-tight mb-1.5 whitespace-nowrap">
+                  MES Contrainte{' '}
+                  <span className="text-[12px] font-semibold text-text-disabled align-middle">(legacy)</span>
                 </h3>
                 <p className="text-sm text-text-secondary">
                   Proportions cohérentes entre les tailles, décor imposé, produit posé précisément,
@@ -974,26 +1031,8 @@ export default function GenerationPage() {
               </div>
             </button>
 
-            <button
-              onClick={() => pickMode('lib')}
-              className="group text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
-            >
-              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
-                <SilhouetteMode mode="libre" />
-              </div>
-              <div className="px-7 pt-5">
-                <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
-                  <span className="w-[7px] h-[7px] rounded-full bg-current" />
-                  Scène décrite · formulaire
-                </span>
-                <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">MES Libre</h3>
-                <p className="text-sm text-text-secondary">
-                  Ambiance, angle, lumière — peu de règles, plusieurs variantes générées,{' '}
-                  <b className="text-text-primary">tu choisis</b>. Le produit reste verrouillé.
-                </p>
-              </div>
-            </button>
-
+            {/* MES Décors (LEGACY) — bibliothèque de décors, remplacée à terme par
+                « Nano peint autour ». Conservée telle quelle. */}
             <Link
               href="/decors"
               className="group text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
@@ -1001,13 +1040,14 @@ export default function GenerationPage() {
               <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
                 <SilhouetteMode mode="decors" />
               </div>
-              <div className="px-7 pt-5">
-                <span className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[.1em] text-brand-green mb-2.5">
+              <div className="px-5 pt-4">
+                <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.06em] text-text-secondary mb-2.5 whitespace-nowrap">
                   <span className="w-[7px] h-[7px] rounded-full bg-current" />
                   Arrière-plans · bibliothèque
                 </span>
-                <h3 className="text-[26px] leading-[1.15] font-bold tracking-tight mb-1.5">
-                  MES Décors
+                <h3 className="text-[20px] leading-[1.15] font-bold tracking-tight mb-1.5 whitespace-nowrap">
+                  MES Décors{' '}
+                  <span className="text-[12px] font-semibold text-text-disabled align-middle">(legacy)</span>
                 </h3>
                 <p className="text-sm text-text-secondary">
                   Créer et gérer les décors dans lesquels les produits sont posés — génération,

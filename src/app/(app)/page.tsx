@@ -103,17 +103,20 @@ export default function AccueilPage() {
 
   return (
     <div className="grid gap-4">
-      {/* Les 3 actions au-dessus des sessions (rework 22/07/2026, validé par
-          Mathias — maquette generer-depuis-catalogue-v2) : MES Contrainte,
-          MES Libre, MES Décors. L'Accueil ne change pas au-delà de cette rangée. */}
-      <div className="stagger grid md:grid-cols-3 gap-3.5">
+      {/* Les actions au-dessus des sessions (rework 22/07/2026, validé par
+          Mathias — maquette generer-depuis-catalogue-v2). 05/08 (demande
+          Mathias) : MES Décors retiré de l'Accueil, et MES Contrainte pointe
+          sur la NOUVELLE méthode « Décor Écrin » (/generation/decor-autour),
+          plus sur le flux legacy. L'Accueil ne change pas au-delà de cette
+          rangée. */}
+      <div className="stagger grid md:grid-cols-2 gap-3.5">
         {(
           [
             {
-              href: '/generation?mode=contrainte',
+              href: '/generation/decor-autour',
               mode: 'contrainte' as Mode,
               titre: 'MES Contrainte',
-              sous: 'catalogue ou images, décor imposé',
+              sous: 'Décor Écrin · vraie échelle, Nano peint autour',
             },
             {
               href: '/generation?mode=libre',
@@ -121,18 +124,12 @@ export default function AccueilPage() {
               titre: 'MES Libre',
               sous: 'génération libre (WIP)',
             },
-            {
-              href: '/decors',
-              mode: 'decors' as Mode,
-              titre: 'MES Décors',
-              sous: 'créer et gérer les décors',
-            },
           ] as const
         ).map((a) => (
           <Link
             key={a.href}
             href={a.href}
-            className="flex items-center gap-3.5 bg-white rounded-[12px] border-[1.5px] border-border shadow-sm px-5 py-4 transition-all hover:border-brand-green hover:shadow-md hover:-translate-y-0.5"
+            className="flex items-center justify-center gap-3.5 bg-white rounded-[12px] border-[1.5px] border-border shadow-sm px-5 py-4 transition-all hover:border-brand-green hover:shadow-md hover:-translate-y-0.5"
           >
             {/* Icônes carrées SilhouetteMode à la place des pictos PNG (22/07) */}
             <SilhouetteModeIcone mode={a.mode} className="block w-[34px] h-[34px] shrink-0" />

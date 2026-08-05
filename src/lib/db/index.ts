@@ -330,11 +330,6 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
   if (!jobCols.includes('created_by')) {
     db.exec(`ALTER TABLE jobs ADD COLUMN created_by TEXT`)
   }
-  // LAB (refonte lab-v1, 22/07/2026) : essai archivé = masqué de la liste des
-  // essais du LAB, images et mesures conservées (consultable via « Archives »).
-  if (!jobCols.includes('lab_archived_at')) {
-    db.exec(`ALTER TABLE jobs ADD COLUMN lab_archived_at TEXT`)
-  }
   // Générations multiples par taille (29/07/2026) : chaque taille lance N MES
   // (variantes, n° dans payload.variant). L'utilisateur en CHOISIT une par
   // taille — chosen = 1 sur la MES retenue, 0 sur ses sœurs. Seule la retenue
@@ -609,6 +604,14 @@ export const PROMPT_FILES: Record<string, string> = {
   // Retouche d'une MES Libre par consigne (studio, 28/07/2026) : édition ciblée
   // de l'image existante, {INSTRUCTION} injectée, HARD LOCK en dernière ligne.
   'libre-fix': 'Prompt Retouche Libre.txt',
+  // Bascule « décor autour » (05/08/2026, docs/CADRAGE-DECOR-AUTOUR-2026-08-05.md) :
+  // NOUVEAUX moteurs (séparation totale — src/lib/moteursDa.ts : janus/terminus/
+  // forculus), un prompt par moteur ADAPTÉ au produit (double vantail / panneau
+  // d'un seul tenant — jamais de vocabulaire de coulissement / vantail piéton),
+  // ossature « élévation à plat + produit verrouillé » validée au banc du 29/07.
+  'janus-decor-autour': 'Prompt Decor Autour JANUS.txt',
+  'terminus-decor-autour': 'Prompt Decor Autour Coulissant.txt',
+  'forculus-decor-autour': 'Prompt Decor Autour Portillon.txt',
 }
 
 /**
@@ -722,7 +725,6 @@ export interface JobRow {
   reviewed_at: string | null
   batch_id: string | null
   created_by: string | null
-  lab_archived_at: string | null
   /** 1 = MES retenue de sa taille (générations multiples, 29/07/2026), 0 sinon. */
   chosen: number
   created_at: string
