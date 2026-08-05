@@ -335,6 +335,13 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
   if (!jobCols.includes('lab_archived_at')) {
     db.exec(`ALTER TABLE jobs ADD COLUMN lab_archived_at TEXT`)
   }
+  // Générations multiples par taille (29/07/2026) : chaque taille lance N MES
+  // (variantes, n° dans payload.variant). L'utilisateur en CHOISIT une par
+  // taille — chosen = 1 sur la MES retenue, 0 sur ses sœurs. Seule la retenue
+  // peut passer en Marketplace. 0 partout = comportement historique (1 par taille).
+  if (!jobCols.includes('chosen')) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN chosen INTEGER NOT NULL DEFAULT 0`)
+  }
 
   // Marque active PAR UTILISATEUR (navigation v2, 12/07/2026) : migration douce.
   const userCols = (db.prepare(`PRAGMA table_info(users)`).all() as { name: string }[]).map(
@@ -350,6 +357,13 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
   )
   if (!catCols.includes('new_refs')) {
     db.exec(`ALTER TABLE catalog_products ADD COLUMN new_refs TEXT NOT NULL DEFAULT '[]'`)
+  }
+  // Pieds de soutien (29/07/2026) : NULL = pas encore jugé, 1 = a des pieds,
+  // 0 = n'en a pas (VALIER…). Rempli par le juge vision au premier besoin,
+  // modifiable sur la fiche produit. Pilote les réparations de bande basse et
+  // les sections [PIEDS] du prompt pose-fusion.
+  if (!catCols.includes('pieds')) {
+    db.exec(`ALTER TABLE catalog_products ADD COLUMN pieds INTEGER`)
   }
 
   // Mode lots (27/07/2026) : bases créées avant l'ajout de la colonne de refus.
@@ -542,6 +556,10 @@ export const PROMPT_FILES: Record<string, string> = {
   // labo validé (« Prompt Pose Fusion.txt », conservé verbatim comme référence) —
   // coloris injecté via {COLORIS}, formulations neutres ajouré/sommet.
   'pose-fusion': 'Prompt Pose Fusion JANUS.txt',
+  // Circuit « intégration 2 étapes » du battant (29/07/2026) : la scène est
+  // déjà finie et le produit déjà posé — appel d'intégration SERRÉ (lumière +
+  // ombres de contact uniquement). Sections dynamiques [PIEDS]/[SANS-PIEDS].
+  'pose-fusion-integration': 'Prompt Integration Serree.txt',
   'decor-tags': 'Prompt Decor Tags.txt',
   // Enquête maisons illogiques (28/07/2026) : R1 = rôle de la photo de maison
   // de référence jointe à Nano ; R3 = juge de vraisemblance architecturale.
@@ -556,12 +574,24 @@ export const PROMPT_FILES: Record<string, string> = {
   // (vantail unique piéton / lame d'un seul tenant derrière le pilier droit —
   // jamais de simple copie, règle « moteur = contenu adapté »).
   'portillon-pose-fusion': 'Prompt Pose Fusion Portillon.txt',
+  // Report du circuit « intégration 2 étapes » du battant sur le portillon
+  // (29/07/2026) : appel d'intégration SERRÉ (lumière + ombres de contact) sur
+  // la scène finie et le vantail déjà posé. ADAPTÉ au produit (vantail unique
+  // piéton, jamais de double vantail), sections dynamiques [PIEDS]/[SANS-PIEDS].
+  'portillon-pose-fusion-integration': 'Prompt Integration Serree Portillon.txt',
   'coulissant-pose-fusion': 'Prompt Pose Fusion Coulissant.txt',
   'marketplace-extension': 'Prompt Marketplace Extension.txt',
   'portillon-marketplace-extension': 'Prompt Marketplace Extension Portillon.txt',
   'coulissant-piliers-murets': 'Prompt Piliers et Murets Coulissant.txt',
   'coulissant-integration-simple': 'Prompt Integration Simple Coulissant.txt',
   'coulissant-marketplace-extension': 'Prompt Marketplace Extension Coulissant.txt',
+  // Circuit coulissant « 2 étapes » (29/07/2026, banc test-deux-etapes-stuc validé
+  // par Mathias) : étape 1 = scène + lame SANS pilier droit (bout de lame visible,
+  // rien à occulter), étape 2 = aplat pilier peint SUR le rendu fini, masque à la
+  // silhouette (segmentation Gemini). L'occlusion est garantie par construction.
+  'coulissant-2etapes-scene': 'Prompt Coulissant 2 Etapes Scene.txt',
+  'coulissant-2etapes-pilier': 'Prompt Coulissant 2 Etapes Pilier.txt',
+  'coulissant-2etapes-segmentation': 'Prompt Coulissant 2 Etapes Segmentation.txt',
   // MES Libres (chantier 28/07/2026, maquette mes-libre-v11) : gabarit unique,
   // placeholders {PRODUCT} {SCENE} {CONDITIONS} {CAMERA} {DETAILS} remplis par
   // le pipeline depuis le formulaire — HARD LOCK PRODUCT en dernière ligne.
@@ -667,6 +697,19 @@ export function listSizes(db: Database.Database = getDb(), moteur = 'battant'): 
     .all(moteur) as SizeRow[]
 }
 
+/**
+ * Plus grande largeur active (cm) d'un moteur/jeu — largeur de référence des
+ * gabarits (04/08/2026) : toutes les largeurs d'une hauteur donnée partagent le
+ * gabarit de la plus large. 0 si le référentiel est vide (le code appelant
+ * retombe alors sur la largeur réelle).
+ */
+export function widestActiveWidth(moteur = 'battant', db: Database.Database = getDb()): number {
+  const row = db
+    .prepare('SELECT MAX(width_cm) AS w FROM sizes WHERE active = 1 AND moteur = ?')
+    .get(moteur) as { w: number | null }
+  return row.w ?? 0
+}
+
 export interface JobRow {
   id: number
   type: string
@@ -680,6 +723,8 @@ export interface JobRow {
   batch_id: string | null
   created_by: string | null
   lab_archived_at: string | null
+  /** 1 = MES retenue de sa taille (générations multiples, 29/07/2026), 0 sinon. */
+  chosen: number
   created_at: string
   updated_at: string | null
 }
@@ -733,6 +778,26 @@ export function updateJob(
   }
   if (fields.incrementRegen) sets.push(`regen_count = regen_count + 1`)
   db.prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = @id`).run(params)
+}
+
+/**
+ * Générations multiples (29/07/2026) : marque UNE MES comme retenue de sa taille.
+ * `chosenId` passe à chosen = 1, ses sœurs (`siblingIds`) à 0 — atomique.
+ * L'appelant fournit les sœurs (mêmes taille + coloris du même lot) : le tri
+ * MES/rôle vit dans la couche serveur, pas ici.
+ */
+export function setChosenJob(
+  chosenId: number,
+  siblingIds: number[],
+  db: Database.Database = getDb()
+): void {
+  const clear = db.prepare(`UPDATE jobs SET chosen = 0, updated_at = datetime('now') WHERE id = ?`)
+  const set = db.prepare(`UPDATE jobs SET chosen = 1, updated_at = datetime('now') WHERE id = ?`)
+  const tx = db.transaction(() => {
+    for (const sid of siblingIds) if (sid !== chosenId) clear.run(sid)
+    set.run(chosenId)
+  })
+  tx()
 }
 
 export interface ApiCallRow {

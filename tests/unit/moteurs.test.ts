@@ -146,12 +146,14 @@ describe('réglages moteur — invariance des défauts', () => {
       corridor: 'auto', // widestActiveSize (decor)
       corridorWidthCm: 400,
       masking: 'off', // rendu brut (décision 11/07/2026)
-      integrationMethod: 'simple', // décision 11/07/2026 — pose-fusion en option (17/07/2026)
+      integrationMethod: 'pose-fusion', // défaut tous moteurs (demande Mathias 29/07/2026)
       poseDebordPct: 2, // débord piliers validé par Mathias le 17/07/2026
       poseSeuilAlpha: 200, // nettoyage des pixels fantômes (méthode 1 validée)
+      poseFusionComposite: 'on', // masquage/composite actif = comportement actuel (05/08/2026)
       shadows: 'auto',
       ombrePilierPct: 25, // ombre pilier→lame coulissant : dégradé 0→25 % sur 1,5× la largeur du pilier (profil Mathias 28/07)
       marketplace: 'choix', // case au lancement + bouton 1:1 (décision 13/07/2026)
+      generationsParTaille: 3, // 3 générations par taille (demande Mathias 29/07/2026)
       livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
       // RALify (28/07/2026) : ACTIVÉ par défaut — validation Mathias du 28/07
       // (démos ARLBERG/EIGER), survit à une remise à zéro.
@@ -223,6 +225,10 @@ describe('sanitizeMoteurReglages', () => {
     expect(sanitizeMoteurReglages({ ombrePilierPct: 0 })).toEqual({ ombrePilierPct: 0 })
     expect(sanitizeMoteurReglages({ ombrePilierPct: 101 })).toEqual({})
     expect(sanitizeMoteurReglages({ ombrePilierPct: -5 })).toEqual({})
+    // Masquage / composite (05/08/2026) : 'on' (défaut) / 'off', rien d'autre.
+    expect(sanitizeMoteurReglages({ poseFusionComposite: 'off' })).toEqual({ poseFusionComposite: 'off' })
+    expect(sanitizeMoteurReglages({ poseFusionComposite: 'on' })).toEqual({ poseFusionComposite: 'on' })
+    expect(sanitizeMoteurReglages({ poseFusionComposite: 'nimporte' })).toEqual({})
   })
 
   it('borne et arrondit les champs numériques', () => {
@@ -253,7 +259,7 @@ describe('patchMoteurReglages', () => {
     const db = getDb(':memory:')
     const first = patchMoteurReglages('battant', { masking: 'pixel-lock' }, db)
     expect(first.masking).toBe('pixel-lock')
-    expect(first.integrationMethod).toBe('simple')
+    expect(first.integrationMethod).toBe('pose-fusion') // défaut conservé (29/07/2026)
     const second = patchMoteurReglages('battant', { cannyPlacement: 'manuel', cannyOffsetPx: -12 }, db)
     expect(second.masking).toBe('pixel-lock') // conservé
     expect(second.cannyPlacement).toBe('manuel')

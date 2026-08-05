@@ -19,6 +19,10 @@ export function listMoodboards(): MoodboardEntry[] {
   return fs
     .readdirSync(dir)
     .filter((f) => /\.(jpg|jpeg|png)$/i.test(f))
+    // Exclut les photos de maison de référence mises en cache par la feature
+    // « maisons plausibles » (fichiers « <moodboard> - Maison.jpg ») : ce sont
+    // des découpes techniques, pas de vrais moodboards à proposer.
+    .filter((f) => !/ - Maison\.(jpg|jpeg|png)$/i.test(f))
     .map((f) => ({
       path: path.relative(config.rootDir, path.join(dir, f)),
       name: f.replace(/\.(jpg|jpeg|png)$/i, ''),

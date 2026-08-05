@@ -14,6 +14,7 @@ export function serializeJob(job: JobRow) {
     reviewedAt: job.reviewed_at,
     batchId: job.batch_id,
     createdBy: job.created_by,
+    chosen: job.chosen === 1,
     createdAt: job.created_at,
     updatedAt: job.updated_at,
   }

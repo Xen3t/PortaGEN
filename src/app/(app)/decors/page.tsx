@@ -66,13 +66,6 @@ function imgUrl(p: string, w?: number): string {
   return w ? `${base}&w=${w}` : base
 }
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z')
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
-}
-
 function Star({ on, onClick }: { on: boolean; onClick: (e: React.MouseEvent) => void }) {
   return (
     <button
@@ -708,8 +701,12 @@ function DetailPanel({
           <div className="flex items-baseline gap-2.5 min-w-0">
             <h2 className="font-bold text-[17px] truncate" title={decor.name}>{decor.name}</h2>
             <span className="text-xs text-text-secondary whitespace-nowrap">
-              {decor.width && decor.height ? `${decor.width} × ${decor.height} px · ` : ''}
-              {decor.image_size ? `${decor.image_size} · ` : ''}créé le {fmtDate(decor.created_at)}
+              {[
+                decor.width && decor.height ? `${decor.width} × ${decor.height} px` : null,
+                decor.image_size || null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </span>
           </div>
           <button onClick={onClose} className="text-text-disabled hover:text-text-primary transition-colors text-xl leading-none px-2" title="Fermer (Échap)">
@@ -843,12 +840,11 @@ function DetailPanel({
                 <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">Dernière utilisation</span>
                 <p className="mt-0.5 text-text-secondary">
                   {decor.lastUsedAt ? (
-                    <>
-                      {fmtDate(decor.lastUsedAt)}
-                      {decor.lastUsedJobId && (
-                        <> — <a href={`/production/image/${decor.lastUsedJobId}`} className="text-brand-teal hover:underline">génération #{decor.lastUsedJobId}</a></>
-                      )}
-                    </>
+                    decor.lastUsedJobId ? (
+                      <a href={`/production/image/${decor.lastUsedJobId}`} className="text-brand-teal hover:underline">génération #{decor.lastUsedJobId}</a>
+                    ) : (
+                      'Déjà utilisé'
+                    )
                   ) : (
                     'Jamais utilisé'
                   )}

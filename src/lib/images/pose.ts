@@ -56,6 +56,12 @@ export interface PoseOptions {
   debord?: number
   /** Alpha minimal conservé (0-255) */
   seuilAlpha?: number
+  /**
+   * Le produit a des pieds de soutien (verdict juge vision / fiche catalogue).
+   * false = AUCUNE réparation de bande basse (un VALIER sans pieds n'a que du
+   * sol studio sous ses montants — la restaurer fabrique des blocs clairs).
+   */
+  reparePieds?: boolean
 }
 
 export interface ProduitNettoye {
@@ -88,7 +94,8 @@ export interface PoseResult {
 export async function nettoyerProduit(
   input: Buffer | string,
   seuilAlpha = POSE_SEUIL_ALPHA_DEFAUT,
-  reparePochesPieds = true
+  reparePochesPieds = true,
+  reparePieds = true
 ): Promise<ProduitNettoye> {
   const { data, info } = await sharp(input, { limitInputPixels: false })
     .ensureAlpha()
@@ -160,8 +167,10 @@ export async function nettoyerProduit(
   const queued = new Uint8Array(W * H)
   let qh = 0
   let qt = 0
-  // Germes : pixels restaurables collés à de la matière opaque.
-  for (let y = bandTop; y < H; y++) {
+  // Germes : pixels restaurables collés à de la matière opaque. Produit SANS
+  // pieds (reparePieds=false) : aucun germe — la seule matière basse est celle
+  // des gonds/butée, et tout ce qui l'entoure est du sol studio à ne pas reboucher.
+  for (let y = bandTop; reparePieds && y < H; y++) {
     const row = y * W
     for (let x = minX; x <= maxX; x++) {
       if (!colOK[x]) continue
@@ -208,7 +217,7 @@ export async function nettoyerProduit(
   // 1. Le « fond » est inondé depuis le bord de la fenêtre de bande à travers les
   //    pixels vraiment vides (alpha nul avant ET après réparation) — le liseré
   //    et la matière bloquent le passage.
-  if (reparePochesPieds) {
+  if (reparePochesPieds && reparePieds) {
     const winX0 = Math.max(0, minX - 40)
     const winX1 = Math.min(W - 1, maxX + 40)
     const winW = winX1 - winX0 + 1
@@ -370,9 +379,10 @@ export async function poserProduitSurCible(
   produitInput: Buffer | string,
   cible: { x: number; y: number; w: number; h: number },
   seuilAlpha = POSE_SEUIL_ALPHA_DEFAUT,
-  reparePochesPieds = true
+  reparePochesPieds = true,
+  reparePieds = true
 ): Promise<PoseResult> {
-  const produit = await nettoyerProduit(produitInput, seuilAlpha, reparePochesPieds)
+  const produit = await nettoyerProduit(produitInput, seuilAlpha, reparePochesPieds, reparePieds)
   const etire = await sharp(produit.image)
     .resize(cible.w, cible.h, { fit: 'fill' })
     .png()
@@ -382,6 +392,126 @@ export async function poserProduitSurCible(
     .png()
     .toBuffer()
   return { image, cible, produit, etire }
+}
+
+export interface PoseDeuxVantauxResult {
+  /** Base + produit posé (PNG) */
+  image: Buffer
+  /** Produit seul sur canvas transparent taille base (PNG RGBA) — sert au masque */
+  layer: Buffer
+  /** Rectangle englobant réellement couvert (px) */
+  cible: { x: number; y: number; w: number; h: number }
+  /** Produit nettoyé (artefacts / debug) */
+  produit: ProduitNettoye
+}
+
+/**
+ * Pose « DEUX VANTAUX » (30/07/2026, moteur battant) : le PNG est coupé en son
+ * milieu (le montant central) et CHAQUE moitié est étirée indépendamment jusqu'à
+ * sa cible — moitié gauche → [blueL, centre], moitié droite → [centre, blueR].
+ * Le montant central se pose donc sur `centre` (le centre RÉEL de l'ouverture
+ * mesuré par flash), et les bords touchent les faces des piliers (± marge de
+ * recouvrement déjà intégrée dans blueL/blueR). Une ouverture décentrée ou de
+ * largeur inattendue est ainsi absorbée sans jour ni dépassement.
+ *
+ * Renvoie aussi le `layer` (produit seul sur fond transparent, taille de la base)
+ * pour que le composite pixel-lock dérive son masque de la silhouette réellement posée.
+ */
+export async function poserDeuxVantaux(
+  base: Buffer | string,
+  produitInput: Buffer | string,
+  cible: { blueL: number; blueR: number; centre: number; y: number; h: number },
+  seuilAlpha = POSE_SEUIL_ALPHA_DEFAUT,
+  reparePieds = true
+): Promise<PoseDeuxVantauxResult> {
+  const meta = await sharp(base).metadata()
+  const W = meta.width ?? 0
+  const H = meta.height ?? 0
+  const produit = await nettoyerProduit(produitInput, seuilAlpha, true, reparePieds)
+  const Wp = produit.width
+  const Hp = produit.height
+  const half = Math.max(1, Math.min(Wp - 1, Math.round(Wp / 2)))
+  const leftW = Math.max(1, cible.centre - cible.blueL)
+  const rightW = Math.max(1, cible.blueR - cible.centre)
+  const gauche = await sharp(produit.image)
+    .extract({ left: 0, top: 0, width: half, height: Hp })
+    .resize(leftW, cible.h, { fit: 'fill' })
+    .png()
+    .toBuffer()
+  const droite = await sharp(produit.image)
+    .extract({ left: half, top: 0, width: Wp - half, height: Hp })
+    .resize(rightW, cible.h, { fit: 'fill' })
+    .png()
+    .toBuffer()
+  const layer = await sharp({
+    create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
+    .composite([
+      { input: gauche, left: cible.blueL, top: cible.y },
+      { input: droite, left: cible.centre, top: cible.y },
+    ])
+    .png()
+    .toBuffer()
+  const image = await sharp(base).composite([{ input: layer }]).png().toBuffer()
+  return {
+    image,
+    layer,
+    cible: { x: cible.blueL, y: cible.y, w: cible.blueR - cible.blueL, h: cible.h },
+    produit,
+  }
+}
+
+export interface PoseUnVantailResult {
+  /** Base + produit posé (PNG) */
+  image: Buffer
+  /** Produit seul sur canvas transparent taille base (PNG RGBA) — sert au masque */
+  layer: Buffer
+  /** Rectangle englobant réellement couvert (px) */
+  cible: { x: number; y: number; w: number; h: number }
+  /** Produit nettoyé (artefacts / debug) */
+  produit: ProduitNettoye
+}
+
+/**
+ * Pose « UN VANTAIL » (30/07/2026, moteur portillon) : report de `poserDeuxVantaux`
+ * ADAPTÉ au VANTAIL UNIQUE du portillon (règle « moteur = contenu adapté »). Le PNG
+ * n'est PAS coupé en son milieu : il est étiré D'UN SEUL TENANT entre les deux faces
+ * mesurées [blueL, blueR] (marge de recouvrement déjà intégrée). Le `centre` mesuré
+ * est IGNORÉ — un vantail unique n'a pas de montant central à caler, et le couper en
+ * deux le déformerait au raccord si l'ouverture est décentrée (piliers inégaux).
+ *
+ * Renvoie aussi le `layer` (produit seul sur fond transparent, taille de la base)
+ * pour que le composite pixel-lock dérive son masque de la silhouette réellement posée.
+ */
+export async function poserUnVantail(
+  base: Buffer | string,
+  produitInput: Buffer | string,
+  cible: { blueL: number; blueR: number; y: number; h: number },
+  seuilAlpha = POSE_SEUIL_ALPHA_DEFAUT,
+  reparePieds = true
+): Promise<PoseUnVantailResult> {
+  const meta = await sharp(base).metadata()
+  const W = meta.width ?? 0
+  const H = meta.height ?? 0
+  const produit = await nettoyerProduit(produitInput, seuilAlpha, true, reparePieds)
+  const largeur = Math.max(1, cible.blueR - cible.blueL)
+  const etire = await sharp(produit.image)
+    .resize(largeur, cible.h, { fit: 'fill' })
+    .png()
+    .toBuffer()
+  const layer = await sharp({
+    create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+  })
+    .composite([{ input: etire, left: cible.blueL, top: cible.y }])
+    .png()
+    .toBuffer()
+  const image = await sharp(base).composite([{ input: layer }]).png().toBuffer()
+  return {
+    image,
+    layer,
+    cible: { x: cible.blueL, y: cible.y, w: largeur, h: cible.h },
+    produit,
+  }
 }
 
 /**
@@ -398,7 +528,9 @@ export async function poserProduit(
     base,
     produitInput,
     poseCible(gate, opts.debord ?? POSE_DEBORD_DEFAUT),
-    opts.seuilAlpha ?? POSE_SEUIL_ALPHA_DEFAUT
+    opts.seuilAlpha ?? POSE_SEUIL_ALPHA_DEFAUT,
+    true,
+    opts.reparePieds ?? true
   )
 }
 

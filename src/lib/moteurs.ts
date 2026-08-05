@@ -113,6 +113,17 @@ export interface MoteurReglages {
   poseDebordPct: number
   /** Pose-fusion : alpha minimal conservé au nettoyage du PNG produit (0-255). */
   poseSeuilAlpha: number
+  /**
+   * Pose + fusion (05/08/2026, demande Mathias) : masquage / composite de la
+   * sortie des circuits « 2 étapes ».
+   *  - 'on' (défaut = comportement actuel) : le décor de l'entrée posée est
+   *    verrouillé au pixel, seule la zone produit (+ ombres de contact) vient du
+   *    rendu Nano — BATTANT/PORTILLON par composite pixel-lock, COULISSANT par
+   *    masque de la silhouette du pilier.
+   *  - 'off' : la sortie BRUTE de Nano est l'image finale, sans aucun composite
+   *    ni masque (on fait entièrement confiance au rendu).
+   */
+  poseFusionComposite: 'on' | 'off'
   /** Ombres portées à l'intégration (méthodes rectangle / pose-directe). */
   shadows: 'auto' | 'off'
   /**
@@ -136,6 +147,14 @@ export interface MoteurReglages {
    * 'jamais' = interdit et invisible (pas de case, pas de bouton, API refusée).
    */
   marketplace: 'choix' | 'toujours' | 'jamais'
+  /**
+   * Nombre de GÉNÉRATIONS produites par taille (29/07/2026, demande Mathias :
+   * « tripler les générations »). Chaque taille lance N images indépendantes
+   * (variantes) ; l'utilisateur en CHOISIT une par taille (la MES retenue),
+   * seule celle-ci peut passer en Marketplace. 1 = comportement historique.
+   * Les essais du Labo moteur restent toujours à 1 (une image par essai).
+   */
+  generationsParTaille: number
   /** Modèle de nom du livrable final. */
   livraisonName: string
   /**
@@ -153,12 +172,20 @@ export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
   corridor: 'auto',
   corridorWidthCm: 400,
   masking: 'off',
-  integrationMethod: 'simple',
+  // Défaut 'pose-fusion' (29/07/2026, demande Mathias) : tous les moteurs passent
+  // par le pose-fusion sans réglage admin à faire — battant et portillon prennent
+  // alors leur circuit « intégration 2 étapes ». 'simple' reste sélectionnable
+  // dans l'admin par moteur si besoin.
+  integrationMethod: 'pose-fusion',
   poseDebordPct: 2,
   poseSeuilAlpha: 200,
+  // Défaut 'on' = comportement actuel (composite / masque toujours appliqué).
+  poseFusionComposite: 'on',
   shadows: 'auto',
   ombrePilierPct: 25,
   marketplace: 'choix',
+  // Défaut 3 (29/07/2026) : « tripler les générations par taille ».
+  generationsParTaille: 3,
   livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
   ralify: RALIFY_DEFAUTS,
 }
@@ -225,12 +252,17 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
   }
   const poseSeuilAlpha = num(src.poseSeuilAlpha, 1, 255)
   if (poseSeuilAlpha !== undefined) out.poseSeuilAlpha = poseSeuilAlpha
+  const poseFusionComposite = pick(src.poseFusionComposite, ['on', 'off'] as const)
+  if (poseFusionComposite) out.poseFusionComposite = poseFusionComposite
   const shadows = pick(src.shadows, ['auto', 'off'] as const)
   if (shadows) out.shadows = shadows
   const ombrePilierPct = num(src.ombrePilierPct, 0, 100)
   if (ombrePilierPct !== undefined) out.ombrePilierPct = ombrePilierPct
   const marketplace = pick(src.marketplace, ['choix', 'toujours', 'jamais'] as const)
   if (marketplace) out.marketplace = marketplace
+  // 1 à 6 générations par taille (garde-fou coût : jamais plus de 6).
+  const generationsParTaille = num(src.generationsParTaille, 1, 6)
+  if (generationsParTaille !== undefined) out.generationsParTaille = generationsParTaille
   if (src.ralify !== undefined) {
     const ralify = sanitizeRalify(src.ralify)
     if (ralify) out.ralify = ralify

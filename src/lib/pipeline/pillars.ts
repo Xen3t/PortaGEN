@@ -252,7 +252,11 @@ export async function runPillarsStep(opts: PillarsStepOptions): Promise<PillarsS
       changedFraction = composited.changedFraction
     }
     const compositePath = path.join(dir, `4-finale-${stamp}.png`)
-    fs.writeFileSync(compositePath, finalImage)
+    // Encodage PNG explicite : en masquage « off », finalImage est le buffer BRUT
+    // de Nano, qui renvoie souvent du JPEG — l'écrire tel quel dans un fichier
+    // `.png` fait échouer le marquage IPTC (« Not a valid PNG »). Le cas pixel-lock
+    // sort déjà un PNG de compositeWithMask ; sharp().png() le laisse sans perte.
+    fs.writeFileSync(compositePath, await sharp(finalImage).png().toBuffer())
     // Composite sharp (métadonnées reparties de zéro) → on re-marque l'image finale.
     await marquerImageIa(compositePath)
 

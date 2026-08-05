@@ -49,6 +49,11 @@ const REVIEW_LABEL: Record<string, { label: string; cls: string }> = {
   rejected: { label: 'Rejetée', cls: 'bg-brand-red text-white' },
 }
 
+/** La validation ne concerne plus que les décors (retirée des MES le 28/07/2026). */
+function hasReview(job: Job): boolean {
+  return job.type === 'decor' || job.type === 'decor-fix'
+}
+
 function jobTitle(job: Job): string {
   // Les essais du Lab moteur restent tracés ici (seul endroit, avec le Lab lui-même).
   const labPrefix = job.payload?.lab === true ? '🧪 Lab · ' : ''
@@ -122,7 +127,10 @@ export default function AdminJobsPage() {
     if (!q) return jobs
     return jobs.filter((job) => {
       const st = STATUS_LABEL[job.status] ?? STATUS_LABEL.queued
-      const rv = job.status === 'done' ? (REVIEW_LABEL[job.reviewStatus] ?? REVIEW_LABEL.pending) : null
+      const rv =
+        job.status === 'done' && hasReview(job)
+          ? (REVIEW_LABEL[job.reviewStatus] ?? REVIEW_LABEL.pending)
+          : null
       const hay = [
         `#${job.id}`,
         jobTitle(job),
@@ -130,7 +138,7 @@ export default function AdminJobsPage() {
         st.label,
         job.status,
         rv?.label ?? '',
-        job.reviewStatus,
+        rv ? job.reviewStatus : '',
         fmtDate(job.createdAt),
         job.createdAt,
       ]
@@ -173,7 +181,6 @@ export default function AdminJobsPage() {
               <th className="px-4 py-3">#</th>
               <th className="px-4 py-3">Génération</th>
               <th className="px-4 py-3">Par</th>
-              <th className="px-4 py-3">Quand</th>
               <th className="px-4 py-3">Statut</th>
               <th className="px-4 py-3">Validation</th>
               <th className="px-4 py-3">Regen.</th>
@@ -185,7 +192,7 @@ export default function AdminJobsPage() {
           <tbody className="divide-y divide-border">
             {filtered.map((job) => {
               const st = STATUS_LABEL[job.status] ?? STATUS_LABEL.queued
-              const rv = REVIEW_LABEL[job.reviewStatus] ?? REVIEW_LABEL.pending
+              const rv = hasReview(job) ? (REVIEW_LABEL[job.reviewStatus] ?? REVIEW_LABEL.pending) : null
               return (
                 <tr key={job.id} className="hover:bg-surface">
                   <td className="px-4 py-3 text-text-disabled">{job.id}</td>
@@ -207,12 +214,11 @@ export default function AdminJobsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-text-secondary">{job.createdBy ?? '—'}</td>
-                  <td className="px-4 py-3 text-text-disabled text-xs whitespace-nowrap">{fmtDate(job.createdAt)}</td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded-full text-xs ${st.cls}`}>{st.label}</span>
                   </td>
                   <td className="px-4 py-3">
-                    {job.status === 'done' ? (
+                    {job.status === 'done' && rv ? (
                       <span className={`px-2 py-0.5 rounded-full text-xs ${rv.cls}`}>{rv.label}</span>
                     ) : (
                       <span className="text-text-disabled text-xs">—</span>

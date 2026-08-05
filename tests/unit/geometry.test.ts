@@ -59,6 +59,29 @@ describe('computeLayout — taille 300x120, paramètres par défaut', () => {
   })
 })
 
+describe('computeLayout — refWidth (découplage largeur/hauteur, 04/08/2026)', () => {
+  it('un 300 et un 400 de même hauteur ont EXACTEMENT le même gabarit', () => {
+    const p = { refWidth: 400 }
+    const a = computeLayout({ w: 300, h: 140 }, p)
+    const b = computeLayout({ w: 400, h: 140 }, p)
+    expect(a).toEqual(b)
+  })
+
+  it('avec refWidth, la largeur réelle n’a plus aucun effet géométrique', () => {
+    const L = computeLayout({ w: 300, h: 120 }, { refWidth: 400 })
+    // Ouverture et piliers dessinés comme un 400 (écartement de la plus grande taille).
+    expect(L.gateW).toBe(400)
+    expect(L.gateLeft).toBeCloseTo((481 - 400) / 2, 10)
+    expect(L.pillarRight.x).toBeCloseTo((481 - 400) / 2 + 400, 10)
+  })
+
+  it('refWidth absent ou ≤ 0 → largeur réelle (non-régression)', () => {
+    const ref = computeLayout({ w: 300, h: 120 })
+    expect(computeLayout({ w: 300, h: 120 }, { refWidth: 0 })).toEqual(ref)
+    expect(computeLayout({ w: 300, h: 120 }, {}).gateW).toBe(300)
+  })
+})
+
 describe('computeLayout — options', () => {
   it('capStyle none → pas de chapeaux', () => {
     const L = computeLayout({ w: 300, h: 120 }, { capStyle: 'none' })

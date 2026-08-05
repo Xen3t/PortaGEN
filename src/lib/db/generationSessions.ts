@@ -130,12 +130,20 @@ export function summarizeGenerationSession(
     : undefined
 
   const coloris: string[] = []
-  let mesCount = 0
-  let doneMes = 0
+  // Générations multiples (29/07/2026) : on compte PAR TAILLE (case), pas par
+  // génération — sinon 2 tailles × 3 générations afficheraient « 6 MES » sur
+  // l'accueil. Clé de taille = coloris + dimensions.
+  const totalSlots = new Set<string>()
+  const doneSlots = new Set<string>()
   let anyError = false
   let mpDone = false
   let busy = false
   let thumbPath: string | null = null
+  const slotKey = (payload: Record<string, unknown>): string => {
+    const col = typeof payload.coloris === 'string' ? payload.coloris.toLowerCase() : ''
+    const s = payload.size as { w?: number; h?: number } | undefined
+    return `${col}|${s?.w ?? '?'}x${s?.h ?? '?'}`
+  }
 
   for (const j of jobs) {
     let payload: Record<string, unknown> = {}
@@ -152,14 +160,14 @@ export function summarizeGenerationSession(
     // « pose-fusion » (17/07/2026) : UN job = une MES complète — il compte à la
     // fois dans le total (comme les piliers) et dans le terminé (comme l'intégration).
     if (j.type === 'pillars' || j.type === 'pose-fusion') {
-      mesCount++
+      totalSlots.add(slotKey(payload))
       const col = typeof payload.coloris === 'string' ? payload.coloris : ''
       if (col && !coloris.includes(col)) coloris.push(col)
     }
     if (j.type === 'integration' || j.type === 'pose-fusion') {
       const dp = typeof result.deliveryPath === 'string' ? result.deliveryPath : null
       if (j.status === 'done' && dp) {
-        doneMes++
+        doneSlots.add(slotKey(payload))
         if (!thumbPath) thumbPath = dp
       }
     }
@@ -173,12 +181,12 @@ export function summarizeGenerationSession(
     decorName: decor?.name ?? null,
     createdAt: row.created_at,
     source: 'directe',
-    mesCount,
-    mesDone: doneMes,
+    mesCount: totalSlots.size,
+    mesDone: doneSlots.size,
     coloris,
     mpDone,
     busy,
-    failed: !busy && doneMes === 0 && anyError,
+    failed: !busy && doneSlots.size === 0 && anyError,
     thumbPath: thumbPath ?? decor?.file_path ?? null,
   }
 }
@@ -200,8 +208,15 @@ function summarizeCatalogueBatch(
   let produit = ''
   let moteur = 'battant'
   const coloris: string[] = []
-  let mesCount = 0
-  let doneMes = 0
+  // Générations multiples (29/07/2026) : MES comptées PAR TAILLE (case), pas par
+  // génération. Clé = coloris + dimensions.
+  const totalSlots = new Set<string>()
+  const doneSlots = new Set<string>()
+  const slotKey = (payload: Record<string, unknown>): string => {
+    const col = typeof payload.coloris === 'string' ? payload.coloris.toLowerCase() : ''
+    const s = payload.size as { w?: number; h?: number } | undefined
+    return `${col}|${s?.w ?? '?'}x${s?.h ?? '?'}`
+  }
   let anyError = false
   let mpDone = false
   let busy = false
@@ -255,7 +270,7 @@ function summarizeCatalogueBatch(
     }
     // « pose-fusion » (17/07/2026) : UN job = une MES complète (total ET terminé).
     if (j.type === 'pillars' || j.type === 'pose-fusion') {
-      mesCount++
+      totalSlots.add(slotKey(payload))
       const col = typeof payload.coloris === 'string' ? payload.coloris : ''
       if (col && !coloris.includes(col)) coloris.push(col)
     }
@@ -265,7 +280,7 @@ function summarizeCatalogueBatch(
         (typeof result.compositePath === 'string' && result.compositePath) ||
         null
       if (j.status === 'done' && fp) {
-        doneMes++
+        doneSlots.add(slotKey(payload))
         if (!thumbPath) thumbPath = fp
       }
     }
@@ -285,6 +300,9 @@ function summarizeCatalogueBatch(
       }
     }
   }
+  // Comptes MES ramenés au nombre de TAILLES (une case = une génération retenue).
+  const mesCount = totalSlots.size
+  const doneMes = doneSlots.size
   // Batch 100 % décor → session « decor » : total/terminé = tirages, vignette =
   // premier décor sorti (sinon le moodboard), nom = décor sinon gamme.
   if (mesCount === 0 && decorCount > 0) {

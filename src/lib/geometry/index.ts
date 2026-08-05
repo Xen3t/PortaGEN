@@ -36,6 +36,15 @@ export interface GabaritParams {
   pillarH?: number
   /** Dérogation par taille : hauteur de muret imposée (cm), court-circuite l'interpolation */
   muretH?: number
+  /**
+   * Largeur de référence (cm) imposée pour TOUTE la géométrie horizontale
+   * (centrage, écartement des piliers, ouverture, murets), à la place de la
+   * largeur réelle de la taille. Découple le gabarit de la largeur : toutes les
+   * largeurs d'une même hauteur partagent alors un gabarit identique — décision
+   * Mathias 04/08/2026 (« la plus grande largeur de la gamme »). Absente ou ≤ 0 =
+   * largeur réelle de la taille (comportement historique, non-régression).
+   */
+  refWidth?: number
   /** Hauteur de sol visible sous la ligne de sol (cm) */
   groundY: number
   /** Hauteur de la scène (cm) — pilote la proportion du portail à l'écran */
@@ -62,6 +71,30 @@ export const DEFAULT_PARAMS: GabaritParams = {
   sceneH: 320,
   offsetX: 0,
   mesAspect: 2000 / 1330,
+}
+
+/**
+ * 2ᵉ gabarit du coulissant (04/08/2026) : le pilier droit peint PAR-DESSUS le
+ * rendu fini pour passer devant la lame et en cacher le bout. Placé librement
+ * (largeur/hauteur/décalage/recouvrement), indépendamment du gabarit général —
+ * à l'étape 1 il n'existe pas (le muret file jusqu'au bord). Réglé dans
+ * Admin → Réglages → Gabarits (coulissant), consommé par coulissant2etapes.
+ */
+export interface PilierDroitParams {
+  /** Largeur du pilier droit (cm) */
+  largeur: number
+  /** Décalage horizontal (cm) depuis le bord droit de l'ouverture */
+  decalage: number
+}
+
+// Seuls largeur et décalage se règlent. La HAUTEUR suit toujours le pilier
+// gauche (deux piliers identiques). Le RECOUVREMENT de la lame derrière le
+// pilier n'est PAS un réglage : c'est une marge technique fixe côté pipeline
+// (la lame est intégrée à l'étape 1, on n'y touche pas depuis la phase 2 ;
+// le décalage du pilier suffit à choisir ce qu'il cache).
+export const DEFAULT_PILIER_DROIT: PilierDroitParams = {
+  largeur: 40,
+  decalage: 0,
 }
 
 /**
@@ -176,9 +209,15 @@ export function computeLayout(size: SizeCm, params: Partial<GabaritParams> = {})
   // petite/grande taille (voir effectiveHeights).
   const { pillarH, muretH } = effectiveHeights(size.h, eff)
 
-  const gateLeft = (sceneW - size.w) / 2 + eff.offsetX
+  // Découplage largeur/hauteur (04/08/2026) : toute la géométrie horizontale
+  // s'appuie sur la largeur de référence (refWidth = plus grande largeur de la
+  // gamme) plutôt que sur la largeur réelle — un 300 et un 400 de même hauteur
+  // ont ainsi EXACTEMENT le même gabarit. Absente/≤ 0 : largeur réelle (histo).
+  const gateWidth = eff.refWidth && eff.refWidth > 0 ? eff.refWidth : size.w
+
+  const gateLeft = (sceneW - gateWidth) / 2 + eff.offsetX
   const lpX = gateLeft - eff.pillarWidth
-  const rpX = gateLeft + size.w
+  const rpX = gateLeft + gateWidth
   const pTop = groundLine - pillarH
 
   const pillarLeft = clampRect({ x: lpX, y: pTop, w: eff.pillarWidth, h: pillarH }, sceneW, sceneH)
@@ -211,7 +250,7 @@ export function computeLayout(size: SizeCm, params: Partial<GabaritParams> = {})
   }
 
   // Tolérance de débordement appliquée uniquement aux portails 4 m (comportement assumé du mockup).
-  const tolerance = size.w === 400 ? CLAMP_TOLERANCE_CM : 0
+  const tolerance = gateWidth === 400 ? CLAMP_TOLERANCE_CM : 0
   const losses = [pillarLeft, pillarRight, capLeft?.bbox, capRight?.bbox, muretLeft, muretRight]
     .filter((r): r is ClampedRect => Boolean(r))
     .map((r) => Math.max(r.lossX, r.lossY))
@@ -222,7 +261,7 @@ export function computeLayout(size: SizeCm, params: Partial<GabaritParams> = {})
     sceneH,
     groundLine,
     gateLeft,
-    gateW: size.w,
+    gateW: gateWidth,
     gateH: size.h,
     gateTop: groundLine - size.h,
     pillarLeft,
@@ -232,6 +271,22 @@ export function computeLayout(size: SizeCm, params: Partial<GabaritParams> = {})
     muretLeft,
     muretRight,
     isClamped,
+  }
+}
+
+/**
+ * Rect (cm) du pilier droit du coulissant (2ᵉ gabarit), posé depuis le bord
+ * droit de l'ouverture (+ décalage). La HAUTEUR est celle du pilier GAUCHE
+ * (gabarit général) : les deux piliers d'un coulissant sont identiques — seuls
+ * largeur et décalage se règlent. Source UNIQUE partagée par le pipeline
+ * (coulissant2etapes) et l'aperçu Réglages (GabaritPreview).
+ */
+export function pilierDroitRectCm(layout: Layout, pd: PilierDroitParams): RectCm {
+  return {
+    x: layout.gateLeft + layout.gateW + pd.decalage,
+    y: layout.pillarLeft.y,
+    w: pd.largeur,
+    h: layout.pillarLeft.h,
   }
 }
 

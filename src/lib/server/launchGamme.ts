@@ -1,6 +1,7 @@
 import { enqueueNewJob } from '@/lib/server/runner'
 import { getGabaritGlobals, getSizeParamsOverride, type SizeParamsOverride } from '@/lib/db/sizeParams'
-import { GABARIT_SET_DEFAULTS, gabaritSetForSize } from '@/lib/gabaritSets'
+import { widestActiveWidth } from '@/lib/db'
+import { GABARIT_SET_DEFAULTS, gabaritSetForSize, type GabaritSetKey } from '@/lib/gabaritSets'
 import { getMoteurReglages, type MoteurKey } from '@/lib/moteurs'
 
 /**
@@ -55,41 +56,86 @@ export function launchGammeJobs(opts: GammeLaunchOptions): { jobIds: number[]; b
   const batchId =
     opts.batchId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   const moteur = opts.moteur ?? 'battant'
+  const reglages = getMoteurReglages(moteur)
   // Chantier pose + fusion (17/07/2026) : quand le réglage moteur le demande ET
   // que l'item porte un produit, UN job « pose-fusion » remplace le chaînage
   // pillars → integration. Sans produit, l'étape Piliers seule reste telle quelle.
-  const poseFusion = getMoteurReglages(moteur).integrationMethod === 'pose-fusion'
-  const jobIds = opts.items.map(({ size, productPath, extra }) => {
+  const poseFusion = reglages.integrationMethod === 'pose-fusion'
+  // Générations multiples (29/07/2026) : N MES par taille (réglable par moteur).
+  // Un essai Lab reste TOUJOURS à une seule génération (une image par essai).
+  const nGen = opts.lab ? 1 : Math.max(1, Math.round(reglages.generationsParTaille ?? 1))
+  // Marketplace automatique et générations multiples ne vont pas ensemble : tant
+  // qu'aucune MES n'est CHOISIE, aucun MP ne doit partir (règle Mathias 29/07). On
+  // retire donc autoMp du payload dès qu'une taille a plusieurs générations — le MP
+  // se déclenche alors à la main, une fois la génération retenue.
+  const stripAutoMp = nGen > 1
+  const cleanExtra = (e?: Record<string, unknown>) => {
+    if (!stripAutoMp || !e || !('autoMp' in e)) return e
+    const rest = { ...e }
+    delete rest.autoMp
+    return rest
+  }
+  const commonExtra = cleanExtra(opts.extra)
+
+  // Largeur de référence des gabarits (04/08/2026) : la plus grande largeur du
+  // JEU. Le gabarit ne dépend plus que de la hauteur — un 300 et un 400 de même
+  // hauteur ont le même gabarit. Calculée une fois par jeu (référentiel complet
+  // en base, pas seulement les tailles sélectionnées).
+  const refWidthByJeu = new Map<GabaritSetKey, number>()
+  const refWidthFor = (jeu: GabaritSetKey): number => {
+    let w = refWidthByJeu.get(jeu)
+    if (w === undefined) {
+      w = widestActiveWidth(jeu)
+      refWidthByJeu.set(jeu, w)
+    }
+    return w
+  }
+
+  const jobIds: number[] = []
+  for (const { size, productPath, extra } of opts.items) {
     // Coulissants XL (22/07/2026) : les largeurs ≥ 450 prennent le jeu de
     // gabarits « Gabarits XL » (référentiel + réglages + scène élargie propres) —
     // moteur TERMINUS inchangé pour prompts et réglages.
     const jeu = gabaritSetForSize(moteur, size.w)
     const override = getSizeParamsOverride(`${size.w}x${size.h}`, jeu)
+    const refWidth = refWidthFor(jeu)
     const effective = {
       ...(GABARIT_SET_DEFAULTS[jeu] ?? {}),
       ...getGabaritGlobals(jeu),
       ...(opts.params ?? {}),
       ...(override ?? {}),
+      // Imposée en dernier : le découplage largeur/hauteur n'est pas dérogeable
+      // par taille (sinon on retrouverait un gabarit par largeur).
+      ...(refWidth > 0 ? { refWidth } : {}),
     }
-    return enqueueNewJob(
-      poseFusion && productPath ? 'pose-fusion' : 'pillars',
-      {
-        decorPath: opts.decorPath,
-        size,
-        params: effective,
-        align: opts.align,
-        slug: opts.slug,
-        productPath,
-        lab: opts.lab || undefined,
-        // 'battant' omis du payload (undefined) : les jobs battants restent
-        // strictement identiques à avant — non-régression JANUS.
-        moteur: moteur === 'battant' ? undefined : moteur,
-        ...opts.extra,
-        ...extra,
-      },
-      batchId,
-      opts.createdBy
-    )
-  })
+    const itemExtra = cleanExtra(extra)
+    // N générations indépendantes de la même taille : mêmes réglages, numéro de
+    // variante distinct (payload.variant). Une seule génération → pas de champ
+    // variant (payload identique au comportement historique, non-régression).
+    for (let v = 1; v <= nGen; v++) {
+      jobIds.push(
+        enqueueNewJob(
+          poseFusion && productPath ? 'pose-fusion' : 'pillars',
+          {
+            decorPath: opts.decorPath,
+            size,
+            params: effective,
+            align: opts.align,
+            slug: opts.slug,
+            productPath,
+            lab: opts.lab || undefined,
+            // 'battant' omis du payload (undefined) : les jobs battants restent
+            // strictement identiques à avant — non-régression JANUS.
+            moteur: moteur === 'battant' ? undefined : moteur,
+            variant: nGen > 1 ? v : undefined,
+            ...commonExtra,
+            ...itemExtra,
+          },
+          batchId,
+          opts.createdBy
+        )
+      )
+    }
+  }
   return { jobIds, batchId }
 }

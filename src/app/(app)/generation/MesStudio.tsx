@@ -34,13 +34,27 @@ function imgUrl(p: string, w?: number): string {
   return w ? `${base}&w=${w}` : base
 }
 
+/** Une génération (variante) d'une taille, pour la galerie du studio. */
+export interface StudioVariant {
+  id: number
+  /** Numéro de génération (1..N). */
+  n: number
+  status: string
+  deliveryPath?: string
+  chosen: boolean
+}
+
 export default function MesStudio({
   batchId,
   produit = 'battant',
   mpEnabled = true,
   rootJobId,
   chosenJobId,
+  variants = [],
+  chosenVariantId = null,
   onChoose,
+  onChooseVariant,
+  onSelectVariant,
   onMP,
   onClose,
   onPrev,
@@ -53,7 +67,19 @@ export default function MesStudio({
   mpEnabled?: boolean
   rootJobId: number
   chosenJobId: number | null
+  /**
+   * Générations multiples (29/07/2026) : les variantes de la MÊME taille. Vide ou
+   * une seule = comportement historique (pas de galerie de générations, pas de
+   * verrou MP). rootJobId est la génération AFFICHÉE.
+   */
+  variants?: StudioVariant[]
+  /** Génération retenue de la taille (persistée), null = aucune choisie. */
+  chosenVariantId?: number | null
   onChoose: (versionJobId: number) => void
+  /** Désigne la génération affichée comme la MES retenue de la taille. */
+  onChooseVariant?: (variantJobId: number) => void
+  /** Bascule vers une autre génération de la taille (parent change la MES ouverte). */
+  onSelectVariant?: (variantJobId: number) => void
   onMP: (versionJobId: number) => void
   onClose: () => void
   /** ← : MES précédente du lot (absent = première). */
@@ -234,6 +260,13 @@ export default function MesStudio({
     mpSent || jobs.some((j) => j.type === 'marketplace' && j.payload?.rootJobId === rootJobId)
   const fname = `${produit}_${(meta.coloris || 'mes').toLowerCase()}_${w ?? ''}B${h ?? ''}_site.jpg`
   const isChosen = current != null && current.id === chosenJobId
+  // Générations multiples (29/07/2026) : galerie des variantes + verrou MP.
+  const multiGen = variants.length > 1
+  const sortedVariants = [...variants].sort((a, b) => a.n - b.n || a.id - b.id)
+  // La MES retenue de la taille est-elle celle affichée ? (mono-génération = oui d'office)
+  const currentIsChosenVariant = !multiGen || chosenVariantId === rootJobId
+  const canChooseVariant =
+    multiGen && !!currentDone && chosenVariantId !== rootJobId && !!onChooseVariant
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
@@ -289,7 +322,7 @@ export default function MesStudio({
                     })
                   }}
                   onMouseLeave={() => setLoupe(null)}
-                  className={`max-h-[58vh] max-w-full object-contain rounded-[12px] shadow-sm cursor-crosshair ${working ? 'opacity-50' : ''}`}
+                  className="max-h-[58vh] max-w-full object-contain rounded-[12px] shadow-sm cursor-crosshair"
                 />
               ) : current.status === 'error' ? (
                 <div className="text-center text-brand-red text-sm max-w-md">
@@ -303,14 +336,9 @@ export default function MesStudio({
                   <p className="text-xs mt-1">La nouvelle version s&apos;affichera ici (≈ 1 à 2 min).</p>
                 </div>
               )}
-              {working && currentDone && (
-                <div className="absolute inset-0 grid place-items-center pointer-events-none">
-                  <div className="bg-white/95 rounded-[12px] px-5 py-4 text-center shadow-lg">
-                    <div className="animate-spin h-7 w-7 border-4 border-border border-t-brand-green rounded-full mx-auto mb-2" />
-                    <p className="text-sm font-medium text-text-secondary"><PhraseAttente /></p>
-                  </div>
-                </div>
-              )}
+              {/* Jamais de voile ni de roue PAR-DESSUS la version affichée quand une
+                  autre version se génère (demande Mathias 28/07/2026) : l'attente se
+                  lit dans la galerie (« En cours… ») et sur le bouton de retouche. */}
               {edgeHint && (
                 <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/70 text-white text-xs font-bold px-3.5 py-1.5 rounded-full pointer-events-none animate-fade-in-up whitespace-nowrap">
                   {edgeHint}
@@ -318,10 +346,60 @@ export default function MesStudio({
               )}
             </div>
 
-            {/* Galerie des versions */}
+            {/* Galerie des GÉNÉRATIONS (générations multiples, 29/07/2026) :
+                les variantes de la taille, côte à côte — clic pour comparer. */}
+            {multiGen && (
+              <div className="shrink-0 border-t border-border bg-white px-4 py-3">
+                <p className="text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
+                  ▦ Générations — clique pour comparer, choisis celle à garder
+                </p>
+                <div className="flex gap-2.5 overflow-x-auto">
+                  {sortedVariants.map((v) => {
+                    const vdone = v.status === 'done' && v.deliveryPath
+                    const vworking = v.status === 'queued' || v.status === 'running'
+                    const on = v.id === rootJobId
+                    const isChosenV = v.id === chosenVariantId
+                    return (
+                      <button
+                        key={v.id}
+                        onClick={() => onSelectVariant?.(v.id)}
+                        className={`shrink-0 w-[132px] rounded-[8px] overflow-hidden border-2 text-left bg-white relative ${
+                          on ? 'border-brand-teal' : isChosenV ? 'border-brand-green' : 'border-border hover:border-brand-green/50'
+                        }`}
+                        title={`Génération ${v.n}`}
+                      >
+                        {vdone ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={imgUrl(v.deliveryPath!, 240)} alt={`Génération ${v.n}`} loading="lazy" decoding="async" className="w-full h-[74px] object-cover" />
+                        ) : (
+                          <span className="w-full h-[74px] grid place-items-center bg-surface text-[11px] text-text-disabled">
+                            {vworking ? 'En cours…' : v.status === 'error' ? 'Échec' : `Génération ${v.n}`}
+                          </span>
+                        )}
+                        {isChosenV && (
+                          <span className="absolute top-1 right-1 bg-brand-green text-white text-[10px] font-bold px-1.5 py-px rounded-full">
+                            Choisie
+                          </span>
+                        )}
+                        <span className="block px-2 py-1 text-[11px]">
+                          <b>Génération {v.n}</b>
+                          <span className="block text-text-disabled truncate">
+                            {on ? 'affichée' : isChosenV ? 'retenue' : 'voir'}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Galerie des versions (retouches de la génération affichée) — masquée
+                quand il n'y a qu'une version ET plusieurs générations (bruit inutile). */}
+            {(!multiGen || versions.length > 1) && (
             <div className="shrink-0 border-t border-border bg-white px-4 py-3">
               <p className="text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
-                Versions ({versions.length})
+                {multiGen ? `Versions de la génération affichée (${versions.length})` : `Versions (${versions.length})`}
               </p>
               <div className="flex gap-2.5 overflow-x-auto">
                 {versions.map((v) => {
@@ -363,6 +441,7 @@ export default function MesStudio({
                 })}
               </div>
             </div>
+            )}
           </div>
 
           {/* Colonne actions — grisée et recouverte par la loupe pendant le survol de l'image */}
@@ -393,6 +472,38 @@ export default function MesStudio({
               </button>
             </div>
 
+            {/* Choix de la GÉNÉRATION retenue (générations multiples, 29/07/2026) */}
+            {multiGen && (
+              <div className="border-t border-border pt-3">
+                <p className="text-[13px] text-text-secondary mb-2">
+                  Génération affichée : <b>Génération {variants.find((v) => v.id === rootJobId)?.n ?? 1}</b>
+                  {currentIsChosenVariant ? ' — retenue' : ''}
+                </p>
+                <button
+                  onClick={() => !currentIsChosenVariant && onChooseVariant?.(rootJobId)}
+                  disabled={!canChooseVariant}
+                  className="w-full bg-brand-green text-white rounded-[10px] py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+                >
+                  {currentIsChosenVariant ? '✓ Génération retenue' : 'Choisir cette génération'}
+                </button>
+                {currentDone && dp && (
+                  <a
+                    href={imgUrl(dp)}
+                    download={fname}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-2 bg-white border border-border text-text-secondary rounded-[10px] py-2 text-sm font-bold hover:border-brand-green hover:text-brand-green transition-colors"
+                  >
+                    Télécharger cette génération
+                  </a>
+                )}
+                <p className="text-[11px] text-text-disabled mt-1.5">
+                  Une seule génération retenue par taille — c&apos;est elle qu&apos;on décline en Marketplace.
+                </p>
+              </div>
+            )}
+
+            {/* Choix de la VERSION (retouche) — mono-génération (historique) ou dès
+                qu'une génération a plusieurs versions (retouches). */}
+            {(!multiGen || versions.length > 1) && (
             <div className="border-t border-border pt-3">
               <p className="text-[13px] text-text-secondary mb-2">
                 Version affichée : <b>V{current ? numOf(current) : '–'}</b>
@@ -405,7 +516,7 @@ export default function MesStudio({
               >
                 {isChosen ? 'Version déjà choisie' : 'Choisir cette version'}
               </button>
-              {currentDone && dp && (
+              {currentDone && dp && !multiGen && (
                 <a
                   href={imgUrl(dp)}
                   download={fname}
@@ -415,6 +526,7 @@ export default function MesStudio({
                 </a>
               )}
             </div>
+            )}
 
             {mpEnabled && (
             <div className="border-t border-border pt-3">
@@ -423,16 +535,21 @@ export default function MesStudio({
               </label>
               <button
                 onClick={() => {
-                  if (!current || mpDone) return
+                  if (!current || mpDone || !currentIsChosenVariant) return
                   setMpSent(true)
                   onMP(chosenJobId ?? current.id)
                 }}
-                disabled={!currentDone || mpDone}
+                disabled={!currentDone || mpDone || !currentIsChosenVariant}
                 className="w-full text-white rounded-[10px] py-2 text-sm font-bold disabled:opacity-50"
                 style={{ background: '#6d5bb5' }}
               >
                 {mpDone ? 'Déclinée en MP' : 'Décliner en MP'}
               </button>
+              {multiGen && !currentIsChosenVariant && !mpDone && (
+                <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 rounded-[8px] px-2.5 py-1.5 mt-1.5">
+                  🔒 Choisis d&apos;abord cette génération (ou ouvre la génération retenue) pour la décliner en MP.
+                </p>
+              )}
               {mpDone && (
                 <p className="text-[11px] text-text-disabled mt-1.5">
                   Le résultat MP apparaît sur la page de génération.

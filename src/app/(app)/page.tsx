@@ -62,15 +62,14 @@ function statusBadge(j: Job): { text: string; cls: string } {
   }
   if (j.status === 'error') return { text: '✗ en erreur', cls: 'text-brand-red' }
   if (j.status === 'cancelled') return { text: 'annulée', cls: 'text-text-disabled' }
-  if (j.reviewStatus === 'approved') return { text: '✓ validée', cls: 'text-brand-green' }
-  if (j.reviewStatus === 'rejected') return { text: 'rejetée', cls: 'text-text-disabled' }
-  return { text: '✓ terminé — à valider', cls: 'text-brand-green' }
-}
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z')
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  // La validation ne concerne plus que les décors (28/07/2026) : une MES
+  // terminée est simplement terminée.
+  if (j.type === 'decor' || j.type === 'decor-fix') {
+    if (j.reviewStatus === 'approved') return { text: '✓ validé', cls: 'text-brand-green' }
+    if (j.reviewStatus === 'rejected') return { text: 'rejeté', cls: 'text-text-disabled' }
+    return { text: '✓ terminé — à valider', cls: 'text-brand-green' }
+  }
+  return { text: '✓ terminée', cls: 'text-brand-green' }
 }
 
 export default function AccueilPage() {
@@ -193,7 +192,6 @@ export default function AccueilPage() {
                   <span className="w-[52px] h-[34px] rounded border border-border bg-surface flex-none" />
                 )}
                 <span className="font-semibold">{jobLabel(j)}</span>
-                <span className="text-xs text-text-secondary">{fmtDate(j.createdAt)}</span>
                 <span className={`ml-auto text-xs font-bold ${badge.cls}`}>{badge.text}</span>
               </Link>
             )
@@ -217,7 +215,7 @@ export default function AccueilPage() {
               >
                 <b className="text-brand-red">Échec</b>{' '}
                 <span className="text-text-secondary">
-                  {jobLabel(j)} · {fmtDate(j.createdAt)}
+                  {jobLabel(j)}
                 </span>
               </Link>
             ))}

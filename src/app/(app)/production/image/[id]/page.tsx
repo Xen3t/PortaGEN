@@ -9,8 +9,10 @@ import PhraseAttente from '@/components/PhraseAttente'
 
 /**
  * Détail d'une image (refonte UX 10/07/2026) : l'image finale en grand, les
- * actions (valider, rejeter, régénérer, corriger) au premier plan, et tout le
- * détail technique (étapes du pipeline, métriques) replié par défaut.
+ * actions (régénérer, corriger) au premier plan, et tout le détail technique
+ * (étapes du pipeline, métriques) replié par défaut.
+ * 28/07/2026 : valider/rejeter ne concerne plus que les décors (l'approbation
+ * admin rend le décor actif en bibliothèque) — retiré des MES.
  */
 
 interface Job {
@@ -24,7 +26,34 @@ interface Job {
   reviewStatus: string
   batchId: string | null
   createdAt: string
+  /** MES retenue de sa taille (générations multiples, 29/07/2026). */
+  chosen?: boolean
 }
+
+/** Une génération sœur (même taille/coloris du même lot) pour la galerie. */
+interface SiblingVariant {
+  id: number
+  n: number
+  status: string
+  image: string | null
+  chosen: boolean
+}
+
+/** Clé de la « case » d'une taille : coloris + taille (générations multiples). */
+function slotKeyOf(payload: Record<string, unknown> | null): string {
+  const col = String((payload?.coloris as string) ?? '').toLowerCase()
+  const size = payload?.size as { w?: number; h?: number } | undefined
+  return `${col}|${size?.w ?? '?'}x${size?.h ?? '?'}`
+}
+function variantNoOf(payload: Record<string, unknown> | null): number {
+  const v = payload?.variant
+  return typeof v === 'number' && v >= 1 ? v : 1
+}
+function mesImageOf(r: Record<string, unknown> | null): string | null {
+  const s = (k: string) => (typeof r?.[k] === 'string' ? (r[k] as string) : null)
+  return s('compositePath') ?? s('rawOutputPath') ?? s('deliveryPath')
+}
+const isMesRootType = (t: string) => t === 'integration' || t === 'pose-fusion'
 
 const STATUS_FR: Record<string, string> = {
   queued: 'en file d’attente',
@@ -56,6 +85,7 @@ export default function ImageDetailPage() {
   const [studioDecorId, setStudioDecorId] = useState<number | null>(null)
   const [decorId, setDecorId] = useState<number | null>(null)
   const [instruction, setInstruction] = useState('')
+  const [siblings, setSiblings] = useState<SiblingVariant[]>([])
 
   const load = useCallback(() => {
     fetch(`/api/jobs/${id}`)
@@ -71,6 +101,50 @@ export default function ImageDetailPage() {
     const t = setInterval(load, 3000)
     return () => clearInterval(t)
   }, [load])
+
+  // Générations multiples (29/07/2026) : les sœurs de la MES (même taille/coloris
+  // du même lot) pour la galerie + le choix de la génération retenue. Rechargées
+  // à chaque poll du job (chosen tenu à jour).
+  useEffect(() => {
+    if (!job || !job.batchId || !isMesRootType(job.type)) {
+      setSiblings([])
+      return
+    }
+    let alive = true
+    const key = slotKeyOf(job.payload)
+    fetch(`/api/gamme/${job.batchId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !Array.isArray(d?.jobs)) return
+        const vs: SiblingVariant[] = (d.jobs as Job[])
+          .filter((j) => isMesRootType(j.type) && slotKeyOf(j.payload) === key)
+          .map((j) => ({
+            id: j.id,
+            n: variantNoOf(j.payload),
+            status: j.status,
+            image: mesImageOf(j.result),
+            chosen: !!j.chosen,
+          }))
+          .sort((a, b) => a.n - b.n || a.id - b.id)
+        setSiblings(vs)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [job])
+
+  /** Désigne cette génération comme la MES retenue de sa taille (persisté). */
+  async function chooseGen() {
+    if (!job) return
+    setBusy(true)
+    setNotice(null)
+    const res = await fetch(`/api/jobs/${job.id}/choose`, { method: 'POST' })
+    const data = await res.json().catch(() => null)
+    setBusy(false)
+    if (res.ok) load()
+    else setNotice(data?.error ?? 'Choix impossible')
+  }
 
   // Job décor terminé → on retrouve le décor en bibliothèque (decorId direct,
   // ou par le chemin de l'image pour les jobs antérieurs) pour corriger sur place.
@@ -224,7 +298,7 @@ export default function ImageDetailPage() {
           <span className="bg-white border border-border text-text-secondary px-2.5 py-1 rounded-full font-semibold">
             {STATUS_FR[job.status] ?? job.status}
           </span>
-          {job.status === 'done' && (
+          {job.status === 'done' && (job.type === 'decor' || job.type === 'decor-fix') && (
             <span
               className={`px-2.5 py-1 rounded-full font-semibold ${
                 job.reviewStatus === 'approved'
@@ -280,7 +354,79 @@ export default function ImageDetailPage() {
             </div>
           )}
 
-          {/* Alertes qualité — visibles, elles concernent la décision de validation */}
+          {/* Générations de la taille (29/07/2026) : galerie des sœurs + choix de
+              la MES retenue. Une seule génération → rien (comportement classique). */}
+          {isMesRootType(job.type) && siblings.length > 1 && (
+            <section className="bg-white rounded-[12px] border border-border shadow-sm p-4 mb-5">
+              <div className="flex items-center gap-3 mb-3 flex-wrap">
+                <h2 className="text-sm font-semibold">
+                  ▦ Générations de cette taille{' '}
+                  <span className="text-text-secondary font-normal">({siblings.length})</span>
+                </h2>
+                <span className="text-xs text-text-secondary">
+                  clique pour comparer, choisis la génération à garder
+                </span>
+                <button
+                  onClick={chooseGen}
+                  disabled={busy || !!job.chosen}
+                  className="ml-auto bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+                >
+                  {job.chosen ? '✓ Génération retenue' : 'Choisir cette génération'}
+                </button>
+              </div>
+              <div className="flex gap-3 overflow-x-auto">
+                {siblings.map((v) => {
+                  const on = v.id === job.id
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => !on && router.push(`/production/image/${v.id}`)}
+                      title={`Génération ${v.n}`}
+                      className={`shrink-0 w-[150px] rounded-[8px] overflow-hidden border-2 text-left bg-white relative ${
+                        on
+                          ? 'border-brand-teal'
+                          : v.chosen
+                            ? 'border-brand-green'
+                            : 'border-border hover:border-brand-green/50'
+                      }`}
+                    >
+                      {v.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={art(v.image, 300)}
+                          alt={`Génération ${v.n}`}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full aspect-[3/2] object-cover bg-surface"
+                        />
+                      ) : (
+                        <span className="w-full aspect-[3/2] grid place-items-center bg-surface text-[11px] text-text-disabled">
+                          {v.status === 'queued' || v.status === 'running'
+                            ? 'en cours…'
+                            : v.status === 'error'
+                              ? 'échec'
+                              : `Génération ${v.n}`}
+                        </span>
+                      )}
+                      {v.chosen && (
+                        <span className="absolute top-1.5 right-1.5 bg-brand-green text-white text-[10px] font-bold px-1.5 py-px rounded-full">
+                          Retenue
+                        </span>
+                      )}
+                      <span className="block px-2 py-1 text-[11.5px]">
+                        <b>Génération {v.n}</b>
+                        <span className="block text-text-disabled truncate">
+                          {on ? 'affichée' : v.chosen ? 'retenue' : 'voir'}
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Alertes qualité — visibles, elles aident à juger l'image */}
           {isIntegration && pillarInfo && !pillarInfo.applied && pillarInfo.reason !== 'aucun-pilier' && (
             <div className="bg-brand-teal-light text-brand-teal text-sm rounded-[8px] px-4 py-3 mb-4">
               ⚠ Le visuel produit semble contenir ses propres piliers, mais ils n’ont pas été
@@ -316,26 +462,30 @@ export default function ImageDetailPage() {
             <div className="bg-brand-red-light text-brand-red text-sm rounded-[8px] px-4 py-3 mb-4">
               ⚠ Le produit a peut-être été altéré par la génération (ressemblance{' '}
               {((Number(r.invarianceScore) || 0) * 100).toFixed(1)} %) — comparez avec le visuel
-              d’origine avant de valider.
+              d’origine avant d’utiliser l’image.
             </div>
           )}
 
-          {/* Actions */}
+          {/* Actions — valider/rejeter seulement pour les décors (28/07/2026) */}
           <div className="flex flex-wrap items-center gap-3 mb-4">
-            <button
-              onClick={() => review('approve')}
-              disabled={busy || job.reviewStatus === 'approved'}
-              className="bg-brand-green text-white rounded-[10px] px-5 py-2.5 font-bold hover:bg-brand-green-hover hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              ✓ Valider
-            </button>
-            <button
-              onClick={() => review('reject')}
-              disabled={busy || job.reviewStatus === 'rejected'}
-              className="bg-brand-red text-white rounded-[10px] px-5 py-2.5 font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-            >
-              ✗ Rejeter
-            </button>
+            {isDecorJob && (
+              <>
+                <button
+                  onClick={() => review('approve')}
+                  disabled={busy || job.reviewStatus === 'approved'}
+                  className="bg-brand-green text-white rounded-[10px] px-5 py-2.5 font-bold hover:bg-brand-green-hover hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ✓ Valider
+                </button>
+                <button
+                  onClick={() => review('reject')}
+                  disabled={busy || job.reviewStatus === 'rejected'}
+                  className="bg-brand-red text-white rounded-[10px] px-5 py-2.5 font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  ✗ Rejeter
+                </button>
+              </>
+            )}
             <button
               onClick={regen}
               disabled={busy}

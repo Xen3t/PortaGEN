@@ -6,6 +6,11 @@ import {
   saveGabaritGlobals,
   saveSizeParamsOverride,
   sanitizeSizeParams,
+  getPilierDroit,
+  getPilierDroitDefault,
+  getPilierDroitSaved,
+  savePilierDroit,
+  sanitizePilierDroit,
 } from '@/lib/db/sizeParams'
 import { isGabaritSetKey, type GabaritSetKey } from '@/lib/gabaritSets'
 
@@ -28,7 +33,29 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     overrides: listSizeParamsOverrides(moteur),
     globals: getGabaritGlobals(moteur),
+    // 2ᵉ gabarit du coulissant (pilier droit) — pertinent pour coulissant(-xl),
+    // défauts inoffensifs pour les autres moteurs. `pilierDroitDefault` = le
+    // pilier de l'étape 1 (sert de valeur de repli / bouton « par défaut »).
+    pilierDroit: getPilierDroit(moteur),
+    pilierDroitDefault: getPilierDroitDefault(moteur),
+    // false = jamais réglé ⇒ le rendu reprend le pilier de l'étape 1.
+    pilierDroitConfigured: getPilierDroitSaved(moteur) !== null,
   })
+}
+
+/** 2ᵉ gabarit du coulissant : placement du pilier droit (4 réglages). */
+export async function POST(req: NextRequest) {
+  const auth = requireApiUser(req, 'admin')
+  if (auth instanceof NextResponse) return auth
+  const body = await req.json().catch(() => null)
+  const moteur = parseMoteur(body?.moteur)
+  if (!moteur) return NextResponse.json({ error: 'Moteur inconnu' }, { status: 400 })
+  const pilierDroit = sanitizePilierDroit(body?.pilierDroit)
+  if (!pilierDroit) {
+    return NextResponse.json({ error: 'Aucun réglage valide fourni' }, { status: 400 })
+  }
+  savePilierDroit(pilierDroit, moteur)
+  return NextResponse.json({ ok: true, pilierDroit: getPilierDroit(moteur) })
 }
 
 /** Dérogation d'une taille (params: null pour revenir aux réglages globaux). */

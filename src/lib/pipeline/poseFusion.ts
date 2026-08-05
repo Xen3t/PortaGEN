@@ -5,6 +5,7 @@ import { config } from '@/lib/config'
 import { getDb } from '@/lib/db'
 import { getActivePrompt } from '@/lib/db/prompts'
 import { generateImage, type ImageSize } from '@/lib/genai/client'
+import { piedsProduitCatalogue, piedsProduitLibre } from '@/lib/genai/jugePieds'
 import { marquerImageIa } from '@/lib/images/marquage'
 import { DEFAULT_PARAMS, computeLayout, projection, projectRect, type GabaritParams, type SizeCm } from '@/lib/geometry'
 import { overlayGabaritOnDecor, renderGabaritPng } from '@/lib/images/gabarits'
@@ -59,6 +60,12 @@ export interface PoseFusionStepOptions {
   productName?: string
   /** Moteur produit : ses réglages, ses prompts. Absent = battant. */
   moteur?: MoteurKey
+  /**
+   * Fiche catalogue du produit (bloc 3.1) : sert au drapeau « pieds » — verdict
+   * du juge vision enregistré sur la fiche au premier besoin. Absent = image
+   * libre, jugée à chaque rendu sans enregistrement.
+   */
+  catalogProductId?: number
   /** Job existant (créé par le runner) — sinon la fonction crée le sien (scripts CLI) */
   jobId?: number
 }
@@ -89,6 +96,8 @@ export interface PoseFusionStepResult {
   alphaReparePx: number
   /** Pieds repérés sous le bord bas du produit (ombre de contact + recollage) */
   piedsDetectes: number
+  /** Le produit a des pieds de soutien (fiche catalogue ou juge vision, 29/07/2026) */
+  piedsProduit: boolean
 }
 
 function imageSizeFromDims(width: number, height: number): ImageSize | null {
@@ -96,6 +105,22 @@ function imageSizeFromDims(width: number, height: number): ImageSize | null {
     if (d.width === width && d.height === height) return k as ImageSize
   }
   return null
+}
+
+/**
+ * Sections conditionnelles du prompt (29/07/2026, constat VALIER) :
+ * [PIEDS]…[/PIEDS] ne reste que si le produit a des pieds de soutien,
+ * [SANS-PIEDS]…[/SANS-PIEDS] ne reste que s'il n'en a pas (interdire à Nano
+ * d'en inventer). Marqueurs toujours retirés ; un prompt sans marqueur ressort
+ * inchangé (portillon, coulissant, versions antérieures).
+ */
+export function appliquerSectionsPieds(content: string, pieds: boolean): string {
+  const bloc = (s: string, marqueur: string, garder: boolean) =>
+    s.replace(
+      new RegExp(`\\[${marqueur}\\]\\r?\\n?([\\s\\S]*?)\\[/${marqueur}\\]\\r?\\n?`, 'g'),
+      garder ? '$1' : ''
+    )
+  return bloc(bloc(content, 'SANS-PIEDS', !pieds), 'PIEDS', pieds)
 }
 
 /**
@@ -122,6 +147,29 @@ export function colorisPromptDescription(coloris?: string): string {
 }
 
 export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<PoseFusionStepResult> {
+  // BATTANT (industrialisation 29/07/2026) puis PORTILLON (report 29/07/2026) :
+  // ces deux moteurs passent par le circuit « intégration 2 étapes » (scène finie
+  // sans produit → pose par le code → intégration serrée → composite pixel-lock,
+  // SANS juge). Le circuit est paramétré par moteur : il lit les réglages, les
+  // piliers et le prompt d'intégration serrée DU moteur (portillon-… pour le
+  // portillon). Coulissant garde son circuit dédié ci-dessous. Import dynamique :
+  // integration2etapes.ts réutilise les helpers/types de ce module.
+  const moteurCourant = opts.moteur ?? 'battant'
+  if (moteurCourant === 'battant' || moteurCourant === 'portillon') {
+    const { runIntegration2EtapesStep } = await import('@/lib/pipeline/integration2etapes')
+    return runIntegration2EtapesStep(opts)
+  }
+  // COULISSANT (câblé 29/07/2026) : circuit « 2 étapes » dédié — scène rendue
+  // SANS pilier droit puis pilier peint par-dessus et masqué à la silhouette
+  // (segmentation Gemini). L'occlusion lame-derrière-pilier est garantie par
+  // construction ; l'ombre réglable ombrePilierPct n'est plus utilisée par ce
+  // circuit (le code ci-dessous reste en réserve, changement de défaut pas de
+  // suppression). Portillon : appel pose-fusion unique inchangé.
+  if (opts.moteur === 'coulissant') {
+    const { runCoulissant2EtapesStep } = await import('@/lib/pipeline/coulissant2etapes')
+    return runCoulissant2EtapesStep(opts)
+  }
+
   const decorMeta = await sharp(opts.decorPath).metadata()
   const width = decorMeta.width ?? 0
   const height = decorMeta.height ?? 0
@@ -138,7 +186,10 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
 
   const sizeLabel = `${opts.size.w}x${opts.size.h}`
   const slug = opts.slug ?? 'pose-fusion'
-  const moteurKey: MoteurKey = opts.moteur ?? 'battant'
+  // Cast volontaire : l'aiguillage coulissant ci-dessus rend la branche
+  // coulissant de cette fonction inatteignable, mais elle reste EN RÉSERVE
+  // (changement de défaut, pas de suppression) — sans le cast, TS la signale.
+  const moteurKey = (opts.moteur ?? 'battant') as MoteurKey
   const moteur = getMoteurReglages(moteurKey)
   // Coulissants XL (22/07/2026) : alignement et image Canny du JEU de la taille
   // (section « Canny XL » de la fiche TERMINUS) — le reste suit le moteur.
@@ -242,6 +293,19 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
       fs.writeFileSync(path.join(dir, `0-produit-ralify-${stamp}.png`), produitPret)
     }
 
+    // Drapeau PIEDS (29/07/2026) : certains battants n'ont pas de pieds de
+    // soutien (VALIER : gonds seulement). Fiche catalogue → verdict enregistré
+    // une fois pour toutes ; image libre → jugée à chaque rendu. Le verdict
+    // pilote la réparation de bande basse ET les sections [PIEDS] du prompt.
+    // Jugé sur le PNG AVANT RALify : le verdict ne dépend pas du coloris.
+    // Coulissant : une lame n'a jamais de pieds, ses réglages restent en dur.
+    let piedsProduit = true
+    if (moteurKey !== 'coulissant') {
+      piedsProduit = opts.catalogProductId
+        ? await piedsProduitCatalogue(opts.catalogProductId, prepared.image, jobId)
+        : await piedsProduitLibre(prepared.image, jobId)
+    }
+
     let pose: PoseResult
     let posedImage: Buffer
     if (moteurKey === 'coulissant') {
@@ -296,6 +360,7 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
       pose = await poserProduit(overlay, produitPret, gate, {
         debord: moteur.poseDebordPct / 100,
         seuilAlpha: moteur.poseSeuilAlpha,
+        reparePieds: piedsProduit,
       })
       posedImage = pose.image
     }
@@ -320,7 +385,10 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
     // 3. UN appel Nano : stuc + intégration photographique du portail déjà posé.
     //    Prompt système versionné, PROPRE au moteur, coloris injecté ({COLORIS}).
     const promptRow = getActivePrompt(moteurPromptName(moteurKey, 'pose-fusion'))
-    const prompt = promptRow.content.replaceAll('{COLORIS}', colorisPromptDescription(opts.coloris))
+    const prompt = appliquerSectionsPieds(
+      promptRow.content.replaceAll('{COLORIS}', colorisPromptDescription(opts.coloris)),
+      piedsProduit
+    )
     const generated = await generateImage({
       prompt,
       images: [{ source: posedImage, mimeType: 'image/png' }],
@@ -389,6 +457,7 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
       ralifyCible,
       alphaReparePx: pose.produit.alphaReparePx,
       piedsDetectes: pieds.length,
+      piedsProduit,
     }
 
     db.prepare(
@@ -420,6 +489,7 @@ export async function runPoseFusionStep(opts: PoseFusionStepOptions): Promise<Po
         ralifyCible,
         alphaReparePx: pose.produit.alphaReparePx,
         piedsDetectes: pieds.length,
+        piedsProduit,
       }),
       jobId
     )

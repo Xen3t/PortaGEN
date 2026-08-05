@@ -55,12 +55,6 @@ function parseDate(iso: string): Date {
   return new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z')
 }
 
-function fmtDate(iso: string): string {
-  const d = parseDate(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-}
-
 // Périodes proposées par le filtre « Créées » (maquette sessions-v3).
 const DATE_CHOICES = [
   { value: '', label: "N'importe quand" },
@@ -375,7 +369,6 @@ export default function SessionCards({
                         )}
                         {statut.text}
                       </span>
-                      <span className="text-text-secondary">{fmtDate(s.createdAt)}</span>
                       <span className="ml-auto font-bold text-brand-green">
                         {s.busy ? 'Suivre →' : 'Rouvrir →'}
                       </span>

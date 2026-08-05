@@ -10,9 +10,10 @@ import Silhouette, {
   SilhouetteOrigineIcone,
   type Typo,
 } from '../Silhouette'
-import MesStudio from './MesStudio'
+import MesStudio, { type StudioVariant } from './MesStudio'
 import MesLibre from './MesLibre'
 import PhraseAttente from '@/components/PhraseAttente'
+import { groupMesSlots, displayVariant, slotKeyOf, variantNo } from '@/lib/mesVariants'
 
 /**
  * « Génération » — génération DIRECTE, sans catalogue (maquette generation-v4
@@ -68,11 +69,15 @@ interface Job {
     instruction?: string
     /** Moteur du job — absent pour un battant (non-régression JANUS). */
     moteur?: string
+    /** Numéro de génération (1..N) — absent = génération unique. */
+    variant?: number
     /** Essai du Labo moteur : jamais affiché dans une session de génération. */
     lab?: boolean
   } | null
   result: { deliveryPath?: string; sizeLabel?: string; productPath?: string } | null
   error: string | null
+  /** MES retenue de sa taille (générations multiples, 29/07/2026). */
+  chosen?: boolean
 }
 
 /** Un essai du Labo moteur peut partager le lot d'une session (il réutilise un
@@ -373,10 +378,10 @@ export default function GenerationPage() {
   // MES dont le passage MP est demandé (bloque le bouton avant même le retour du poll)
   const [mpAskedRoots, setMpAskedRoots] = useState<Set<number>>(new Set())
   const [zipBusy, setZipBusy] = useState<'tout' | 'site' | 'mp' | null>(null)
-  // Décliner automatiquement chaque MES Site en MP (2000×2000), sans attendre la review
-  const [autoMp, setAutoMp] = useState(false)
   // Réglage « Déclinaison en MP » du moteur (Admin → Réglages par moteur) :
-  // 'choix' = case à cocher, 'toujours' = automatique, 'jamais' = MP invisible.
+  // 'toujours' = automatique, 'jamais' = MP invisible, 'choix' = MP à la demande
+  // via le bouton 1:1 des cartes (la case à cocher du lancement a été retirée
+  // le 28/07/2026, demande Mathias).
   const [mpMode, setMpMode] = useState<'choix' | 'toujours' | 'jamais'>('choix')
 
   useEffect(() => {
@@ -443,10 +448,26 @@ export default function GenerationPage() {
 
   // Décor présélectionné par l'URL (« Utiliser ce décor » de la Bibliothèque /
   // du studio, rebranché 20/07/2026) : /generation?decor=<id>.
+  // Un décor venu de l'URL est un CHOIX : le décor automatique ne l'écrase pas.
+  const decorManual = useRef(false)
   useEffect(() => {
     const d = Number(new URLSearchParams(window.location.search).get('decor'))
-    if (Number.isInteger(d) && d > 0) setDecorId(d)
+    if (Number.isInteger(d) && d > 0) {
+      decorManual.current = true
+      setDecorId(d)
+    }
   }, [])
+
+  // Décor compatible AUTOMATIQUE (demande Mathias 28/07/2026) : tant que le
+  // décor n'a pas été choisi à la main (fenêtre ou ?decor=), il suit la
+  // typologie détectée — décor le plus récent DU même type (les décors sont
+  // déjà triés du plus récent au plus ancien). Aucun décor de ce type → on
+  // laisse le défaut (premier décor standard) et son avertissement.
+  useEffect(() => {
+    if (decorManual.current || !typoKnown || decors.length === 0) return
+    const compatible = decors.find((d) => d.type === typo)
+    if (compatible) setDecorId(compatible.id)
+  }, [typo, typoKnown, decors])
 
   useEffect(() => {
     fetch('/api/decors')
@@ -629,6 +650,17 @@ export default function GenerationPage() {
     setStage('input')
   }
 
+  /** Générations (variantes) d'une taille = les MES sœurs (même taille/coloris). */
+  const slotVariantsOf = (root: Job): Job[] =>
+    jobs
+      .filter((j) => isMesJob(j) && slotKeyOf(j) === slotKeyOf(root))
+      .sort((a, b) => variantNo(a) - variantNo(b) || a.id - b.id)
+  /** La case a-t-elle une génération RETENUE (ou une seule génération) → MP possible. */
+  const mpReadyFor = (root: Job): boolean => {
+    const vs = slotVariantsOf(root)
+    return vs.length <= 1 || vs.some((v) => v.chosen)
+  }
+
   /** Versions d'une MES = ses jobs du batch (intégration V1 + retouches mes-fix). */
   const versionsOf = (rootId: number): Job[] =>
     jobs
@@ -646,7 +678,14 @@ export default function GenerationPage() {
     if (!batchId) return
     try {
       const d = await fetch(`/api/gamme/${batchId}`).then((r) => r.json())
-      if (Array.isArray(d.jobs)) setJobs(sansEssaisLab(d.jobs))
+      if (Array.isArray(d.jobs)) {
+        const js = sansEssaisLab(d.jobs)
+        setJobs(js)
+        // Une retouche lancée dans le studio continue après sa fermeture : on
+        // relance le suivi pour que la carte montre « nouvelle version… » puis
+        // se mette à jour toute seule (demande Mathias 28/07/2026).
+        if (js.some((j) => j.status === 'queued' || j.status === 'running')) setBusyPoll(true)
+      }
     } catch {
       // pas grave : la prochaine action rafraîchira
     }
@@ -654,6 +693,31 @@ export default function GenerationPage() {
   function chooseVersion(versionJobId: number) {
     if (studioRoot == null) return
     setChosen((prev) => ({ ...prev, [studioRoot]: versionJobId }))
+  }
+
+  /**
+   * Générations multiples (29/07/2026) : désigne une génération comme la MES
+   * retenue de sa taille (persisté en base). On met à jour l'état local tout de
+   * suite (chosen sur la variante, retiré de ses sœurs) puis on recharge le lot.
+   */
+  async function chooseVariant(variantJobId: number) {
+    const target = jobs.find((j) => j.id === variantJobId)
+    if (!target) return
+    const slot = slotKeyOf(target)
+    setJobs((prev) =>
+      prev.map((j) =>
+        isMesJob(j) && slotKeyOf(j) === slot ? { ...j, chosen: j.id === variantJobId } : j
+      )
+    )
+    try {
+      const res = await fetch(`/api/jobs/${variantJobId}/choose`, { method: 'POST' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => null)
+        setNotice(d?.error ?? 'Choix impossible.')
+      }
+    } catch {
+      setNotice('Impossible de contacter le serveur.')
+    }
   }
 
   /** Une MES est-elle déjà passée (ou en train de passer) en MP ? */
@@ -705,6 +769,12 @@ export default function GenerationPage() {
 
   /** Passe une MES (sa version choisie) en MP, en bloquant son bouton aussitôt. */
   async function mpRoot(root: Job) {
+    // Générations multiples : le MP est bloqué tant qu'aucune génération n'est
+    // retenue pour cette taille (règle Mathias 29/07/2026).
+    if (!mpReadyFor(root)) {
+      setNotice('Choisis d’abord une génération pour cette taille avant de la décliner en Marketplace.')
+      return
+    }
     const d = displayedJob(root)
     if (d.status !== 'done' || !d.result?.deliveryPath || mpDoneFor(root.id)) return
     setMpAskedRoots((prev) => new Set(prev).add(root.id))
@@ -722,14 +792,16 @@ export default function GenerationPage() {
   async function downloadZip(kind: 'tout' | 'site' | 'mp') {
     const items: { p: string; name: string; folder: 'WEB' | 'MP' }[] = []
     if (kind !== 'mp') {
-      jobs
-        .filter(isMesJob)
-        .forEach((root) => {
-          const d = displayedJob(root)
-          if (d.status === 'done' && d.result?.deliveryPath) {
-            items.push({ p: d.result.deliveryPath, name: fnameOf(root, 'site', typo), folder: 'WEB' })
-          }
-        })
+      // Une génération par taille : la retenue (chosen) sinon la 1ʳᵉ — jamais les 3.
+      const slotDisplay = [...groupMesSlots(jobs).values()]
+        .map((v) => displayVariant(v))
+        .filter((j): j is Job => !!j)
+      slotDisplay.forEach((root) => {
+        const d = displayedJob(root)
+        if (d.status === 'done' && d.result?.deliveryPath) {
+          items.push({ p: d.result.deliveryPath, name: fnameOf(root, 'site', typo), folder: 'WEB' })
+        }
+      })
     }
     if (kind !== 'site') {
       jobs
@@ -775,6 +847,14 @@ export default function GenerationPage() {
     typo === 'coulissant' ? images.filter((i) => i.w >= COULISSANT_XL_MIN_W).length : 0
   const stdCount = images.length - xlCount
 
+  // Décor XL automatique (même demande 28/07/2026) : des tailles XL sans décor
+  // XL choisi → le plus récent décor « coulissant-xl » est présélectionné.
+  useEffect(() => {
+    if (xlCount === 0 || decorXlId != null) return
+    const premierXl = decors.find((d) => d.type === 'coulissant-xl')
+    if (premierXl) setDecorXlId(premierXl.id)
+  }, [xlCount, decorXlId, decors])
+
   async function generate() {
     if (!canGenerate) return
     setNotice(null)
@@ -783,7 +863,6 @@ export default function GenerationPage() {
     if (xlCount > 0 && decorXlId != null) fd.append('decorXlId', String(decorXlId))
     fd.append('moteur', typo)
     fd.append('produit', produit.trim())
-    fd.append('autoMp', autoMp ? '1' : '0')
     fd.append('meta', JSON.stringify(images.map((i) => ({ w: i.w, h: i.h, coloris: i.color }))))
     images.forEach((i) => fd.append('files', i.file, i.name))
 
@@ -1058,16 +1137,6 @@ export default function GenerationPage() {
                     >
                       <PictoIllu name="photos" size={48} />
                       <span className="text-base font-bold">Dépose la ou les images du produit</span>
-                      <span className="text-sm text-text-secondary max-w-md">
-                        Photos de face, même produit (une par taille / coloris). Le moteur lit la taille et le
-                        coloris dans le nom, détoure (BiRefNet), et pose{' '}
-                        {typo === 'coulissant'
-                          ? 'la lame devant l’ouverture, bord droit derrière le pilier'
-                          : typo === 'portillon'
-                            ? 'le portillon entre les piliers'
-                            : 'le portail entre les piliers'}
-                        .
-                      </span>
                       <span className="text-xs text-text-disabled">— ou —</span>
                       <span className="bg-white border border-border text-text-secondary rounded-[8px] px-3.5 py-2 text-sm font-bold">
                         Choisir des fichiers
@@ -1165,9 +1234,6 @@ export default function GenerationPage() {
 
                 {/* colonne réglages */}
                 <div className="bg-white border border-border rounded-[12px] shadow-sm">
-                  <div className="px-4 py-3 border-b border-border text-[11px] uppercase tracking-wide text-text-secondary font-bold">
-                    Réglages partagés (tout le lot)
-                  </div>
                   <div className="p-4 space-y-5">
                     <div>
                       <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
@@ -1247,43 +1313,6 @@ export default function GenerationPage() {
                       </p>
                     </div>
 
-                    <div>
-                      <label className="block text-[11px] uppercase tracking-wide text-text-secondary font-bold mb-2">
-                        Livraison
-                      </label>
-                      <div className="flex items-start gap-2.5 text-[13.5px] font-semibold mb-2">
-                        {mpMode === 'choix' && <span className="w-4 shrink-0" aria-hidden />}
-                        <span>
-                          <PictoIllu name="site" size={18} className="mr-1" />
-                          Format Site (WEB) · 2000×1330
-                        </span>
-                      </div>
-                      {mpMode === 'choix' && (
-                        <label className="flex items-start gap-2.5 text-[13.5px] font-semibold cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={autoMp}
-                            onChange={(e) => setAutoMp(e.target.checked)}
-                            className="mt-0.5 w-4 h-4 accent-[#6d5bb5]"
-                          />
-                          <span>
-                            <PictoIllu name="mp" size={18} className="mr-1" />
-                            Format Marketplace (MP) · 2000×2000
-                          </span>
-                        </label>
-                      )}
-                      {mpMode === 'toujours' && (
-                        <div className="flex items-start gap-2.5 text-[13.5px] font-semibold">
-                          <span>
-                            <PictoIllu name="mp" size={18} className="mr-1" />
-                            Format Marketplace (MP) · 2000×2000{' '}
-                            <span className="text-[11px] text-text-disabled font-normal">
-                              — toujours généré (réglage moteur)
-                            </span>
-                          </span>
-                        </div>
-                      )}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -1313,11 +1342,16 @@ export default function GenerationPage() {
           {/* ---- traitement ---- */}
           {stage === 'proc' &&
             (() => {
-              const doneN = jobs.filter((j) => isMesJob(j) && j.status === 'done').length
+              // Générations multiples : on compte et on affiche PAR TAILLE (une case
+              // par taille = la génération retenue sinon la 1ʳᵉ), pas par variante.
+              const procSlots = [...groupMesSlots(jobs).values()]
+                .map((v) => displayVariant(v))
+                .filter((j): j is Job => !!j)
+              const doneN = procSlots.filter((j) => j.status === 'done').length
               const failN = jobs.filter((j) => j.status === 'error').length
               const total = expected || images.length || 1
-              const ready = jobs.filter(
-                (j) => isMesJob(j) && j.status === 'done' && j.result?.deliveryPath
+              const ready = procSlots.filter(
+                (j) => j.status === 'done' && j.result?.deliveryPath
               )
               return (
                 <div className="animate-fade-in-up">
@@ -1391,11 +1425,17 @@ export default function GenerationPage() {
           {/* ---- résultat ---- */}
           {stage === 'result' &&
             (() => {
-              const integ = jobs.filter(isMesJob)
+              // Générations multiples (29/07/2026) : une CASE par taille — la
+              // génération retenue (chosen) sinon la 1ʳᵉ. Les sœurs vivent dans le
+              // studio (galerie). La grille reste « une largeur = une ligne ».
+              const slots = groupMesSlots(jobs)
+              const integ = [...slots.values()]
+                .map((v) => displayVariant(v))
+                .filter((j): j is Job => !!j)
               const doneSites = integ.filter((j) => j.status === 'done' && j.result?.deliveryPath)
               const mkt = jobs.filter((j) => j.type === 'marketplace')
               const failed = jobs.filter((j) => j.status === 'error')
-              const busySite = integ.some((j) => j.status === 'queued' || j.status === 'running')
+              const busySite = jobs.some((j) => isMesJob(j) && (j.status === 'queued' || j.status === 'running'))
               const busyMkt = mkt.some((j) => j.status === 'queued' || j.status === 'running')
               const doneMkt = mkt.filter((j) => j.status === 'done' && j.result?.deliveryPath)
 
@@ -1485,17 +1525,45 @@ export default function GenerationPage() {
                         const vnum = vs.findIndex((v) => v.id === disp.id) + 1
                         const dp = disp.result?.deliveryPath
                         const dispDone = disp.status === 'done' && !!dp
+                        // Une retouche (mes-fix) tourne pour cette MES : la carte le dit
+                        // dans son en-tête, sans rien poser sur l'image affichée.
+                        const fixBusy = vs.some(
+                          (v) => v.status === 'queued' || v.status === 'running'
+                        )
                         // PNG produit d'origine (détouré) — porté par le job MES racine,
                         // identique pour toutes les versions.
                         const pp = root.result?.productPath
                         const fname = fnameOf(root, 'site', typo)
+                        // Générations multiples (29/07/2026) : nb de générations de la
+                        // taille + MP verrouillé tant qu'aucune n'est retenue.
+                        const nVar = slotVariantsOf(root).length
+                        const mpReady = mpReadyFor(root)
                         return (
                           <div key={root.id} className="bg-white border border-border rounded-[12px] shadow-sm overflow-hidden">
                             <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-border">
                               <span className="font-bold text-[13px]">{labelOf(root)}</span>
+                              {nVar > 1 && (
+                                <span
+                                  title={`${nVar} générations — ouvre pour comparer et en choisir une`}
+                                  className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full ${
+                                    root.chosen ? 'bg-brand-green-light text-brand-green' : 'bg-surface text-text-secondary'
+                                  }`}
+                                >
+                                  {root.chosen ? `✓ retenue · ${nVar} gén.` : `▦ ${nVar} générations`}
+                                </span>
+                              )}
                               {vnum > 1 && (
                                 <span className="text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-brand-green-light text-brand-green">
                                   V{vnum}
+                                </span>
+                              )}
+                              {fixBusy && dispDone && (
+                                <span
+                                  title="Une retouche se génère pour cette MES — la version affichée ne bouge pas"
+                                  className="flex items-center gap-1.5 text-[10.5px] font-bold text-brand-green"
+                                >
+                                  <span className="w-3 h-3 rounded-full border-2 border-brand-green-light border-t-brand-green animate-spin" />
+                                  nouvelle version…
                                 </span>
                               )}
                               <span className="ml-auto text-[11.5px] text-text-secondary tabular-nums">2000×1330</span>
@@ -1564,16 +1632,18 @@ export default function GenerationPage() {
                                   <button
                                     type="button"
                                     onClick={() => void mpRoot(root)}
-                                    disabled={!dispDone || mpDoneFor(root.id)}
+                                    disabled={!dispDone || mpDoneFor(root.id) || !mpReady}
                                     title={
                                       mpDoneFor(root.id)
                                         ? 'Déjà passée en Marketplace'
-                                        : 'Passer en Marketplace (recadrage 1:1 + bords)'
+                                        : !mpReady
+                                          ? 'Choisis d’abord une génération (ouvre la case) pour débloquer le MP'
+                                          : 'Passer en Marketplace (recadrage 1:1 + bords)'
                                     }
                                     className="w-8 h-8 rounded-[8px] border grid place-items-center text-[11px] font-bold tabular-nums disabled:opacity-40 transition-colors"
                                     style={{ borderColor: '#c9bfe4', color: '#6d5bb5' }}
                                   >
-                                    {mpDoneFor(root.id) ? '✓' : '1:1'}
+                                    {mpDoneFor(root.id) ? '✓' : !mpReady ? '🔒' : '1:1'}
                                   </button>
                                 )}
                                 {dispDone ? (
@@ -1698,8 +1768,23 @@ export default function GenerationPage() {
       {studioRoot != null &&
         batchId &&
         (() => {
-          const roots = displayOrder(jobs.filter(isMesJob))
-          const pos = roots.findIndex((r) => r.id === studioRoot)
+          // La génération affichée + ses sœurs (variantes de la même taille).
+          const studioJob = jobs.find((j) => j.id === studioRoot)
+          const slotVariants = studioJob ? slotVariantsOf(studioJob) : []
+          const studioVariants: StudioVariant[] = slotVariants.map((v) => ({
+            id: v.id,
+            n: variantNo(v),
+            status: v.status,
+            deliveryPath: v.result?.deliveryPath,
+            chosen: !!v.chosen,
+          }))
+          const chosenVariantId = slotVariants.find((v) => v.chosen)?.id ?? null
+          // Navigation ← / → PAR TAILLE (une case = une génération affichée).
+          const roots = displayOrder(
+            [...groupMesSlots(jobs).values()].map((v) => displayVariant(v)).filter((j): j is Job => !!j)
+          )
+          const curKey = studioJob ? slotKeyOf(studioJob) : ''
+          const pos = roots.findIndex((r) => slotKeyOf(r) === curKey)
           return (
             <MesStudio
               key={studioRoot}
@@ -1708,7 +1793,11 @@ export default function GenerationPage() {
               mpEnabled={mpMode !== 'jamais'}
               rootJobId={studioRoot}
               chosenJobId={chosen[studioRoot] ?? null}
+              variants={studioVariants}
+              chosenVariantId={chosenVariantId}
               onChoose={chooseVersion}
+              onChooseVariant={(id) => void chooseVariant(id)}
+              onSelectVariant={(id) => setStudioRoot(id)}
               onMP={(id) => {
                 setMpAskedRoots((prev) => new Set(prev).add(studioRoot))
                 void mpJobs([id])
@@ -1943,7 +2032,11 @@ export default function GenerationPage() {
                 </button>
                 <button
                   onClick={() => {
-                    if (pickId != null) (pickFor === 'xl' ? setDecorXlId : setDecorId)(pickId)
+                    if (pickId != null) {
+                      // Choix à la main : le décor automatique ne l'écrase plus.
+                      if (pickFor === 'std') decorManual.current = true
+                      ;(pickFor === 'xl' ? setDecorXlId : setDecorId)(pickId)
+                    }
                     setPickerOpen(false)
                   }}
                   disabled={picked == null}

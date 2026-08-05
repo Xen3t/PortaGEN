@@ -8,8 +8,9 @@ import PhraseAttente from '@/components/PhraseAttente'
 /**
  * Vue d'un lancement de gamme : toutes les tailles en grille, remplie en
  * direct (piliers → intégration chaînée, invisible pour l'utilisateur).
- * Validation par vignette et « Tout valider » — le détail technique est sur la
- * page de chaque image.
+ * Le détail technique est sur la page de chaque image.
+ * 28/07/2026 : validation des MES retirée (décision Mathias) — une image
+ * terminée est simplement terminée.
  */
 
 interface Job {
@@ -20,7 +21,8 @@ interface Job {
   result: Record<string, unknown> | null
   error: string | null
   regenCount: number
-  reviewStatus: string
+  /** MES retenue de sa taille (générations multiples, 29/07/2026). */
+  chosen?: boolean
 }
 
 interface Tile {
@@ -31,6 +33,10 @@ interface Tile {
   coloris: string | null
   pillars: Job
   integration: Job | null
+  /** Numéro de génération (1..N) — 1 si génération unique. */
+  variant: number
+  /** Cette génération est la retenue de sa taille. */
+  chosen: boolean
 }
 
 /** Lettre de nomenclature du job : B battant · C coulissant · P portillon. */
@@ -47,6 +53,12 @@ function art(p: unknown, w?: number): string {
 function sizeOf(job: Job): { w: number; h: number } | null {
   const s = (job.payload?.size ?? null) as { w?: number; h?: number } | null
   return s && Number.isFinite(s.w) && Number.isFinite(s.h) ? { w: Number(s.w), h: Number(s.h) } : null
+}
+
+/** Numéro de génération d'un job (1 par défaut, génération unique). */
+function varOf(job: Job): number {
+  const v = job.payload?.variant
+  return typeof v === 'number' && v >= 1 ? v : 1
 }
 
 export default function GammeBatchPage() {
@@ -81,11 +93,16 @@ export default function GammeBatchPage() {
         const s = sizeOf(p)
         if (!s) return null
         const label = `${s.w}x${s.h}`
-        // Plusieurs intégrations possibles (régénérations) : la plus récente fait foi.
+        // Générations multiples (29/07/2026) : l'intégration d'une taille doit
+        // suivre SA génération — on apparie par n° de variante (à défaut, par
+        // taille comme avant). Plusieurs intégrations (régénérations) : la plus
+        // récente fait foi.
+        const pv = varOf(p)
         const integ = integrations
           .filter((j) => {
             const js = sizeOf(j)
-            return js && js.w === s.w && js.h === s.h
+            if (!js || js.w !== s.w || js.h !== s.h) return false
+            return varOf(j) === pv
           })
           .sort((a, b) => b.id - a.id)[0]
         return {
@@ -95,6 +112,8 @@ export default function GammeBatchPage() {
           coloris: colorisOf(p),
           pillars: p,
           integration: integ ?? null,
+          variant: pv,
+          chosen: !!integ?.chosen,
         }
       })
       .filter((t): t is Tile => t !== null)
@@ -112,6 +131,8 @@ export default function GammeBatchPage() {
               coloris: colorisOf(p),
               pillars: p,
               integration: p,
+              variant: varOf(p),
+              chosen: !!p.chosen,
             }
           : null
       })
@@ -121,17 +142,29 @@ export default function GammeBatchPage() {
 
   // RÈGLE PERMANENTE (rappel Mathias 22/07/2026) : blocs par coloris, une largeur
   // = UNE ligne, colonnes alignées par hauteur, taille absente = case vide
-  // alignée — jamais de repli. Une relance (id plus grand) remplace sa case.
+  // alignée — jamais de repli. Générations multiples (29/07/2026) : une CASE par
+  // taille = la génération retenue (chosen) sinon la 1ʳᵉ ; les sœurs vivent dans
+  // la page image (galerie). `count` = nb de générations de la case.
+  const betterDisplay = (a: Tile, b: Tile): boolean => {
+    if (a.chosen !== b.chosen) return a.chosen // la retenue gagne toujours
+    if (a.variant !== b.variant) return a.variant < b.variant // sinon la 1ʳᵉ génération
+    return a.pillars.id > b.pillars.id // égalité : la relance la plus récente
+  }
   const blocs = useMemo(() => {
-    const byColoris = new Map<string | null, Map<string, Tile>>()
+    const byColoris = new Map<string | null, Map<string, { display: Tile; count: number }>>()
     for (const t of tiles) {
       if (!byColoris.has(t.coloris)) byColoris.set(t.coloris, new Map())
       const cellules = byColoris.get(t.coloris)!
       const prev = cellules.get(t.label)
-      if (!prev || t.pillars.id > prev.pillars.id) cellules.set(t.label, t)
+      if (!prev) {
+        cellules.set(t.label, { display: t, count: 1 })
+        continue
+      }
+      prev.count += 1
+      if (betterDisplay(t, prev.display)) prev.display = t
     }
     return Array.from(byColoris.entries()).map(([coloris, cellules]) => {
-      const list = [...cellules.values()]
+      const list = [...cellules.values()].map((c) => c.display)
       return {
         coloris,
         cellules,
@@ -139,10 +172,13 @@ export default function GammeBatchPage() {
         heights: [...new Set(list.map((t) => t.h))].sort((a, b) => a - b),
       }
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tiles])
 
-  const doneCount = tiles.filter((t) => t.integration?.status === 'done').length
-  const approvedCount = tiles.filter((t) => t.integration?.reviewStatus === 'approved').length
+  // Compteurs PAR TAILLE (une case = une génération affichée), pas par génération.
+  const slotCells = blocs.flatMap((b) => [...b.cellules.values()])
+  const slotCount = slotCells.length
+  const doneCount = slotCells.filter((c) => c.display.integration?.status === 'done').length
   const pending = tiles.some(
     (t) =>
       t.pillars.status === 'queued' ||
@@ -175,17 +211,6 @@ export default function GammeBatchPage() {
       .catch(() => {})
   }, [decorPath])
 
-  async function review(job: Job, action: 'approve' | 'reject') {
-    setBusy(true)
-    await fetch(`/api/jobs/${job.id}/review`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
-    })
-    setBusy(false)
-    load()
-  }
-
   async function cancel(job: Job) {
     setBusy(true)
     const res = await fetch(`/api/jobs/${job.id}/cancel`, { method: 'POST' })
@@ -202,24 +227,6 @@ export default function GammeBatchPage() {
     const data = await res.json().catch(() => null)
     setBusy(false)
     if (!res.ok) setNotice(data?.error ?? 'Régénération impossible')
-    load()
-  }
-
-  async function approveAll() {
-    const targets = tiles.filter(
-      (t) => t.integration?.status === 'done' && t.integration.reviewStatus !== 'approved'
-    )
-    if (targets.length === 0) return
-    if (!window.confirm(`Valider les ${targets.length} images terminées de cette gamme ?`)) return
-    setBusy(true)
-    for (const t of targets) {
-      await fetch(`/api/jobs/${t.integration!.id}/review`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'approve' }),
-      })
-    }
-    setBusy(false)
     load()
   }
 
@@ -241,22 +248,15 @@ export default function GammeBatchPage() {
           </Link>
           <h1 className="text-xl font-semibold">
             Gamme {gammeName ?? 'de portails'}{' '}
-            <span className="text-text-disabled font-normal">· {tiles.length} tailles</span>
+            <span className="text-text-disabled font-normal">· {slotCount} tailles</span>
           </h1>
           <p className="text-sm text-text-secondary mt-0.5">
             {decorName && <>Décor : <b className="font-medium">{decorName}</b> — </>}
             {pending
-              ? `génération en cours, ${doneCount}/${tiles.length} images prêtes (la page se met à jour toute seule).`
-              : `${doneCount}/${tiles.length} images · ${approvedCount} validée${approvedCount > 1 ? 's' : ''}.`}
+              ? `génération en cours, ${doneCount}/${slotCount} images prêtes (la page se met à jour toute seule).`
+              : `${doneCount}/${slotCount} images terminées.`}
           </p>
         </div>
-        <button
-          onClick={approveAll}
-          disabled={busy || tiles.every((t) => t.integration?.status !== 'done' || t.integration.reviewStatus === 'approved')}
-          className="bg-brand-green text-white rounded-[10px] px-5 py-2.5 font-bold hover:bg-brand-green-hover hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          ✓ Tout valider ({tiles.filter((t) => t.integration?.status === 'done' && t.integration.reviewStatus !== 'approved').length})
-        </button>
       </div>
 
       {notice && (
@@ -283,8 +283,8 @@ export default function GammeBatchPage() {
                     style={{ gridTemplateColumns: `repeat(${b.heights.length}, minmax(0, 1fr))` }}
                   >
                     {b.heights.map((h) => {
-                      const t = b.cellules.get(`${w}x${h}`)
-                      if (!t) {
+                      const cell = b.cellules.get(`${w}x${h}`)
+                      if (!cell) {
                         // Taille absente de ce lancement : case vide alignée.
                         return (
                           <div
@@ -294,6 +294,8 @@ export default function GammeBatchPage() {
                           />
                         )
                       }
+          const t = cell.display
+          const nVar = cell.count
           const integ = t.integration
           const finalDone = integ?.status === 'done'
           const image = finalDone
@@ -322,11 +324,7 @@ export default function GammeBatchPage() {
                       : { text: 'décor prêt (pas de portail fourni)', tone: 'text-text-secondary' }
                     : integ.status !== 'done'
                       ? { text: 'pose du portail en cours…', tone: 'text-text-secondary', phrases: true }
-                      : integ.reviewStatus === 'approved'
-                        ? { text: '✓ validée', tone: 'text-brand-green font-medium' }
-                        : integ.reviewStatus === 'rejected'
-                          ? { text: '✗ rejetée', tone: 'text-brand-red font-medium' }
-                          : { text: 'à vérifier', tone: 'text-brand-teal font-medium' }
+                      : { text: '✓ terminée', tone: 'text-brand-green font-medium' }
           return (
             <div key={h} className="bg-white rounded-[12px] border border-border shadow-sm overflow-hidden hover:shadow-default hover:translate-y-[-1px] transition-all duration-200">
               <Link href={`/production/image/${detailId}`} className="block relative">
@@ -357,32 +355,22 @@ export default function GammeBatchPage() {
                     finale
                   </span>
                 )}
+                {nVar > 1 && (
+                  <span
+                    title={`${nVar} générations — ouvre pour comparer et en choisir une`}
+                    className={`absolute bottom-2 left-2 text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      t.chosen ? 'bg-brand-green text-white' : 'bg-black/75 text-white'
+                    }`}
+                  >
+                    {t.chosen ? `✓ retenue · ${nVar}` : `▦ ${nVar} générations`}
+                  </span>
+                )}
               </Link>
               <div className="px-3 py-2 flex items-center justify-between gap-2">
                 <span className={`text-xs ${stage.tone}`}>
                   {stage.phrases ? <PhraseAttente /> : stage.text}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
-                  {finalDone && integ!.reviewStatus !== 'approved' && (
-                    <button
-                      onClick={() => review(integ!, 'approve')}
-                      disabled={busy}
-                      title="Valider cette image"
-                      className="border border-brand-green/40 text-brand-green rounded-[8px] px-2 py-1 text-xs hover:bg-brand-green-light transition-colors disabled:opacity-40"
-                    >
-                      ✓
-                    </button>
-                  )}
-                  {finalDone && integ!.reviewStatus !== 'rejected' && (
-                    <button
-                      onClick={() => review(integ!, 'reject')}
-                      disabled={busy}
-                      title="Rejeter cette image"
-                      className="border border-brand-red/40 text-brand-red rounded-[8px] px-2 py-1 text-xs hover:bg-brand-red-light transition-colors disabled:opacity-40"
-                    >
-                      ✗
-                    </button>
-                  )}
                   {(t.pillars.status === 'queued' || integ?.status === 'queued') && (
                     <button
                       onClick={() => cancel(integ?.status === 'queued' ? integ : t.pillars)}

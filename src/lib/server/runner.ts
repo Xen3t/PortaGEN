@@ -223,6 +223,9 @@ async function processJob(id: number): Promise<void> {
             // Moteur produit (13/07/2026) : suit le job jusqu'à l'Intégration
             // pour que chaque étape lise SES réglages et SES prompts.
             moteur: payload.moteur,
+            // Générations multiples (29/07/2026) : le n° de variante suit jusqu'à
+            // la MES finale, pour que la case regroupe ses générations sœurs.
+            variant: payload.variant,
             // Option « décliner en MP automatiquement » cochée au lancement
             // (page Génération, 13/07/2026) : suit jusqu'à l'Intégration.
             autoMp: payload.autoMp === true || undefined,

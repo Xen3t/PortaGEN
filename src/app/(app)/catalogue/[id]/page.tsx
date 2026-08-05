@@ -67,6 +67,8 @@ interface Detail {
   colorisOverrides?: Record<string, string>
   /** Références (`coloris|300x140`) apparues au dernier scan (étiquette NOUVEAU). */
   newRefs?: string[]
+  /** Pieds de soutien : null = pas encore jugé (juge vision au 1ᵉʳ rendu), true/false = verdict. */
+  pieds?: boolean | null
 }
 
 interface ColorisSettings {
@@ -360,6 +362,18 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setSettings(d.settings))
   }, [id])
+
+  const savePieds = useCallback(
+    (pieds: boolean | null) => {
+      setDetail((d) => (d ? { ...d, pieds } : d))
+      fetch(`/api/catalogue/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pieds }),
+      }).catch(() => undefined)
+    },
+    [id]
+  )
 
   const loadDecors = useCallback(() => {
     fetch('/api/decors')
@@ -896,6 +910,32 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
         )}
         <span>
           <b className="text-text-primary text-sm">{detail.summary.moodboards.length}</b> moodboards
+        </span>
+        {/* Drapeau pieds (29/07/2026) : pilote la réparation de bande basse et les
+            sections pieds du prompt pose-fusion. « À juger » = le juge vision
+            tranchera au 1ᵉʳ rendu et s'enregistrera ici. */}
+        <span className="flex items-center gap-1.5">
+          Pieds de soutien :
+          {(
+            [
+              ['Oui', true, 'Le produit repose sur des pieds sous ses montants'],
+              ['Non', false, 'Pas de pieds (porté par les gonds, ex. VALIER)'],
+              ['À juger', null, 'Le juge vision tranchera au prochain rendu'],
+            ] as const
+          ).map(([label, value, title]) => (
+            <button
+              key={label}
+              onClick={() => savePieds(value)}
+              title={title}
+              className={`text-xs font-bold border rounded-full px-2.5 py-0.5 transition-colors ${
+                (detail.pieds ?? null) === value
+                  ? 'bg-brand-green text-white border-brand-green'
+                  : 'bg-white text-text-secondary border-border hover:border-brand-green hover:text-brand-green'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </span>
       </div>
 

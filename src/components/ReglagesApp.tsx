@@ -4,12 +4,12 @@ import { useEffect, useState } from 'react'
 
 /**
  * Réglages GÉNÉRAUX de l'application — universels, donc À PART des moteurs
- * (demande Mathias 13/07/2026). Depuis la refonte « arborescence » de la page
- * Admin → Réglages (maquette reglages-refonte-v1, proposition C validée le
- * 28/07/2026), chaque rubrique s'affiche SEULE dans le panneau : le composant
- * reçoit la rubrique à montrer et ne rend que son contenu, sans accordéon.
- * « Générations & modèle » regroupe les générations simultanées et le modèle
- * image (même rubrique dans l'arborescence).
+ * (demande Mathias 13/07/2026). Depuis l'« affichage complet » de la page
+ * Admin → Réglages (maquette reglages-full-v1 validée le 29/07/2026), les quatre
+ * rubriques sont EMPILÉES en cartes, chacune avec son ancre (app-generations,
+ * app-tarif, app-marquage, app-serveur) que les signets de l'arborescence
+ * rejoignent. « Générations & modèle » regroupe les générations simultanées et
+ * le modèle image.
  */
 
 export type AppRubrique = 'generations' | 'tarif' | 'marquage' | 'serveur'
@@ -22,7 +22,32 @@ function SubHeading({ children }: { children: React.ReactNode }) {
   )
 }
 
-export default function ReglagesApp({ rubrique }: { rubrique: AppRubrique }) {
+/**
+ * Carte d'une rubrique de l'Application. `id`/`data-anchor` = cible des signets et
+ * du scroll-spy de la page Réglages ; `scroll-mt` compense le bandeau collant.
+ */
+function AppCard({
+  id,
+  title,
+  children,
+}: {
+  id: string
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <section
+      id={id}
+      data-anchor={id}
+      className="bg-white rounded-[12px] border border-border shadow-sm p-5 scroll-mt-[150px]"
+    >
+      <h3 className="text-[16px] font-bold leading-tight mb-4">{title}</h3>
+      {children}
+    </section>
+  )
+}
+
+export default function ReglagesApp() {
   const [value, setValue] = useState<number | null>(null)
   const [bounds, setBounds] = useState({ min: 1, max: 20 })
   const [priceIn, setPriceIn] = useState('')
@@ -162,9 +187,7 @@ export default function ReglagesApp({ rubrique }: { rubrique: AppRubrique }) {
         </div>
       )}
 
-      <section className="bg-white rounded-[12px] border border-border shadow-sm p-5">
-        {rubrique === 'generations' && (
-          <>
+      <AppCard id="app-generations" title="Générations & modèle">
             <SubHeading>Générations simultanées par utilisateur</SubHeading>
             <p className="text-xs text-text-secondary mb-4">
               Nombre de jobs (décors, piliers, intégrations) qu&apos;un même utilisateur peut faire
@@ -222,11 +245,9 @@ export default function ReglagesApp({ rubrique }: { rubrique: AppRubrique }) {
                 </button>
               ))}
             </span>
-          </>
-        )}
+      </AppCard>
 
-        {rubrique === 'tarif' && (
-          <>
+      <AppCard id="app-tarif" title="Tarif Gemini">
             <p className="text-xs text-text-secondary mb-4">
               Prix en euros <strong>par million de tokens</strong>, appliqué aux{' '}
               <strong>appels image</strong> uniquement (les appels texte coûtent des centièmes de
@@ -272,11 +293,9 @@ export default function ReglagesApp({ rubrique }: { rubrique: AppRubrique }) {
                 Enregistrer
               </button>
             </div>
-          </>
-        )}
+      </AppCard>
 
-        {rubrique === 'marquage' && (
-          <>
+      <AppCard id="app-marquage" title="Marquage IA">
             <p className="text-xs text-text-secondary mb-4">
               Chaque image générée reçoit la métadonnée officielle des contenus créés par IA :{' '}
               <span className="font-mono">IPTC DigitalSourceType = trainedAlgorithmicMedia</span>.
@@ -307,11 +326,9 @@ export default function ReglagesApp({ rubrique }: { rubrique: AppRubrique }) {
                 </button>
               ))}
             </span>
-          </>
-        )}
+      </AppCard>
 
-        {rubrique === 'serveur' && (
-          <>
+      <AppCard id="app-serveur" title="Serveur de fichiers">
             <p className="text-xs text-text-secondary mb-4">
               Racine du serveur de l&apos;entreprise scannée par le catalogue. L&apos;application y
               accède <strong>en lecture seule</strong> : rien n&apos;est jamais écrit, modifié ou
@@ -334,9 +351,7 @@ export default function ReglagesApp({ rubrique }: { rubrique: AppRubrique }) {
                 Enregistrer
               </button>
             </div>
-          </>
-        )}
-      </section>
+      </AppCard>
     </div>
   )
 }

@@ -9,12 +9,14 @@ import ResetApp from '@/components/ResetApp'
 import type { MoteurKey, MoteurReglages } from '@/lib/moteurs'
 
 /**
- * Admin → Réglages — refonte « arborescence » (maquette reglages-refonte-v1,
- * proposition C validée par Mathias le 28/07/2026) : les sections repliables
- * empilées de l'ancienne page (jugées illisibles) sont remplacées par UNE
- * colonne de navigation pour tout — Application, moteurs avec leurs rubriques
- * dépliées dessous, Système — et un panneau qui n'affiche qu'UNE rubrique à la
- * fois, courte, avec son en-tête (titre + rappel du moteur).
+ * Admin → Réglages — « affichage complet » (maquette reglages-full-v1 validée
+ * par Mathias le 29/07/2026). On garde l'arborescence de la proposition C
+ * (28/07) à gauche — Application, moteurs avec leurs rubriques dépliées dessous,
+ * Système — mais le panneau de droite n'affiche plus UNE rubrique à la fois : il
+ * EMPILE toutes les rubriques du contexte choisi (l'Application, ou le moteur
+ * sélectionné) et l'arborescence sert de SIGNETS cliquables qui font défiler
+ * jusqu'au bon bloc (scroll-spy pour surligner celui qu'on regarde). Un bandeau
+ * de contexte collant garde le rappel du moteur et l'Enregistrer à portée.
  *
  * Un moteur par type de produit ; ses rubriques regroupent toutes ses
  * technologies : détection & coloris, RALify, gabarits, Canny, Prompt System,
@@ -113,10 +115,9 @@ type MoteurRubrique =
   | 'prompts'
   | 'export'
 
-type Sel =
-  | { kind: 'app'; rub: AppRubrique }
-  | { kind: 'moteur'; rub: MoteurRubrique }
-  | { kind: 'reset' }
+/** Ancre (id du bloc) d'une rubrique — sert de cible aux signets et au scroll-spy. */
+const APP_ANCHOR = (rub: AppRubrique) => `app-${rub}`
+const MOTEUR_ANCHOR = (rub: MoteurRubrique) => `m-${rub}`
 
 const APP_RUBRIQUES: { rub: AppRubrique; label: string }[] = [
   { rub: 'generations', label: 'Générations & modèle' },
@@ -171,10 +172,17 @@ function Seg<T extends string>({
   )
 }
 
-/** Carte blanche du panneau — la rubrique affichée vit dedans, toujours ouverte. */
-function Card({ children }: { children: React.ReactNode }) {
+/**
+ * Carte blanche d'une rubrique. `id`/`data-anchor` = cible des signets et du
+ * scroll-spy ; `scroll-mt` compense le bandeau de contexte collant.
+ */
+function Card({ id, children }: { id?: string; children: React.ReactNode }) {
   return (
-    <section className="bg-white rounded-[12px] border border-border shadow-sm p-5">
+    <section
+      id={id}
+      data-anchor={id}
+      className="bg-white rounded-[12px] border border-border shadow-sm p-5 scroll-mt-[150px]"
+    >
       {children}
     </section>
   )
@@ -182,6 +190,17 @@ function Card({ children }: { children: React.ReactNode }) {
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <span className="block text-xs font-medium text-text-secondary mb-1.5">{children}</span>
+}
+
+/** Titre d'une rubrique empilée — `extra` accueille un contrôle (interrupteur RALify)
+ *  ou un rappel (compteur de prompts) à droite du titre. */
+function CardTitle({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 flex-wrap mb-4">
+      <h3 className="text-[16px] font-bold leading-tight">{children}</h3>
+      {extra}
+    </div>
+  )
 }
 
 function SubHeading({ children }: { children: React.ReactNode }) {
@@ -195,7 +214,14 @@ function SubHeading({ children }: { children: React.ReactNode }) {
 export default function MoteursPage() {
   const [moteurs, setMoteurs] = useState<MoteurEntry[]>([])
   const [selected, setSelected] = useState<MoteurKey>('battant')
-  const [sel, setSel] = useState<Sel>({ kind: 'app', rub: 'generations' })
+  // Contexte affiché (refonte « affichage complet », maquette reglages-full-v1
+  // validée le 29/07/2026) : le panneau empile TOUTES les rubriques du contexte
+  // et l'arborescence sert de signets. `activeAnchor` = rubrique surlignée par le
+  // scroll-spy ; `pendingScroll` = ancre à rejoindre après le rendu.
+  const [ctx, setCtx] = useState<'app' | 'moteur' | 'reset'>('app')
+  const [activeAnchor, setActiveAnchor] = useState<string>('app-generations')
+  const [pendingScroll, setPendingScroll] = useState<string | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const [reglages, setReglages] = useState<MoteurReglages | null>(null)
   const [dirty, setDirty] = useState(false)
   const [promptVersions, setPromptVersions] = useState<Record<string, PromptMeta>>({})
@@ -263,6 +289,39 @@ export default function MoteursPage() {
         .then((d) => setReglagesXl(d.reglages ?? null))
     }
   }, [selected])
+
+  // Rejoint l'ancre demandée par un signet APRÈS que son contexte soit rendu
+  // (le bloc n'existe pas forcément dans la même frame que le clic).
+  useEffect(() => {
+    if (!pendingScroll) return
+    const el = document.getElementById(pendingScroll)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setPendingScroll(null)
+  }, [pendingScroll, ctx, selected])
+
+  // Scroll-spy : surligne dans l'arborescence la rubrique la plus haute visible.
+  useEffect(() => {
+    function onScroll() {
+      const cards = panelRef.current?.querySelectorAll<HTMLElement>('[data-anchor]')
+      if (!cards || cards.length === 0) return
+      // Ligne de lecture qui DESCEND avec le défilement : 160 px sous le haut quand
+      // on est en haut, jusqu'au bas de l'écran quand on est en bas de page. Sur une
+      // page courte (Application : 4 cartes visibles d'un coup, peu de défilement),
+      // elle balaie ainsi chaque rubrique — sinon les dernières ne s'activeraient
+      // jamais, leur haut ne franchissant pas un seuil fixe avant le bas de page.
+      const max = document.documentElement.scrollHeight - window.innerHeight
+      const p = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0
+      const line = 160 + p * (window.innerHeight - 160)
+      let active: string | null = cards[0].dataset.anchor ?? null
+      cards.forEach((c) => {
+        if (c.getBoundingClientRect().top <= line) active = c.dataset.anchor ?? null
+      })
+      if (active) setActiveAnchor(active)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [ctx, selected])
 
   /** Ajout d'un coloris à la palette (POST /api/coloris), depuis le mini-formulaire. */
   async function submitColoris() {
@@ -413,6 +472,8 @@ export default function MoteursPage() {
     } else {
       delete body.ombrePilierPct
     }
+    // Générations par taille (29/07/2026) : borné 1..6.
+    body.generationsParTaille = Math.min(6, Math.max(1, Math.round(Number(reglages.generationsParTaille) || 3)))
     const res = await fetch(`/api/moteurs/${selected}/reglages`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -552,7 +613,7 @@ export default function MoteursPage() {
     </div>
   )
 
-  /* ===== En-tête du panneau : titre de la rubrique + rappel du contexte ===== */
+  /* ===== En-tête du panneau : rappel du contexte affiché ===== */
 
   const nomMoteur = current
     ? `${selected === 'portillon' ? 'Portillon' : `Portail ${current.label}`}${
@@ -560,19 +621,20 @@ export default function MoteursPage() {
       }`
     : ''
 
-  const titre =
-    sel.kind === 'app'
-      ? APP_RUBRIQUES.find((r) => r.rub === sel.rub)?.label
-      : sel.kind === 'reset'
-        ? 'Remise à zéro de l’application'
-        : current?.status === 'preparation'
-          ? nomMoteur
-          : MOTEUR_RUBRIQUES.find((r) => r.rub === sel.rub)?.label
+  /** Clic sur un signet : bascule sur son contexte et rejoint sa rubrique. */
+  function goTo(nextCtx: 'app' | 'moteur' | 'reset', anchor: string) {
+    setCtx(nextCtx)
+    setActiveAnchor(anchor)
+    setPendingScroll(anchor)
+  }
 
-  /** Clic sur un moteur dans l'arborescence : le sélectionne et ouvre sa 1ʳᵉ rubrique. */
+  /** Clic sur un moteur : le sélectionne et affiche sa fiche complète (1ʳᵉ rubrique en haut). */
   function pickMoteur(key: MoteurKey) {
+    const first = MOTEUR_ANCHOR('detection')
     setSelected(key)
-    setSel({ kind: 'moteur', rub: 'detection' })
+    setCtx('moteur')
+    setActiveAnchor(first)
+    setPendingScroll(first)
   }
 
   return (
@@ -587,28 +649,31 @@ export default function MoteursPage() {
           <p className="text-[10.5px] font-bold uppercase tracking-wider text-text-disabled px-1 mt-0.5 mb-1.5">
             Application
           </p>
-          {APP_RUBRIQUES.map((r) => (
-            <button
-              key={r.rub}
-              type="button"
-              aria-current={sel.kind === 'app' && sel.rub === r.rub}
-              onClick={() => setSel({ kind: 'app', rub: r.rub })}
-              className={`w-full flex items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-sm transition-colors ${
-                sel.kind === 'app' && sel.rub === r.rub
-                  ? 'bg-brand-green-light text-brand-green font-bold'
-                  : 'text-text-primary font-semibold hover:bg-surface'
-              }`}
-            >
-              {r.label}
-            </button>
-          ))}
+          {APP_RUBRIQUES.map((r) => {
+            const on = ctx === 'app' && activeAnchor === APP_ANCHOR(r.rub)
+            return (
+              <button
+                key={r.rub}
+                type="button"
+                aria-current={on}
+                onClick={() => goTo('app', APP_ANCHOR(r.rub))}
+                className={`w-full flex items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-sm transition-colors ${
+                  on
+                    ? 'bg-brand-green-light text-brand-green font-bold'
+                    : 'text-text-primary font-semibold hover:bg-surface'
+                }`}
+              >
+                {r.label}
+              </button>
+            )
+          })}
 
           <p className="text-[10.5px] font-bold uppercase tracking-wider text-text-disabled px-1 mt-4 mb-1.5">
             Moteurs
           </p>
           {moteurs.map((m) => {
             const active = m.key === selected
-            const onFiche = active && sel.kind === 'moteur'
+            const onFiche = active && ctx === 'moteur'
             return (
               <div key={m.key}>
                 <button
@@ -630,28 +695,34 @@ export default function MoteursPage() {
                     <span
                       className={`text-[10px] ${onFiche ? 'text-brand-green' : 'text-text-disabled'}`}
                     >
-                      {active ? '▾' : '▸'}
+                      {onFiche ? '▾' : '▸'}
                     </span>
                   )}
                 </button>
-                {/* Rubriques du moteur déplié — les XL n'existent que sur TERMINUS. */}
-                {active && m.status === 'actif' && (
+                {/* Rubriques du moteur déplié = signets vers ses blocs — les XL n'existent que sur TERMINUS.
+                    Déplié SEULEMENT quand on consulte vraiment sa fiche (onFiche), pas juste parce
+                    qu'il est sélectionné par défaut : au chargement (contexte Application) le Battant
+                    reste ainsi fermé. */}
+                {onFiche && m.status === 'actif' && (
                   <div className="ml-3.5 border-l-2 border-border pl-2 my-1 space-y-px">
-                    {MOTEUR_RUBRIQUES.filter((r) => !r.xl || m.key === 'coulissant').map((r) => (
-                      <button
-                        key={r.rub}
-                        type="button"
-                        aria-current={sel.kind === 'moteur' && sel.rub === r.rub}
-                        onClick={() => setSel({ kind: 'moteur', rub: r.rub })}
-                        className={`w-full rounded-[8px] px-2.5 py-1.5 text-left text-[13px] transition-colors ${
-                          sel.kind === 'moteur' && sel.rub === r.rub
-                            ? 'text-brand-green font-bold bg-brand-green-light'
-                            : 'text-text-secondary hover:bg-surface'
-                        }`}
-                      >
-                        {r.label}
-                      </button>
-                    ))}
+                    {MOTEUR_RUBRIQUES.filter((r) => !r.xl || m.key === 'coulissant').map((r) => {
+                      const on = ctx === 'moteur' && activeAnchor === MOTEUR_ANCHOR(r.rub)
+                      return (
+                        <button
+                          key={r.rub}
+                          type="button"
+                          aria-current={on}
+                          onClick={() => goTo('moteur', MOTEUR_ANCHOR(r.rub))}
+                          className={`w-full rounded-[8px] px-2.5 py-1.5 text-left text-[13px] transition-colors ${
+                            on
+                              ? 'text-brand-green font-bold bg-brand-green-light'
+                              : 'text-text-secondary hover:bg-surface'
+                          }`}
+                        >
+                          {r.label}
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -663,62 +734,56 @@ export default function MoteursPage() {
           </p>
           <button
             type="button"
-            aria-current={sel.kind === 'reset'}
-            onClick={() => setSel({ kind: 'reset' })}
+            aria-current={ctx === 'reset'}
+            onClick={() => setCtx('reset')}
             className={`w-full flex items-center gap-2 rounded-[8px] px-2.5 py-2 text-left text-sm font-semibold transition-colors ${
-              sel.kind === 'reset' ? 'bg-brand-red-light text-brand-red font-bold' : 'text-brand-red hover:bg-surface'
+              ctx === 'reset' ? 'bg-brand-red-light text-brand-red font-bold' : 'text-brand-red hover:bg-surface'
             }`}
           >
             Remise à zéro
           </button>
         </aside>
 
-        {/* ============ Panneau : UNE rubrique à la fois ============ */}
-        <div>
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-            <div className="flex items-center gap-4 flex-wrap">
-              <h2 className={`text-[19px] font-bold ${sel.kind === 'reset' ? 'text-brand-red' : ''}`}>
-                {titre}
+        {/* ============ Panneau : toutes les rubriques du contexte, empilées ============ */}
+        <div ref={panelRef}>
+          {/* Bandeau de contexte collant : rappelle le contexte affiché et garde
+              l'Enregistrer moteur à portée pendant qu'on parcourt les rubriques. */}
+          <div className="sticky top-20 z-10 mb-4 flex items-center justify-between gap-3 flex-wrap bg-white rounded-[12px] border border-border shadow-sm px-5 py-3">
+            <div>
+              <h2 className={`text-[19px] font-bold leading-tight ${ctx === 'reset' ? 'text-brand-red' : ''}`}>
+                {ctx === 'app' ? 'Application' : ctx === 'reset' ? 'Remise à zéro de l’application' : nomMoteur}
               </h2>
-              {/* RALify : l'interrupteur reste visible dans l'en-tête (règle maquette ralify-v2). */}
-              {sel.kind === 'moteur' && sel.rub === 'ralify' && current?.status === 'actif' && (
-                <Seg
-                  value={reglages?.ralify.actif ? 'on' : 'off'}
-                  options={[
-                    { value: 'on', label: 'Activé' },
-                    { value: 'off', label: 'Désactivé' },
-                  ]}
-                  onChange={(val) =>
-                    reglages && setField('ralify', { ...reglages.ralify, actif: val === 'on' })
-                  }
-                  disabled={!reglages}
-                />
-              )}
+              <span className="text-xs text-text-disabled">
+                {ctx === 'app' && 'Réglages valables quel que soit le moteur'}
+                {ctx === 'reset' && 'Système · sauvegarde complète avant effacement'}
+                {ctx === 'moteur' &&
+                  current &&
+                  (current.status === 'actif'
+                    ? `Moteur actif · ${current.productCount} produits`
+                    : 'Moteur en préparation')}
+              </span>
             </div>
-            <span className="text-xs text-text-disabled">
-              {sel.kind === 'app' && 'Application · valable quel que soit le moteur'}
-              {sel.kind === 'reset' && 'Système · sauvegarde complète avant effacement'}
-              {sel.kind === 'moteur' && current && (
-                <>
-                  Moteur <b className="text-text-secondary font-semibold">{nomMoteur}</b>
-                  {current.status === 'actif' && <> · {current.productCount} produits</>}
-                  {sel.rub === 'prompts' && dernierPrompt && (
-                    <>
-                      {' '}· {promptMetas.length} prompts · dernier modifié le{' '}
-                      {fmtDbDate(dernierPrompt.updated)}
-                      {dernierPrompt.updatedBy ? ` par ${dernierPrompt.updatedBy}` : ''}
-                    </>
-                  )}
-                </>
-              )}
-            </span>
+            {ctx === 'moteur' && current?.status === 'actif' && (
+              <div className="flex items-center gap-3">
+                {(dirty || dirtyXl) && (
+                  <span className="text-xs text-brand-teal">Modifications non enregistrées.</span>
+                )}
+                <button
+                  onClick={save}
+                  disabled={busy || (!dirty && !dirtyXl) || !reglages}
+                  className="bg-brand-green text-white text-sm font-bold rounded-[10px] px-5 py-2.5 hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+                >
+                  Enregistrer les réglages du moteur
+                </button>
+              </div>
+            )}
           </div>
 
-          {sel.kind === 'app' && <ReglagesApp rubrique={sel.rub} />}
+          {ctx === 'app' && <ReglagesApp />}
 
-          {sel.kind === 'reset' && <ResetApp />}
+          {ctx === 'reset' && <ResetApp />}
 
-          {sel.kind === 'moteur' && (
+          {ctx === 'moteur' && (
             <>
               {notice && (
                 <div className="bg-brand-teal-light text-brand-teal text-sm rounded-[8px] px-4 py-3 mb-5 flex justify-between gap-3">
@@ -739,8 +804,8 @@ export default function MoteursPage() {
               ) : (
                 <div className="space-y-5">
                   {/* ============ Détection & coloris ============ */}
-                  {sel.rub === 'detection' && (
-                    <Card>
+                  <Card id={MOTEUR_ANCHOR('detection')}>
+                      <CardTitle>Détection &amp; coloris</CardTitle>
                       <SubHeading>Détection du type de produit</SubHeading>
                       <Seg
                         value={reglages?.detectionType ?? 'auto'}
@@ -851,12 +916,27 @@ export default function MoteursPage() {
                         main (correction sur la fiche produit). La détection automatique par l&apos;image
                         continue de ne trancher qu&apos;entre les coloris d&apos;origine.
                       </p>
-                    </Card>
-                  )}
+                  </Card>
 
                   {/* ============ RALify (maquette ralify-v2 validée le 28/07/2026) ============ */}
-                  {sel.rub === 'ralify' && (
-                    <Card>
+                  <Card id={MOTEUR_ANCHOR('ralify')}>
+                      <CardTitle
+                        extra={
+                          <Seg
+                            value={reglages?.ralify.actif ? 'on' : 'off'}
+                            options={[
+                              { value: 'on', label: 'Activé' },
+                              { value: 'off', label: 'Désactivé' },
+                            ]}
+                            onChange={(val) =>
+                              reglages && setField('ralify', { ...reglages.ralify, actif: val === 'on' })
+                            }
+                            disabled={!reglages}
+                          />
+                        }
+                      >
+                        RALify
+                      </CardTitle>
                       <RalifySection
                         moteur={selected}
                         value={reglages?.ralify ?? null}
@@ -864,26 +944,25 @@ export default function MoteursPage() {
                         onChange={(r) => setField('ralify', r)}
                         disabled={!reglages}
                       />
-                    </Card>
-                  )}
+                  </Card>
 
                   {/* ============ Gabarits (ex-page Admin → Gabarits, absorbée) ============ */}
-                  {sel.rub === 'gabarits' && (
-                    <Card>
+                  <Card id={MOTEUR_ANCHOR('gabarits')}>
+                      <CardTitle>Gabarits</CardTitle>
                       <GabaritsManager moteur={selected} embedded />
-                    </Card>
-                  )}
+                  </Card>
 
                   {/* ============ Gabarits XL (coulissants larges 450-600, 22/07/2026) ============ */}
-                  {sel.rub === 'gabarits-xl' && selected === 'coulissant' && (
-                    <Card>
+                  {selected === 'coulissant' && (
+                    <Card id={MOTEUR_ANCHOR('gabarits-xl')}>
+                      <CardTitle>Gabarits XL</CardTitle>
                       <GabaritsManager moteur="coulissant-xl" embedded />
                     </Card>
                   )}
 
                   {/* ============ Canny ============ */}
-                  {sel.rub === 'canny' && (
-                    <Card>
+                  <Card id={MOTEUR_ANCHOR('canny')}>
+                      <CardTitle>Canny</CardTitle>
                       <div className="flex flex-wrap gap-5 items-start">
                         {/* Aperçu agrandi ×2,5 (retour Mathias 13/07/2026 : 160 px illisible). */}
                         <figure className="w-[400px] max-w-full flex-none">
@@ -1007,13 +1086,13 @@ export default function MoteursPage() {
                           </div>
                         </div>
                       </div>
-                    </Card>
-                  )}
+                  </Card>
 
                   {/* ============ Canny XL (coulissants 450-600, 22/07/2026) — rubrique à
                        part, comme Gabarits XL : le Canny standard ne bouge pas. ============ */}
-                  {sel.rub === 'canny-xl' && selected === 'coulissant' && (
-                    <Card>
+                  {selected === 'coulissant' && (
+                    <Card id={MOTEUR_ANCHOR('canny-xl')}>
+                      <CardTitle>Canny XL</CardTitle>
                       <p className="text-xs text-text-secondary mb-4">
                         Utilisé UNIQUEMENT par les tailles et décors XL (coulissants 450 – 600) — il
                         vient en complément, le Canny de la rubrique précédente reste celui du standard.
@@ -1141,8 +1220,20 @@ export default function MoteursPage() {
                   )}
 
                   {/* ============ Prompt System ============ */}
-                  {sel.rub === 'prompts' && (
-                    <Card>
+                  <Card id={MOTEUR_ANCHOR('prompts')}>
+                      <CardTitle
+                        extra={
+                          dernierPrompt ? (
+                            <span className="text-xs text-text-disabled font-normal">
+                              {promptMetas.length} prompts · dernier modifié le{' '}
+                              {fmtDbDate(dernierPrompt.updated)}
+                              {dernierPrompt.updatedBy ? ` par ${dernierPrompt.updatedBy}` : ''}
+                            </span>
+                          ) : undefined
+                        }
+                      >
+                        Prompt System
+                      </CardTitle>
                       <div className="space-y-0 divide-y divide-border">
                         <div className="pb-4">
                           <div className="flex items-baseline gap-2.5 mb-3">
@@ -1203,6 +1294,22 @@ export default function MoteursPage() {
                             </div>
                             {reglages?.integrationMethod === 'pose-fusion' && (
                               <>
+                                <div>
+                                  <FieldLabel>Masquage / composite</FieldLabel>
+                                  <Seg
+                                    value={reglages.poseFusionComposite ?? 'on'}
+                                    options={[
+                                      { value: 'on', label: 'Activé' },
+                                      { value: 'off', label: 'Désactivé' },
+                                    ]}
+                                    onChange={(v) => setField('poseFusionComposite', v)}
+                                    disabled={!reglages}
+                                  />
+                                  <p className="text-[11px] text-text-disabled mt-1.5 max-w-56">
+                                    Verrouille le décor au pixel autour du produit (composite pixel-lock,
+                                    ou masque du pilier en coulissant). Désactivé = sortie brute de Nano.
+                                  </p>
+                                </div>
                                 <div>
                                   <FieldLabel>Débord sur les piliers</FieldLabel>
                                   <div className="flex items-center gap-2">
@@ -1295,6 +1402,35 @@ export default function MoteursPage() {
                         <div className="pt-4">
                           <div className="flex items-baseline gap-2.5 mb-3">
                             <span className="w-[22px] h-[22px] rounded-[6px] bg-surface border border-border grid place-items-center text-xs font-bold text-text-secondary">4</span>
+                            <h3 className="font-semibold text-[15px]">Générations par taille</h3>
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            <input
+                              type="number"
+                              min={1}
+                              max={6}
+                              value={reglages?.generationsParTaille ?? 3}
+                              onChange={(e) =>
+                                setField(
+                                  'generationsParTaille',
+                                  Math.min(6, Math.max(1, Math.round(Number(e.target.value) || 1)))
+                                )
+                              }
+                              disabled={!reglages}
+                              className="w-20 border border-border bg-white rounded-[8px] px-3 py-2 text-sm text-center tabular-nums focus:outline-none focus:border-brand-green transition-colors disabled:opacity-50"
+                            />
+                            <span className="text-sm text-text-secondary">génération(s) par taille</span>
+                          </div>
+                          <p className="text-xs text-text-secondary mt-1.5">
+                            Nombre d&apos;images produites pour chaque taille. Au-delà de 1, on en{' '}
+                            <b>choisit une</b> (la MES retenue) dans la vue en grand — et seule la
+                            retenue peut passer en Marketplace. <b>1</b> = une seule image (classique).
+                          </p>
+                        </div>
+
+                        <div className="pt-4">
+                          <div className="flex items-baseline gap-2.5 mb-3">
+                            <span className="w-[22px] h-[22px] rounded-[6px] bg-surface border border-border grid place-items-center text-xs font-bold text-text-secondary">5</span>
                             <h3 className="font-semibold text-[15px]">Marketplace — carré 2000×2000</h3>
                           </div>
                           <div className="mb-3">
@@ -1323,12 +1459,11 @@ export default function MoteursPage() {
                           </p>
                         </div>
                       </div>
-                    </Card>
-                  )}
+                  </Card>
 
                   {/* ============ Export ============ */}
-                  {sel.rub === 'export' && (
-                    <Card>
+                  <Card id={MOTEUR_ANCHOR('export')}>
+                      <CardTitle>Export</CardTitle>
                       <div className="flex flex-wrap gap-x-8 gap-y-4">
                         <div>
                           <FieldLabel>Site produit</FieldLabel>
@@ -1359,24 +1494,20 @@ export default function MoteursPage() {
                           />
                         </div>
                       </div>
-                    </Card>
-                  )}
+                  </Card>
 
-                  {/* Barre d'enregistrement des réglages du moteur — visible sous chaque
-                      rubrique (les modifs d'une rubrique restent en attente quand on en
-                      change ; les gabarits, eux, s'enregistrent tout seuls). */}
-                  {sel.rub !== 'gabarits' && sel.rub !== 'gabarits-xl' && (
+                  {/* Rappel d'enregistrement en bas de la pile — le bouton principal vit
+                      dans le bandeau collant ; les gabarits, eux, s'enregistrent seuls. */}
+                  {(dirty || dirtyXl) && (
                     <div className="flex items-center gap-3">
                       <button
                         onClick={save}
-                        disabled={busy || (!dirty && !dirtyXl) || !reglages}
+                        disabled={busy || !reglages}
                         className="bg-brand-green text-white text-sm font-bold rounded-[10px] px-5 py-2.5 hover:bg-brand-green-hover transition-colors disabled:opacity-50"
                       >
                         Enregistrer les réglages du moteur
                       </button>
-                      {(dirty || dirtyXl) && (
-                        <span className="text-xs text-brand-teal">Modifications non enregistrées.</span>
-                      )}
+                      <span className="text-xs text-brand-teal">Modifications non enregistrées.</span>
                     </div>
                   )}
                 </div>

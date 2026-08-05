@@ -849,11 +849,6 @@ function dayLabel(d: Date): string {
   return jour
 }
 
-function heureLabel(s: string): string {
-  const d = parseDbDate(s)
-  return `${d.getHours()}h${String(d.getMinutes()).padStart(2, '0')}`
-}
-
 /** « #151 » pour un essai simple, « #136-148 » pour un lancement multi-tailles. */
 function idsLabel(e: LabEssaiUi): string {
   return e.ids.length > 1 ? `#${e.ids[0]}-${e.ids[e.ids.length - 1]}` : `#${e.id}`
@@ -1669,9 +1664,6 @@ export default function MoteurLab({ moteur = 'battant' }: { moteur?: MoteurKey }
                           {coutOf(e)}
                         </span>
                       )}
-                    </span>
-                    <span className="shrink-0 text-[11px] text-text-disabled font-mono w-11 text-right">
-                      {heureLabel(e.createdAt)}
                     </span>
                     {!archivesView && (
                       <button

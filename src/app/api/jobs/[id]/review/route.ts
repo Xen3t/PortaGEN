@@ -3,7 +3,11 @@ import { requireApiUser } from '@/lib/auth/session'
 import { getJob, updateJob } from '@/lib/db'
 import { activateDecorByJob } from '@/lib/db/decors'
 
-/** Validation humaine : approuver ou rejeter une génération terminée. */
+/**
+ * Validation humaine d'un DÉCOR généré : approuver ou rejeter.
+ * La validation des MES a été retirée le 28/07/2026 (décision Mathias) — elle ne
+ * déclenchait rien, seul le geste décor a un effet (activation en bibliothèque).
+ */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const auth = requireApiUser(req)
   if (auth instanceof NextResponse) return auth
@@ -12,6 +16,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!job) return NextResponse.json({ error: 'Job introuvable' }, { status: 404 })
   if (job.status !== 'done') {
     return NextResponse.json({ error: 'Le job n’est pas terminé' }, { status: 400 })
+  }
+  if (job.type !== 'decor' && job.type !== 'decor-fix') {
+    return NextResponse.json({ error: 'La validation ne concerne que les décors' }, { status: 400 })
   }
   const body = await req.json().catch(() => null)
   const action = body?.action

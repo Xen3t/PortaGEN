@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { getDb } from '@/lib/db'
-import type { GabaritParams } from '@/lib/geometry'
+import { DEFAULT_PARAMS, type GabaritParams, type PilierDroitParams } from '@/lib/geometry'
 
 /**
  * Réglages de gabarit PAR TAILLE (piliers/murets), édités depuis la page « Gabarits ».
@@ -142,6 +142,84 @@ export function saveGabaritGlobals(
     `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
   ).run(globalsKey(moteur), JSON.stringify(params ?? {}))
+}
+
+/**
+ * 2ᵉ gabarit du coulissant — pilier droit (04/08/2026). Un jeu PAR moteur/jeu
+ * (« pilier_droit.coulissant », « pilier_droit.coulissant-xl »), stocké dans
+ * app_settings. Défauts du code (DEFAULT_PILIER_DROIT) comblent les trous.
+ */
+const PILIER_DROIT_KEY = 'pilier_droit'
+
+function pilierDroitKey(moteur: string): string {
+  return `${PILIER_DROIT_KEY}.${moteur}`
+}
+
+/** Ne garde que les 4 réglages du pilier droit, avec des bornes plausibles. */
+export function sanitizePilierDroit(input: unknown): Partial<PilierDroitParams> | null {
+  if (typeof input !== 'object' || input === null) return null
+  const src = input as Record<string, unknown>
+  const out: Record<string, number> = {}
+  const num = (v: unknown, min: number, max: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? (v as number) : undefined
+  if (num(src.largeur, 5, 200) !== undefined) out.largeur = src.largeur as number
+  if (num(src.decalage, -150, 150) !== undefined) out.decalage = src.decalage as number
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/**
+ * Défauts du pilier droit DÉRIVÉS du gabarit général : même largeur que le
+ * pilier gauche, décalage 0. La hauteur suit toujours le pilier gauche
+ * (interpolée par taille) côté géométrie.
+ */
+export function getPilierDroitDefault(
+  moteur = 'coulissant',
+  db: Database.Database = getDb()
+): PilierDroitParams {
+  const eff: GabaritParams = { ...DEFAULT_PARAMS, ...getGabaritGlobals(moteur, db) }
+  return {
+    largeur: Math.round(eff.pillarWidth),
+    decalage: 0,
+  }
+}
+
+/**
+ * Réglage ENREGISTRÉ du pilier droit (null si jamais réglé). Le pipeline s'en
+ * sert pour distinguer « non réglé » (⇒ reprendre le pilier interpolé de
+ * l'étape 1, hauteur par taille) de « réglé » (⇒ placement fixe voulu).
+ */
+export function getPilierDroitSaved(
+  moteur = 'coulissant',
+  db: Database.Database = getDb()
+): Partial<PilierDroitParams> | null {
+  const row = db
+    .prepare('SELECT value FROM app_settings WHERE key = ?')
+    .get(pilierDroitKey(moteur)) as { value: string } | undefined
+  if (!row) return null
+  try {
+    return sanitizePilierDroit(JSON.parse(row.value))
+  } catch {
+    return null
+  }
+}
+
+/** Réglages du pilier droit d'un moteur/jeu (défauts dérivés du gabarit général). */
+export function getPilierDroit(
+  moteur = 'coulissant',
+  db: Database.Database = getDb()
+): PilierDroitParams {
+  return { ...getPilierDroitDefault(moteur, db), ...(getPilierDroitSaved(moteur, db) ?? {}) }
+}
+
+export function savePilierDroit(
+  params: Partial<PilierDroitParams> | null,
+  moteur = 'coulissant',
+  db: Database.Database = getDb()
+): void {
+  db.prepare(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+  ).run(pilierDroitKey(moteur), JSON.stringify(params ?? {}))
 }
 
 /** Enregistre (ou supprime avec null) l'override d'une taille d'un moteur. */

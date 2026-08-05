@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import GabaritPreview from '@/components/GabaritPreview'
-import { DEFAULT_PARAMS, effectiveHeights, type CapStyle, type GabaritParams } from '@/lib/geometry'
+import {
+  DEFAULT_PARAMS,
+  DEFAULT_PILIER_DROIT,
+  effectiveHeights,
+  type CapStyle,
+  type GabaritParams,
+  type PilierDroitParams,
+} from '@/lib/geometry'
 import { GABARIT_SET_DEFAULTS, type GabaritSetKey } from '@/lib/gabaritSets'
 
 /**
@@ -83,6 +90,16 @@ const sizeSliders = (produit: string): Slider[] => [
 
 const CAP_LABELS: Record<CapStyle, string> = { none: 'aucun', flat: 'plat', gendarme: 'gendarme' }
 
+// 2ᵉ gabarit du coulissant (04/08/2026) : placement du pilier droit qui cache
+// la lame. 4 réglages seulement (décision Mathias : « on ne fait que le placer »).
+type PilierDroitSlider = { key: keyof PilierDroitParams; label: string; unit: string; min: number; max: number }
+// Le pilier droit ne se règle qu'en largeur et décalage : la hauteur suit le
+// pilier gauche, et le recouvrement de la lame est une marge technique fixe.
+const PILIER_DROIT_SLIDERS: PilierDroitSlider[] = [
+  { key: 'largeur', label: 'Largeur du pilier droit', unit: 'cm', min: 10, max: 120 },
+  { key: 'decalage', label: 'Décalage horizontal', unit: 'cm', min: -60, max: 60 },
+]
+
 export default function GabaritsManager({
   moteur = 'battant',
   embedded = false,
@@ -102,6 +119,20 @@ export default function GabaritsManager({
   const [globalsDirty, setGlobalsDirty] = useState(false)
   const [overrides, setOverrides] = useState<Record<string, Override>>({})
   const [notice, setNotice] = useState<string | null>(null)
+
+  // Coulissant : gabarit en 2 phases (04/08/2026). Phase 1 = base (sans pilier
+  // droit, muret jusqu'au bord) ; phase 2 = placement du pilier droit.
+  const isCoulissant = moteur === 'coulissant' || moteur === 'coulissant-xl'
+  const [phase, setPhase] = useState<1 | 2>(1)
+  const [pilierDroit, setPilierDroit] = useState<PilierDroitParams>(DEFAULT_PILIER_DROIT)
+  // Défaut = le pilier de la phase 1 (dérivé du gabarit général), pour le repli
+  // et le bouton « valeurs par défaut ».
+  const [pilierDroitDefault, setPilierDroitDefault] = useState<PilierDroitParams>(DEFAULT_PILIER_DROIT)
+  const [pilierDroitDirty, setPilierDroitDirty] = useState(false)
+  // false = jamais réglé : le rendu (et l'aperçu) reprennent le pilier de
+  // l'étape 1 (hauteur interpolée par taille). Dès qu'on ajuste/enregistre,
+  // on passe au placement fixe de la Phase 2.
+  const [pilierDroitConfigured, setPilierDroitConfigured] = useState(false)
 
   // — panneau de dérogation —
   const [panelLabel, setPanelLabel] = useState<string | null>(null)
@@ -125,6 +156,8 @@ export default function GabaritsManager({
     setPanelLabel(null)
     setGlobalsDirty(false)
     setPanelDirty(false)
+    setPhase(1)
+    setPilierDroitDirty(false)
     fetch(`/api/sizes?moteur=${moteur}`)
       .then((r) => r.json())
       .then((d) => setSizes(d.sizes ?? []))
@@ -133,6 +166,9 @@ export default function GabaritsManager({
       .then((d) => {
         setOverrides(d.overrides ?? {})
         setGlobals(d.globals ?? {})
+        setPilierDroit({ ...DEFAULT_PILIER_DROIT, ...(d.pilierDroit ?? {}) })
+        setPilierDroitDefault({ ...DEFAULT_PILIER_DROIT, ...(d.pilierDroitDefault ?? {}) })
+        setPilierDroitConfigured(Boolean(d.pilierDroitConfigured))
       })
     setCannyUrl(null)
     fetch(`/api/moteurs/${moteur}/canny`)
@@ -189,11 +225,17 @@ export default function GabaritsManager({
     [moteur]
   )
 
+  // Largeur de référence des gabarits (04/08/2026) : la plus grande largeur du
+  // jeu affiché. L'aperçu utilise donc le même gabarit pour toutes les largeurs
+  // d'une hauteur — reflet exact de ce que fait le lancement (launchGamme).
+  const refWidth = widths.length ? widths[widths.length - 1] : undefined
+
   /** Valeur effective d'un paramètre pour une taille (défaut < global < dérogation). */
   const effectiveFor = (label: string): GabaritParams => ({
     ...base,
     ...globals,
     ...(panelLabel === label ? draft : overrides[label] ?? {}),
+    ...(refWidth ? { refWidth } : {}),
   })
 
   function openPanel(label: string) {
@@ -234,6 +276,31 @@ export default function GabaritsManager({
     if (res.ok) {
       setGlobalsDirty(false)
       setNotice('Réglages globaux enregistrés — appliqués aux prochaines gammes (sauf tailles dérogées).')
+    } else {
+      setNotice(`Erreur : ${data?.error ?? res.status}`)
+    }
+  }
+
+  function setPilierDroitField(key: keyof PilierDroitParams, value: number) {
+    setPilierDroit((cur) => ({ ...cur, [key]: value }))
+    setPilierDroitDirty(true)
+  }
+
+  async function savePilierDroit() {
+    setBusy(true)
+    setNotice(null)
+    const res = await fetch('/api/size-params', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pilierDroit, moteur }),
+    })
+    const data = await res.json().catch(() => null)
+    setBusy(false)
+    if (res.ok) {
+      setPilierDroitDirty(false)
+      setPilierDroitConfigured(true)
+      if (data?.pilierDroit) setPilierDroit(data.pilierDroit)
+      setNotice('Pilier droit enregistré — appliqué aux prochaines gammes coulissantes.')
     } else {
       setNotice(`Erreur : ${data?.error ?? res.status}`)
     }
@@ -306,6 +373,34 @@ export default function GabaritsManager({
         </div>
       )}
 
+      {/* Onglets de phase (coulissant uniquement) : base puis pilier droit. */}
+      {isCoulissant && (
+        <div className="inline-flex gap-1 bg-white border border-border rounded-full p-1 mb-5 shadow-sm">
+          {([1, 2] as const).map((n) => (
+            <button
+              key={n}
+              onClick={() => setPhase(n)}
+              className={`text-sm font-bold px-4 py-1.5 rounded-full transition-colors ${
+                phase === n ? 'bg-brand-green text-white' : 'text-text-secondary hover:bg-surface'
+              }`}
+            >
+              <span className="opacity-70 font-semibold">Phase {n} · </span>
+              {n === 1 ? 'Base (piliers & murets)' : 'Pilier droit'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {isCoulissant && phase === 1 && (
+        <p className="text-xs text-text-secondary mb-4 max-w-[80ch]">
+          À cette étape, <b>pas de pilier droit</b> : le muret file jusqu&apos;au bord et la lame est
+          posée par-dessus. Le pilier droit qui cache la lame se règle en <b>Phase 2</b>.
+        </p>
+      )}
+
+      {/* ===== PHASE 1 (ou moteurs non coulissants) : base piliers & murets ===== */}
+      {(!isCoulissant || phase === 1) && (
+      <>
       {/* PARAMÈTRES GLOBAUX */}
       <section className="mb-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
@@ -409,7 +504,7 @@ export default function GabaritsManager({
                         open ? 'border-brand-green' : 'border-transparent hover:shadow-default hover:translate-y-[-1px]'
                       }`}
                     >
-                      <GabaritPreview decorUrl={decorUrl} size={{ w: s.w, h: s.h }} params={effectiveFor(s.label)} cannyUrl={cannyUrl} />
+                      <GabaritPreview decorUrl={decorUrl} size={{ w: s.w, h: s.h }} params={effectiveFor(s.label)} cannyUrl={cannyUrl} rightPillar={!isCoulissant} />
                       <div className="flex items-center justify-between gap-1 mt-1.5 px-0.5">
                         <span className="text-sm font-medium">{s.w}×{s.h}</span>
                         {hasOverride && (
@@ -425,6 +520,98 @@ export default function GabaritsManager({
           </section>
         ))}
       </div>
+      </>
+      )}
+
+      {/* ===== PHASE 2 : placement du pilier droit (coulissant) ===== */}
+      {isCoulissant && phase === 2 && (
+        <>
+          <section className="mb-6">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-text-secondary">
+                Placement du pilier droit
+              </h3>
+              <p className="text-xs text-text-disabled max-w-[54ch]">
+                Peint par-dessus le rendu pour passer devant la lame. Sa <b>hauteur suit toujours le pilier gauche</b>
+                {' '}(les deux piliers sont identiques) — on ne règle que <b>largeur et décalage</b> : le décalage
+                choisit ce que le pilier recouvre.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+              {PILIER_DROIT_SLIDERS.map((p) => (
+                <div key={p.key}>
+                  <div className="flex items-baseline justify-between text-xs mb-1">
+                    <label className="font-medium text-text-secondary">{p.label}</label>
+                    <span className="font-mono text-text-disabled">
+                      {pilierDroit[p.key]} {p.unit}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={p.min}
+                    max={p.max}
+                    value={pilierDroit[p.key]}
+                    onChange={(e) => setPilierDroitField(p.key, Number(e.target.value))}
+                    title={p.label}
+                    className="w-full"
+                    style={{ accentColor: '#5d9228' }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 mt-4">
+              <button
+                onClick={savePilierDroit}
+                disabled={busy || !pilierDroitDirty}
+                className="bg-brand-green text-white text-sm font-bold rounded-[10px] px-4 py-2 hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+              >
+                Enregistrer le pilier droit
+              </button>
+              <button
+                onClick={() => {
+                  setPilierDroit(pilierDroitDefault)
+                  setPilierDroitDirty(true)
+                }}
+                title="Reprend le pilier tel qu'il est fait à l'étape 1 (gabarit général)"
+                className="text-xs text-brand-teal hover:opacity-70 font-semibold"
+              >
+                ↺ Pilier de l&apos;étape 1
+              </button>
+              {pilierDroitDirty && (
+                <span className="text-xs text-brand-teal">Modifications non enregistrées — l&apos;aperçu est déjà à jour.</span>
+              )}
+            </div>
+          </section>
+
+          <div className="space-y-6">
+            {widths.map((w) => (
+              <section key={w}>
+                <h3 className="text-sm font-semibold text-text-secondary mb-2">Largeur {w} cm</h3>
+                <div className="flex gap-3">
+                  {sizes
+                    .filter((s) => s.w === w)
+                    .map((s) => (
+                      <div key={s.label} className="flex-1 min-w-0 bg-white rounded-[12px] shadow-sm p-2 border-2 border-transparent">
+                        <GabaritPreview
+                          decorUrl={decorUrl}
+                          size={{ w: s.w, h: s.h }}
+                          params={{ ...base, ...globals, ...(refWidth ? { refWidth } : {}) }}
+                          cannyUrl={cannyUrl}
+                          // Non réglé : on montre le pilier de l'étape 1 (général,
+                          // interpolé) — reflet exact du rendu. Réglé/ajusté : le
+                          // placement fixe de la Phase 2.
+                          rightPillar={!(pilierDroitConfigured || pilierDroitDirty)}
+                          pilierDroit={pilierDroitConfigured || pilierDroitDirty ? pilierDroit : null}
+                        />
+                        <div className="mt-1.5 px-0.5 text-sm font-medium">{s.w}×{s.h}</div>
+                      </div>
+                    ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* FENÊTRE DE DÉROGATION (centrée) : grand aperçu à gauche, réglages à droite */}
       {panelLabel && panelSize && (
@@ -475,7 +662,7 @@ export default function GabaritsManager({
               {/* Grand aperçu */}
               <div className="flex-1 min-w-0 bg-surface p-5 flex items-center justify-center">
                 <div className="w-full max-w-3xl">
-                  <GabaritPreview decorUrl={decorUrl} size={{ w: panelSize.w, h: panelSize.h }} params={effectiveFor(panelLabel)} cannyUrl={cannyUrl} />
+                  <GabaritPreview decorUrl={decorUrl} size={{ w: panelSize.w, h: panelSize.h }} params={effectiveFor(panelLabel)} cannyUrl={cannyUrl} rightPillar={!isCoulissant} />
                 </div>
               </div>
 

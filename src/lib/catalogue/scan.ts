@@ -101,6 +101,8 @@ export interface CatalogProductRow {
   summary: string
   /** JSON : références (`coloris|300x140`) apparues au dernier scan (étiquette NOUVEAU). */
   new_refs: string
+  /** Pieds de soutien : NULL = pas encore jugé (juge vision), 1 = oui, 0 = non. */
+  pieds: number | null
   last_scan_at: string
   created_at: string
 }
