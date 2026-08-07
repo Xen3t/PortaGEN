@@ -117,10 +117,11 @@ export default function GammeBatchPage() {
         }
       })
       .filter((t): t is Tile => t !== null)
-    // « pose-fusion » (17/07/2026) : UN job = la MES complète — il tient les deux
-    // rôles de la vignette (préparation ET image finale).
+    // « pose-fusion » (17/07/2026) et « decor-autour » (05/08/2026) : UN job = la
+    // MES complète — il tient les deux rôles de la vignette (préparation ET
+    // image finale). Le Journal admin lie « voir la gamme » sur TOUT batch.
     const fromPoseFusion = jobs
-      .filter((j) => j.type === 'pose-fusion')
+      .filter((j) => j.type === 'pose-fusion' || j.type === 'decor-autour')
       .map((p): Tile | null => {
         const s = sizeOf(p)
         return s

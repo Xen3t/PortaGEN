@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import Chargement from '@/components/Chargement'
+import { PictoIllu } from '../Silhouette'
 
 /**
  * Cartes « Mes sessions » (maquette sessions-v2, validée le 13/07/2026) :
@@ -44,6 +45,12 @@ const MOTEUR_LABELS: Record<string, string> = {
   forculus: 'Portillon',
   libre: 'MES Libre',
 }
+
+/** Puces de la barre de filtres : les VRAIES typologies produit seulement —
+ *  ni legacy (07/08, plus rien de legacy visible), ni MES Libre (c'est un
+ *  mode, pas une typologie — remarque Mathias 07/08 ; ses sessions restent
+ *  visibles sous « Toutes »). MOTEUR_LABELS complet reste pour les badges. */
+const MOTEURS_FILTRABLES = ['janus', 'terminus', 'forculus'] as const
 
 // Dernière liste reçue, gardée en mémoire tant que l'onglet vit (une entrée par
 // limite demandée : 3 sur l'accueil, 200 sur « Toutes les sessions »). En
@@ -104,6 +111,9 @@ export default function SessionCards({
     () => lastLoaded.get(limit) ?? null
   )
   const [moteurFilter, setMoteurFilter] = useState('')
+  /** Type de MES (07/08) : '' = tous, 'contrainte' ou 'libre' — CUMULABLE avec
+   *  le filtre Produit (les deux s'additionnent en ET). */
+  const [typeFilter, setTypeFilter] = useState('')
   const [daysFilter, setDaysFilter] = useState('')
 
   useEffect(() => {
@@ -157,18 +167,30 @@ export default function SessionCards({
   if (sessions == null) {
     return hideWhenEmpty ? null : <Chargement />
   }
-  if (sessions.length === 0 && hideWhenEmpty) return null
 
+  // Sessions des flux LEGACY (directe / catalogue / décors) MASQUÉES le
+  // 07/08/2026 (demande Mathias : plus rien de legacy visible dans l'app).
+  // Les lignes et les jobs restent en base — filtre d'affichage seulement.
+  const AFFICHER_SESSIONS_LEGACY = false
+  const visibles = AFFICHER_SESSIONS_LEGACY
+    ? sessions
+    : sessions.filter((s) => s.source === 'decor-autour' || s.source === 'libre')
+  if (visibles.length === 0 && hideWhenEmpty) return null
+
+  // Les filtres s'ADDITIONNENT (Produit ET Type de MES ET période — 07/08).
   const shown = showFilters
-    ? sessions.filter(
+    ? visibles.filter(
         (s) =>
           (!moteurFilter || s.moteur === moteurFilter) &&
+          (!typeFilter ||
+            (typeFilter === 'contrainte' ? s.source === 'decor-autour' : s.source === 'libre')) &&
           (daysFilter === '' || matchesPeriod(s.createdAt, daysFilter))
       )
-    : sessions
-  const filtersActive = moteurFilter !== '' || daysFilter !== ''
+    : visibles
+  const filtersActive = moteurFilter !== '' || typeFilter !== '' || daysFilter !== ''
   const resetFilters = () => {
     setMoteurFilter('')
+    setTypeFilter('')
     setDaysFilter('')
   }
 
@@ -176,17 +198,25 @@ export default function SessionCards({
     <>
     {showFilters && (
       <div className="flex items-center gap-x-5 gap-y-2 flex-wrap bg-white rounded-[12px] border border-border shadow-sm px-4 py-3 mb-3.5">
+        {/* Pas de puce « Tous » (retour Mathias 07/08) : cliquer active,
+            re-cliquer désactive — aucun filtre actif = tout est affiché.
+            Ordre : Type de MES d'abord, puis Produit (demande Mathias 07/08). */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mr-1">
-            Typologie
+            Type de MES
           </span>
-          {[['', 'Toutes'], ...Object.entries(MOTEUR_LABELS)].map(([value, label]) => (
+          {(
+            [
+              ['contrainte', 'Contrainte'],
+              ['libre', 'Libre'],
+            ] as const
+          ).map(([value, label]) => (
             <button
               key={value}
               type="button"
-              onClick={() => setMoteurFilter(value)}
+              onClick={() => setTypeFilter((cur) => (cur === value ? '' : value))}
               className={`rounded-full border-[1.5px] px-3 py-0.5 text-[13px] font-semibold transition-colors ${
-                moteurFilter === value
+                typeFilter === value
                   ? 'bg-brand-green-light border-brand-green text-brand-green'
                   : 'bg-white border-border text-text-secondary hover:border-brand-green hover:text-brand-green'
               }`}
@@ -194,6 +224,25 @@ export default function SessionCards({
               {label}
             </button>
           ))}
+        </div>
+        {/* Liste déroulante et non des puces (remarque Mathias 07/08 : pas
+            scalable) : tient aussi bien 3 produits que 20. */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mr-1">
+            Produit
+          </span>
+          <select
+            value={moteurFilter}
+            onChange={(e) => setMoteurFilter(e.target.value)}
+            className="rounded-full border-[1.5px] border-border bg-white px-3 py-0.5 text-[13px] font-semibold cursor-pointer focus:outline-none focus:border-brand-green"
+          >
+            <option value="">Tous</option>
+            {MOTEURS_FILTRABLES.map((k) => (
+              <option key={k} value={k}>
+                {MOTEUR_LABELS[k]}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mr-1">
@@ -212,10 +261,10 @@ export default function SessionCards({
           </select>
         </div>
         <span className="ml-auto text-xs text-text-secondary">
-          {filtersActive && shown.length !== sessions.length ? (
+          {filtersActive && shown.length !== visibles.length ? (
             <>
               <b className="text-text-primary">{shown.length}</b> session
-              {shown.length > 1 ? 's' : ''} sur {sessions.length} ·{' '}
+              {shown.length > 1 ? 's' : ''} sur {visibles.length} ·{' '}
               <button
                 type="button"
                 onClick={resetFilters}
@@ -226,8 +275,8 @@ export default function SessionCards({
             </>
           ) : (
             <>
-              <b className="text-text-primary">{sessions.length}</b> session
-              {sessions.length > 1 ? 's' : ''}
+              <b className="text-text-primary">{visibles.length}</b> session
+              {visibles.length > 1 ? 's' : ''}
             </>
           )}
         </span>
@@ -237,17 +286,18 @@ export default function SessionCards({
       {showTitle && (
         <h2 className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-3 flex items-baseline gap-3">
           Mes sessions
-          {allLink && sessions.length > 0 && (
+          {allLink && visibles.length > 0 && (
             <Link
               href="/generation/sessions"
-              className="ml-auto normal-case tracking-normal text-xs font-semibold text-brand-green hover:underline"
+              className="ml-auto normal-case tracking-normal text-xs font-semibold text-brand-green hover:underline inline-flex items-center gap-1.5"
             >
-              Toutes les sessions →
+              Toutes les sessions
+              <PictoIllu name="ouvrir" size={11} className="!align-middle" />
             </Link>
           )}
         </h2>
       )}
-      {sessions.length === 0 ? (
+      {visibles.length === 0 ? (
         <p className="text-sm text-text-secondary">
           Aucune session pour l&apos;instant — lance une{' '}
           <Link href="/generation" className="text-brand-green font-semibold hover:underline">
@@ -274,11 +324,21 @@ export default function SessionCards({
       ) : (
         <div className="stagger grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
           {shown.map((s) => {
+            // L'ÉTAT RÉEL, rien d'autre (retour Mathias 07/08) : au repos on
+            // affiche le compte exact « généré / total » — vert quand tout est
+            // sorti, gris sinon. « en cours » et « en erreur » restent factuels.
+            const accord = s.source === 'decor' ? '' : 'e'
             const statut = s.busy
               ? { text: 'en cours', cls: 'text-brand-teal anim-respire' }
               : s.failed
                 ? { text: '✗ en erreur', cls: 'text-brand-red' }
-                : { text: '✓ terminée', cls: 'text-brand-green' }
+                : {
+                    text: `${s.mesDone}/${s.mesCount} généré${accord}${s.mesCount > 1 ? 's' : ''}`,
+                    cls:
+                      s.mesCount > 0 && s.mesDone === s.mesCount
+                        ? 'text-brand-green'
+                        : 'text-text-secondary',
+                  }
             const href =
               s.source === 'catalogue'
                 ? `/production/gamme/${encodeURIComponent(s.batchId)}`
@@ -335,7 +395,7 @@ export default function SessionCards({
                       </span>
                     ) : s.source === 'decor-autour' ? (
                       <span className="absolute top-2 right-2 rounded-full text-[10.5px] font-bold px-2 py-0.5 bg-brand-green text-white">
-                        Décor autour
+                        MES Contrainte
                       </span>
                     ) : (
                       <span className="absolute top-2 right-2 bg-white/95 border border-border rounded-full text-[10.5px] font-bold px-2 py-0.5 text-text-secondary">
@@ -380,8 +440,9 @@ export default function SessionCards({
                         )}
                         {statut.text}
                       </span>
-                      <span className="ml-auto font-bold text-brand-green">
-                        {s.busy ? 'Suivre →' : 'Rouvrir →'}
+                      <span className="ml-auto font-bold text-brand-green inline-flex items-center gap-1.5">
+                        {s.busy ? 'Suivre' : 'Ouvrir'}
+                        <PictoIllu name="ouvrir" size={12} className="!align-middle" />
                       </span>
                     </div>
                   </div>

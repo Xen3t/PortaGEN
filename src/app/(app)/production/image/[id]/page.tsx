@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { isMesRoot } from '@/lib/mesVariants'
 import { parseSizeFromProductName } from '@/lib/productName'
 import DecorStudio from '@/components/DecorStudio'
 import PhraseAttente from '@/components/PhraseAttente'
@@ -53,7 +54,10 @@ function mesImageOf(r: Record<string, unknown> | null): string | null {
   const s = (k: string) => (typeof r?.[k] === 'string' ? (r[k] as string) : null)
   return s('compositePath') ?? s('rawOutputPath') ?? s('deliveryPath')
 }
-const isMesRootType = (t: string) => t === 'integration' || t === 'pose-fusion'
+// MES racine : prédicat PARTAGÉ (mesVariants) — la copie locale avait oublié
+// « decor-autour » (05/08/2026) et privait le nouveau mode de sa galerie de
+// générations sœurs et du bouton « choisir ».
+const isMesRootType = isMesRoot
 
 const STATUS_FR: Record<string, string> = {
   queued: 'en file d’attente',

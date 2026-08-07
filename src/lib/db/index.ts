@@ -310,7 +310,52 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE (product_id, rel_path, axis)
     );
+
+    -- Bibliothèque des DESCRIPTIONS PRODUIT vision (rodage 07/08/2026, décision
+    -- Mathias) : produit + coloris + moteur = UNE description factuelle
+    -- (structure, cadre, remplissage, quincaillerie) établie par un modèle
+    -- vision imposant et RÉUTILISÉE tant que la clé correspond — sinon nouvel
+    -- appel + insertion. Le coloris fait partie de la clé : un ATHOS Teck et un
+    -- ATHOS gris n'ont pas les mêmes matières.
+    CREATE TABLE IF NOT EXISTS produit_descriptions (
+      id INTEGER PRIMARY KEY,
+      produit TEXT NOT NULL,
+      coloris TEXT NOT NULL DEFAULT '',
+      moteur TEXT NOT NULL,
+      description TEXT NOT NULL,
+      model TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
+
+  // Bibliothèque de descriptions créée quelques minutes avant l'ajout du
+  // coloris dans la clé (07/08/2026, rechargement DEV entre les deux) :
+  // recréation douce avec copie — l'ancienne contrainte UNIQUE(produit, moteur)
+  // inline bloquerait deux coloris d'un même produit, un ALTER ne suffit pas.
+  const pdCols = (
+    db.prepare(`PRAGMA table_info(produit_descriptions)`).all() as { name: string }[]
+  ).map((c) => c.name)
+  if (pdCols.length > 0 && !pdCols.includes('coloris')) {
+    db.exec(`
+      ALTER TABLE produit_descriptions RENAME TO produit_descriptions_old;
+      CREATE TABLE produit_descriptions (
+        id INTEGER PRIMARY KEY,
+        produit TEXT NOT NULL,
+        coloris TEXT NOT NULL DEFAULT '',
+        moteur TEXT NOT NULL,
+        description TEXT NOT NULL,
+        model TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO produit_descriptions (produit, coloris, moteur, description, model, created_at)
+        SELECT produit, '', moteur, description, model, created_at FROM produit_descriptions_old;
+      DROP TABLE produit_descriptions_old;
+    `)
+  }
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_produit_descriptions_cle
+     ON produit_descriptions (produit, coloris, moteur)`
+  )
 
   // Bases créées avant l'ajout des colonnes de validation : migration douce.
   const jobCols = (db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map(

@@ -247,6 +247,13 @@ function mesForCell(
   )
 }
 
+/** GÉNÉRATION LEGACY MASQUÉE (demande Mathias 07/08/2026 : plus rien de legacy
+ *  visible dans l'app) : boutons Générer, réglages décor, décors de gamme,
+ *  derniers lancements. Le catalogue reste un lieu de CONSULTATION + détourage
+ *  + entrée MES Contrainte. Code et API conservés — repasser à true pour tout
+ *  revoir. */
+const AFFICHER_GENERATION_LEGACY = false
+
 export default function CatalogueProductPage(props: { params: Promise<{ id: string }> }) {
   const { id } = use(props.params)
   const [detail, setDetail] = useState<Detail | null>(null)
@@ -873,6 +880,16 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
           {familyTitle(detail.family)} · {detail.brand}
         </span>
         <span className="ml-auto flex items-center gap-2">
+          {/* Entrée « via le catalogue » de MES Contrainte (acté 07/08, comme le
+              legacy) : ouvre une session avec TOUS les visuels générables du
+              produit (détourage local sinon face du serveur). */}
+          <Link
+            href={`/generation/decor-autour?produit=${encodeURIComponent(id)}`}
+            title="Ouvrir ce produit dans MES Contrainte — une session avec tous les visuels générables"
+            className="bg-white border border-border text-text-secondary rounded-[10px] px-4 py-2 text-sm font-bold hover:text-brand-green hover:border-brand-green"
+          >
+            MES Contrainte
+          </Link>
           {detCount > 0 && (
             <button
               onClick={() => setDetOpen(true)}
@@ -881,18 +898,20 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
               ✂ Détourer les visuels ({detCount})
             </button>
           )}
-          <button
-            onClick={() => openBatch(null)}
-            disabled={globalMissing === 0}
-            title={
-              globalMissing === 0
-                ? 'Aucune mise en situation Site à générer'
-                : 'Générer toutes les MES Site manquantes (chaque coloris avec son décor)'
-            }
-            className="bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Générer toutes les manquantes ({globalMissing})
-          </button>
+          {AFFICHER_GENERATION_LEGACY && (
+            <button
+              onClick={() => openBatch(null)}
+              disabled={globalMissing === 0}
+              title={
+                globalMissing === 0
+                  ? 'Aucune mise en situation Site à générer'
+                  : 'Générer toutes les MES Site manquantes (chaque coloris avec son décor)'
+              }
+              className="bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover hover:shadow-lg transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Générer toutes les manquantes ({globalMissing})
+            </button>
+          )}
         </span>
       </div>
       <div className="flex flex-wrap gap-5 items-baseline mt-2 mb-4 text-[13px] text-text-secondary">
@@ -1017,30 +1036,32 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
               <span className="text-xs text-text-secondary">
                 {g.entries.length} référence{g.entries.length > 1 ? 's' : ''}
               </span>
-              <span className="ml-auto flex flex-wrap items-center gap-3">
-                <span className="text-xs text-text-secondary">
-                  Réglages : décor « {decorName(s.decorId)} »
-                  {hasXl && <> · décor XL « {decorName(s.decorXlId)} »</>} · {alignLabel(s)} ·{' '}
+              {AFFICHER_GENERATION_LEGACY && (
+                <span className="ml-auto flex flex-wrap items-center gap-3">
+                  <span className="text-xs text-text-secondary">
+                    Réglages : décor « {decorName(s.decorId)} »
+                    {hasXl && <> · décor XL « {decorName(s.decorXlId)} »</>} · {alignLabel(s)} ·{' '}
+                    <button
+                      onClick={() => openSettings(g.coloris)}
+                      className="text-brand-green font-bold hover:underline"
+                    >
+                      ✎ modifier
+                    </button>
+                  </span>
                   <button
-                    onClick={() => openSettings(g.coloris)}
-                    className="text-brand-green font-bold hover:underline"
+                    onClick={() => openBatch(g.coloris)}
+                    disabled={colorisMissing === 0}
+                    title={
+                      colorisMissing === 0
+                        ? 'Aucune mise en situation Site à générer pour ce coloris'
+                        : 'Générer les MES Site manquantes de ce coloris'
+                    }
+                    className="bg-brand-green text-white rounded-[8px] px-3 py-1.5 text-xs font-bold hover:bg-brand-green-hover disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    ✎ modifier
+                    Générer les manquantes ({colorisMissing})
                   </button>
                 </span>
-                <button
-                  onClick={() => openBatch(g.coloris)}
-                  disabled={colorisMissing === 0}
-                  title={
-                    colorisMissing === 0
-                      ? 'Aucune mise en situation Site à générer pour ce coloris'
-                      : 'Générer les MES Site manquantes de ce coloris'
-                  }
-                  className="bg-brand-green text-white rounded-[8px] px-3 py-1.5 text-xs font-bold hover:bg-brand-green-hover disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Générer les manquantes ({colorisMissing})
-                </button>
-              </span>
+              )}
             </div>
 
             <div className="px-5 py-4">
@@ -1131,28 +1152,30 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                               <span className="absolute top-1.5 left-1.5 bg-[rgba(31,41,55,0.72)] text-white text-[10.5px] font-bold rounded-full px-2 py-px">
                                 {images.length} MES
                               </span>
-                              <span className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={(ev) => {
-                                    ev.stopPropagation()
-                                    void generate(g.coloris, e.w, e.h, SITE_FORMAT)
-                                  }}
-                                  title="Remplacer les MES — regénérer avec les réglages du coloris"
-                                  className="w-[26px] h-[26px] rounded-[7px] bg-white/95 shadow-sm text-[13px] leading-none hover:bg-brand-green hover:text-white transition-colors"
-                                >
-                                  ↻
-                                </button>
-                                <button
-                                  onClick={(ev) => {
-                                    ev.stopPropagation()
-                                    void generate(g.coloris, e.w, e.h, SITE_FORMAT)
-                                  }}
-                                  title="Générer une MES en plus (nouvelle variante, réglages du coloris)"
-                                  className="w-[26px] h-[26px] rounded-[7px] bg-white/95 shadow-sm text-[13px] leading-none hover:bg-brand-green hover:text-white transition-colors"
-                                >
-                                  ＋
-                                </button>
-                              </span>
+                              {AFFICHER_GENERATION_LEGACY && (
+                                <span className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={(ev) => {
+                                      ev.stopPropagation()
+                                      void generate(g.coloris, e.w, e.h, SITE_FORMAT)
+                                    }}
+                                    title="Remplacer les MES — regénérer avec les réglages du coloris"
+                                    className="w-[26px] h-[26px] rounded-[7px] bg-white/95 shadow-sm text-[13px] leading-none hover:bg-brand-green hover:text-white transition-colors"
+                                  >
+                                    ↻
+                                  </button>
+                                  <button
+                                    onClick={(ev) => {
+                                      ev.stopPropagation()
+                                      void generate(g.coloris, e.w, e.h, SITE_FORMAT)
+                                    }}
+                                    title="Générer une MES en plus (nouvelle variante, réglages du coloris)"
+                                    className="w-[26px] h-[26px] rounded-[7px] bg-white/95 shadow-sm text-[13px] leading-none hover:bg-brand-green hover:text-white transition-colors"
+                                  >
+                                    ＋
+                                  </button>
+                                </span>
+                              )}
                               {siteRunning && (
                                 <span className="absolute bottom-1.5 left-1.5 bg-brand-teal/90 text-white text-[10px] font-bold rounded-full px-2 py-px">
                                   ⏳ {siteGen?.stage === 'integration' ? 'pose en cours…' : 'génération…'}
@@ -1171,7 +1194,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                             >
                               ✂ à détourer d&apos;abord
                             </button>
-                          ) : canGen ? (
+                          ) : canGen && AFFICHER_GENERATION_LEGACY ? (
                             <button
                               onClick={() => void generate(g.coloris, e.w, e.h, SITE_FORMAT)}
                               title={
@@ -1189,10 +1212,16 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
                               title={
                                 noFace
                                   ? 'Aucun visuel produit de face trouvé sur le serveur pour ce coloris'
-                                  : "Générable dès qu'un visuel produit détouré existera"
+                                  : canGen
+                                    ? 'Se génère via MES Contrainte (bouton en haut de page)'
+                                    : "Générable dès qu'un visuel produit détouré existera"
                               }
                             >
-                              {noFace ? 'visuel produit absent' : 'MES non détectée'}
+                              {noFace
+                                ? 'visuel produit absent'
+                                : canGen
+                                  ? 'pas encore de MES'
+                                  : 'MES non détectée'}
                             </span>
                           )}
                           <div className="px-1 pt-1.5 pb-0.5 leading-tight min-w-0">
@@ -1328,7 +1357,9 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
         </p>
       </section>
 
-      {/* v10 : Décors et Moodboards en DEUX sections distinctes (retour Mathias 13/07) */}
+      {/* v10 : Décors et Moodboards en DEUX sections distinctes (retour Mathias 13/07).
+          Décors = bibliothèque LEGACY → section masquée le 07/08. */}
+      {AFFICHER_GENERATION_LEGACY && (
       <section className="bg-white rounded-[12px] border border-border shadow-sm p-4 px-5 mb-4">
         <h5 className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-3">
           Décors de la gamme{' '}
@@ -1362,6 +1393,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
           </button>
         </div>
       </section>
+      )}
 
       <section className="bg-white rounded-[12px] border border-border shadow-sm p-4 px-5 mb-4">
         <h5 className="flex items-baseline gap-2 text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-3">
@@ -1433,6 +1465,8 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
         </div>
       </section>
 
+      {/* Historique des lancements LEGACY (Reprendre/Dupliquer) — masqué 07/08. */}
+      {AFFICHER_GENERATION_LEGACY && (
       <section className="bg-white rounded-[12px] border border-border shadow-sm p-4 px-5 mb-4">
         <h5 className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-2">
           Derniers lancements
@@ -1516,6 +1550,7 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
           </div>
         )}
       </section>
+      )}
 
       {/* infos discrètes : chemin serveur + éléments non reconnus */}
       <p className="text-xs text-text-secondary mt-4">
@@ -2068,28 +2103,32 @@ export default function CatalogueProductPage(props: { params: Promise<{ id: stri
               >
                 ⤢ Pleine résolution
               </a>
-              <button
-                onClick={() => {
-                  const gal = gallery
-                  setGallery(null)
-                  void generate(gal.coloris, gal.w, gal.h, SITE_FORMAT)
-                }}
-                title="Remplacer — regénérer la MES avec les réglages du coloris"
-                className="bg-white/10 text-white border border-white/25 rounded-[8px] px-3 py-1.5 text-xs font-bold hover:bg-white/20 transition-colors"
-              >
-                ↻ Remplacer cette MES
-              </button>
-              <button
-                onClick={() => {
-                  const gal = gallery
-                  setGallery(null)
-                  void generate(gal.coloris, gal.w, gal.h, SITE_FORMAT)
-                }}
-                title="Générer une MES en plus (nouvelle variante, réglages du coloris)"
-                className="bg-brand-green text-white rounded-[8px] px-3 py-1.5 text-xs font-bold hover:bg-brand-green-hover transition-colors"
-              >
-                ＋ Générer une nouvelle MES
-              </button>
+              {AFFICHER_GENERATION_LEGACY && (
+                <>
+                  <button
+                    onClick={() => {
+                      const gal = gallery
+                      setGallery(null)
+                      void generate(gal.coloris, gal.w, gal.h, SITE_FORMAT)
+                    }}
+                    title="Remplacer — regénérer la MES avec les réglages du coloris"
+                    className="bg-white/10 text-white border border-white/25 rounded-[8px] px-3 py-1.5 text-xs font-bold hover:bg-white/20 transition-colors"
+                  >
+                    ↻ Remplacer cette MES
+                  </button>
+                  <button
+                    onClick={() => {
+                      const gal = gallery
+                      setGallery(null)
+                      void generate(gal.coloris, gal.w, gal.h, SITE_FORMAT)
+                    }}
+                    title="Générer une MES en plus (nouvelle variante, réglages du coloris)"
+                    className="bg-brand-green text-white rounded-[8px] px-3 py-1.5 text-xs font-bold hover:bg-brand-green-hover transition-colors"
+                  >
+                    ＋ Générer une nouvelle MES
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

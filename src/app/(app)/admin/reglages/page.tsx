@@ -7,6 +7,13 @@ import RalifySection from '@/components/RalifySection'
 import ReglagesApp, { type AppRubrique } from '@/components/ReglagesApp'
 import ResetApp from '@/components/ResetApp'
 import type { MoteurKey, MoteurReglages } from '@/lib/moteurs'
+import {
+  cadrageDaEffectif,
+  type CadrageDaReglages,
+  type CouleursPlan,
+} from '@/lib/cadrageDa'
+import { computeLayout, projection } from '@/lib/geometry'
+import { ralCodeDepuisHex, ralHexDepuisCode } from '@/lib/ralify'
 
 /**
  * Admin → Réglages — « affichage complet » (maquette reglages-full-v1 validée
@@ -53,6 +60,18 @@ interface MoteurEntry {
   /** Génération du moteur : legacy ou décor autour (absent = legacy). */
   methode?: 'legacy' | 'decor-autour'
 }
+
+/**
+ * Les 3 moteurs décor autour, connus d'avance : ils remplissent la nav DÈS le
+ * premier rendu (retour Mathias 08/08 : la section « Moteurs » vide pendant le
+ * chargement était perturbante). L'API /api/moteurs rafraîchit ensuite
+ * (productCount réel, moteurs en préparation éventuels).
+ */
+const MOTEURS_INITIAUX: MoteurEntry[] = [
+  { key: 'janus', label: 'Battant', codeName: 'JANUS', status: 'actif', productCount: 0, famille: 'Portails', methode: 'decor-autour' },
+  { key: 'terminus', label: 'Coulissant', codeName: 'TERMINUS', status: 'actif', productCount: 0, famille: 'Portails', methode: 'decor-autour' },
+  { key: 'forculus', label: 'Portillon', codeName: 'FORCULUS', status: 'actif', productCount: 0, famille: 'Portails', methode: 'decor-autour' },
+]
 
 interface PromptMeta {
   name: string
@@ -128,6 +147,7 @@ interface CannyInfo {
 type MoteurRubrique =
   | 'detection'
   | 'ralify'
+  | 'cadrage'
   | 'gabarits'
   | 'gabarits-xl'
   | 'canny'
@@ -148,6 +168,8 @@ const APP_RUBRIQUES: { rub: AppRubrique; label: string }[] = [
 const MOTEUR_RUBRIQUES: { rub: MoteurRubrique; label: string; xl?: boolean }[] = [
   { rub: 'detection', label: 'Détection & coloris' },
   { rub: 'ralify', label: 'RALify' },
+  // Fiche décor autour seulement (07/08 soir) : le resizing/la scène sous UI.
+  { rub: 'cadrage', label: 'Cadrage' },
   { rub: 'gabarits', label: 'Gabarits' },
   { rub: 'gabarits-xl', label: 'Gabarits XL', xl: true },
   { rub: 'canny', label: 'Canny' },
@@ -155,6 +177,443 @@ const MOTEUR_RUBRIQUES: { rub: MoteurRubrique; label: string; xl?: boolean }[] =
   { rub: 'prompts', label: 'Prompt System' },
   { rub: 'export', label: 'Export' },
 ]
+
+/**
+ * APERÇU LIVE du cadrage (demande Mathias 07/08 soir : « une vraie preview ») :
+ * reconstruit le plan gris à l'écran avec la MÊME géométrie que le serveur
+ * (computeLayout → projection, logique de construirePlanGris) — bandes de sol,
+ * murets, piliers, chapeaux, rail et rectangle du produit, aux couleurs et
+ * réglages COURANTS (non enregistrés compris). Le rectangle sombre figure le
+ * produit posé.
+ */
+/**
+ * Géométrie d'un aperçu — MÊME logique que la pose serveur : gabarit du moteur
+ * (bascule XL comprise) + échelle produit appliquée DANS la géométrie (un
+ * produit agrandi écarte ses piliers, tout se recompose autour). Sert à
+ * l'affichage ET au scan des alertes hors-cadre.
+ */
+function apercuLayout(
+  moteur: 'janus' | 'terminus' | 'forculus',
+  cadrage: CadrageDaReglages,
+  taille: { w: number; h: number }
+) {
+  const terminus = moteur === 'terminus'
+  const xl = terminus && taille.w >= cadrage.xlMinW
+  const gab: Record<string, number> = {}
+  if (xl) {
+    gab.sceneH = cadrage.xlSceneH
+    gab.groundY = cadrage.xlGroundY
+    if (cadrage.xlZoom !== 100) gab.zoom = cadrage.xlZoom
+  } else {
+    if (cadrage.zoom !== 100) gab.zoom = cadrage.zoom
+    if (cadrage.offsetX !== 0) gab.offsetX = cadrage.offsetX
+    if (cadrage.offsetY !== 0) gab.offsetY = cadrage.offsetY
+    if (cadrage.pillarHMax !== null) gab.pillarHMax = cadrage.pillarHMax
+  }
+  const echL = cadrage.produitLargeurPct / 100
+  const echH = cadrage.produitHauteurPct / 100
+  const tailleEff = {
+    w: Math.max(1, Math.round(taille.w * echL)),
+    h: Math.max(1, Math.round(taille.h * echH)),
+  }
+  const refWidth = xl ? cadrage.xlRefWidthCm : cadrage.refWidthCm
+  const refWidthEff = refWidth !== null ? Math.max(1, Math.round(refWidth * echL)) : null
+  const layout = computeLayout(tailleEff, {
+    ...gab,
+    ...(refWidthEff !== null ? { refWidth: refWidthEff } : {}),
+  })
+  return { layout, xl, terminus }
+}
+
+/**
+ * Scan hors-cadre (07/08 soir, demande Mathias) : pour CHAQUE hauteur standard,
+ * signale un pilier qui sort du cadre (latéralement ou entièrement) ou un
+ * portail qui déborde de la scène — affiché en rouge sous l'aperçu.
+ */
+function alertesCadrage(
+  moteur: 'janus' | 'terminus' | 'forculus',
+  cadrage: CadrageDaReglages
+): { pilier: string[]; portail: string[] } {
+  const largeurs =
+    moteur === 'terminus'
+      ? [
+          { w: 350, tag: '' },
+          { w: 500, tag: ' XL' },
+        ]
+      : [{ w: moteur === 'forculus' ? 100 : 350, tag: '' }]
+  const pilier: string[] = []
+  const portail: string[] = []
+  for (const { w, tag } of largeurs) {
+    for (const h of APERCU_HAUTEURS) {
+      const { layout } = apercuLayout(moteur, cadrage, { w, h })
+      const sort = (r: { w: number; h: number; lossX: number } | null | undefined) =>
+        !!r && (r.lossX > 0 || r.w <= 0 || r.h <= 0)
+      if (sort(layout.pillarLeft) || sort(layout.pillarRight)) pilier.push(`H${h}${tag}`)
+      if (
+        layout.gateLeft < 0 ||
+        layout.gateTop < 0 ||
+        layout.gateLeft + layout.gateW > layout.sceneW
+      ) {
+        portail.push(`H${h}${tag}`)
+      }
+    }
+  }
+  return { pilier, portail }
+}
+
+function ApercuScene({
+  moteur,
+  cadrage,
+  taille,
+  onPart,
+}: {
+  moteur: 'janus' | 'terminus' | 'forculus'
+  cadrage: CadrageDaReglages
+  taille: { w: number; h: number }
+  /** Clic sur une partie dessinée (édition des couleurs À MÊME l'aperçu, 07/08 soir). */
+  onPart?: (part: keyof CouleursPlan, e: React.MouseEvent) => void
+}) {
+  const { layout, terminus } = apercuLayout(moteur, cadrage, taille)
+
+  // Même ratio que la livraison (2000 × 1330).
+  const W = 600
+  const H = 399
+  const proj = projection(W, H, layout.sceneW, layout.sceneH, 'stretch')
+  /** Projection SANS arrondi (08/08, bug vu par Mathias) : projectRect arrondit
+   *  chaque rect séparément → à 600 px de large, portail/murets/rail pouvaient
+   *  se décaler de 1-2 px entre eux. Le SVG accepte les décimales : tout reste
+   *  calé sur la même ligne de sol, comme le vrai plan. */
+  const P = (r: { x: number; y: number; w: number; h: number }) => ({
+    x: r.x * proj.sx,
+    y: r.y * proj.sy,
+    w: r.w * proj.sx,
+    h: r.h * proj.sy,
+  })
+  const gate = P({ x: layout.gateLeft, y: layout.gateTop, w: layout.gateW, h: layout.gateH })
+  const coul = cadrage.couleurs
+  const g = { x: gate.x, y: gate.y, w: gate.w, h: gate.h }
+  const yG = gate.y + gate.h
+  // COULISSANT (08/08) : le rail est l'ORIGINE — posé sur la ligne de sol, la
+  // lame monte de sa hauteur pour rouler dessus (comme à la pose serveur).
+  const railH = terminus && cadrage.bandesSol ? Math.max(2, proj.sy * 2) : 0
+  if (railH > 0) g.y -= railH
+  // Coulissant : la lame s'engage sous le pilier droit (comme à la pose).
+  let gateW = g.w
+  if (terminus) {
+    const pr = P(layout.pillarRight)
+    const eng = Math.min(W, pr.x + Math.min(pr.w, cadrage.recouvrementCm * proj.sx))
+    gateW = Math.max(g.w, eng - g.x)
+  }
+  const hBelow = H - yG
+  const hTrottoir = Math.round(hBelow * 0.45)
+  const hBordure = Math.max(2, Math.round(hBelow * 0.08))
+
+  /** Rect cliquable : chaque partie ouvre son menu couleur (07/08 soir). */
+  const clicProps = (part: keyof CouleursPlan) =>
+    onPart
+      ? {
+          onClick: (e: React.MouseEvent) => onPart(part, e),
+          className: 'cursor-pointer hover:opacity-80 transition-opacity',
+        }
+      : {}
+
+  const aplat = (
+    r: { x: number; y: number; w: number; h: number } | null | undefined,
+    fill: string,
+    key: string,
+    part: keyof CouleursPlan
+  ) => {
+    if (!r) return null
+    const p = P(r)
+    if (p.w <= 0 || p.h <= 0) return null
+    return (
+      <rect key={key} x={p.x} y={p.y} width={p.w} height={p.h} fill={fill} {...clicProps(part)} />
+    )
+  }
+
+  const avant: (React.ReactElement | null)[] = []
+  const apres: (React.ReactElement | null)[] = []
+  if (cadrage.bandesSol) {
+    if (hBelow > 7) {
+      avant.push(
+        <rect
+          key="trottoir"
+          x={0}
+          y={yG}
+          width={W}
+          height={hTrottoir}
+          fill={coul.trottoir}
+          {...clicProps('trottoir')}
+        />,
+        <rect
+          key="bordure"
+          x={0}
+          y={yG + hTrottoir}
+          width={W}
+          height={hBordure}
+          fill={coul.bordure}
+          {...clicProps('bordure')}
+        />,
+        <rect
+          key="route"
+          x={0}
+          y={yG + hTrottoir + hBordure}
+          width={W}
+          height={hBelow - hTrottoir - hBordure}
+          fill={coul.route}
+          {...clicProps('route')}
+        />
+      )
+      if (terminus && railH > 0) {
+        const pr = P(layout.pillarRight)
+        const railW = Math.max(0, pr.x + pr.w - g.x)
+        if (railW > 0) {
+          avant.push(
+            <rect
+              key="rail"
+              x={g.x}
+              y={yG - railH}
+              width={railW}
+              height={railH}
+              fill={coul.rail}
+              {...clicProps('rail')}
+            />
+          )
+        }
+      }
+    }
+    avant.push(aplat(layout.muretLeft, coul.muret, 'muretL', 'muret'))
+    ;(terminus ? apres : avant).push(aplat(layout.muretRight, coul.muret, 'muretR', 'muret'))
+    avant.push(aplat(layout.pillarLeft, coul.pilier, 'pilierL', 'pilier'))
+    ;(terminus ? apres : avant).push(aplat(layout.pillarRight, coul.pilier, 'pilierR', 'pilier'))
+    avant.push(aplat(layout.capLeft?.bbox, coul.chapeau, 'chapL', 'chapeau'))
+    ;(terminus ? apres : avant).push(aplat(layout.capRight?.bbox, coul.chapeau, 'chapR', 'chapeau'))
+  }
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="w-full rounded-[10px] border border-border bg-white"
+    >
+      <rect x={0} y={0} width={W} height={H} fill="#c8c8c8" />
+      {avant}
+      {/* Le produit posé (vraie empreinte du resizing, échelle produit
+          comprise). Teinte BLEUTÉE claire (08/08) : l'ancien gris sombre se
+          confondait avec le rail. Liseré blanc RETIRÉ (retour Mathias 08/08). */}
+      <rect x={g.x} y={g.y} width={gateW} height={g.h} fill="#6b7684" />
+      {apres}
+      {/* Coulissant : le RECOUVREMENT (lame cachée sous le pilier droit) montré
+          en transparence PAR-DESSUS le pilier — sinon invisible par définition
+          (retour Mathias 08/08). */}
+      {terminus &&
+        (() => {
+          const pr = P(layout.pillarRight)
+          const fin = Math.min(W, pr.x + Math.min(pr.w, cadrage.recouvrementCm * proj.sx))
+          if (fin <= pr.x) return null
+          return (
+            <rect
+              x={pr.x}
+              y={g.y}
+              width={fin - pr.x}
+              height={g.h}
+              fill="#6b7684"
+              opacity={0.4}
+            />
+          )
+        })()}
+    </svg>
+  )
+}
+
+/** Hauteurs standard proposées par le sélecteur discret de l'aperçu. */
+const APERCU_HAUTEURS = [100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200]
+
+/** Libellés des parties cliquables de l'aperçu. */
+const PARTIES_PLAN: Record<keyof CouleursPlan, string> = {
+  pilier: 'Piliers',
+  chapeau: 'Chapeaux',
+  muret: 'Murets',
+  trottoir: 'Trottoir',
+  bordure: 'Bordure',
+  route: 'Route',
+  rail: 'Rail',
+}
+
+/**
+ * Petit menu couleur ouvert au CLIC sur une partie de l'aperçu (07/08 soir,
+ * demande Mathias) : même logique que RALify — on tape un code RAL, la pastille
+ * suit ; le sélecteur libre reste pour les teintes hors RAL.
+ */
+function CouleurMenu({
+  part,
+  hex,
+  onHex,
+  onClose,
+}: {
+  part: keyof CouleursPlan
+  hex: string
+  onHex: (hex: string) => void
+  onClose: () => void
+}) {
+  const [texte, setTexte] = useState(() => ralCodeDepuisHex(hex) ?? '')
+  useEffect(() => {
+    setTexte(ralCodeDepuisHex(hex) ?? '')
+  }, [hex, part])
+  const inconnu = texte.trim() !== '' && ralHexDepuisCode(texte) === null
+  return (
+    <div
+      className="w-[190px] bg-white border border-border rounded-[10px] shadow-lg p-3"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className="w-4 h-4 rounded-[5px] border border-black/20 flex-none"
+          style={{ background: hex }}
+        />
+        <b className="text-[13px] flex-1">{PARTIES_PLAN[part]}</b>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-text-disabled hover:text-text-primary text-sm leading-none"
+          title="Fermer"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-medium text-text-secondary">RAL</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={texte}
+          maxLength={4}
+          placeholder="7016"
+          autoFocus
+          onChange={(e) => {
+            const t = e.target.value
+            setTexte(t)
+            const h = ralHexDepuisCode(t)
+            if (h) onHex(h)
+          }}
+          title="Code RAL — la couleur suit automatiquement"
+          className="w-16 border border-border bg-white rounded-[8px] px-2 py-1.5 text-sm font-mono tabular-nums focus:outline-none focus:border-brand-green transition-colors"
+        />
+        {inconnu && (
+          <span title="Code RAL inconnu de la table" className="text-amber-700 text-xs font-bold">
+            ?
+          </span>
+        )}
+        <input
+          type="color"
+          value={hex}
+          onChange={(e) => onHex(e.target.value)}
+          title="Couleur libre"
+          className="ml-auto w-9 h-8 border border-border rounded-[6px] bg-white cursor-pointer"
+        />
+      </div>
+    </div>
+  )
+}
+
+/** L'aperçu se débrouille SEUL : largeur représentative par moteur — pour le
+ *  coulissant les DEUX scènes, standard et XL, côte à côte. La hauteur se
+ *  choisit PRÉCISÉMENT via un petit sélecteur discret en bas à droite de
+ *  l'image (retour Mathias 07/08 soir). */
+function ApercuCadrage({
+  moteur,
+  cadrage,
+  vueXl = false,
+  onCouleur,
+}: {
+  moteur: 'janus' | 'terminus' | 'forculus'
+  cadrage: CadrageDaReglages
+  /** COULISSANT : true = la vue XL est affichée (commutateur de la carte). */
+  vueXl?: boolean
+  /** Édition d'une couleur au clic sur l'aperçu (07/08 soir). */
+  onCouleur?: (part: keyof CouleursPlan, hex: string) => void
+}) {
+  const [h, setH] = useState(160)
+  useEffect(() => {
+    setH(moteur === 'forculus' ? 140 : 160)
+  }, [moteur])
+
+  // Menu couleur : ouvert au clic sur une partie, positionné près du clic
+  // (coordonnées relatives au conteneur de l'aperçu).
+  const boxRef = useRef<HTMLDivElement>(null)
+  const [edit, setEdit] = useState<{ part: keyof CouleursPlan; x: number; y: number } | null>(null)
+  useEffect(() => {
+    setEdit(null)
+  }, [moteur])
+  const ouvrirMenu = onCouleur
+    ? (part: keyof CouleursPlan, e: React.MouseEvent) => {
+        const r = boxRef.current?.getBoundingClientRect()
+        if (!r) return
+        setEdit({
+          part,
+          x: Math.max(0, Math.min(e.clientX - r.left + 8, r.width - 200)),
+          y: Math.max(0, e.clientY - r.top + 8),
+        })
+      }
+    : undefined
+
+  const menu = edit && onCouleur && (
+    <div className="absolute z-20" style={{ left: edit.x, top: edit.y }}>
+      <CouleurMenu
+        part={edit.part}
+        hex={cadrage.couleurs[edit.part]}
+        onHex={(hex) => onCouleur(edit.part, hex)}
+        onClose={() => setEdit(null)}
+      />
+    </div>
+  )
+
+  // Alerte ROUGE sous l'aperçu quand un réglage sort quelque chose du cadre,
+  // avec les hauteurs concernées (demande Mathias 07/08 soir).
+  const alertes = alertesCadrage(moteur, cadrage)
+  const blocAlertes = (alertes.pilier.length > 0 || alertes.portail.length > 0) && (
+    <div className="mt-2 bg-brand-red-light text-brand-red text-xs font-bold rounded-[8px] px-3 py-2 space-y-0.5">
+      {alertes.pilier.length > 0 && <p>⚠ Attention : pilier hors cadre en {alertes.pilier.join(', ')}</p>}
+      {alertes.portail.length > 0 && (
+        <p>⚠ Attention : portail hors cadre en {alertes.portail.join(', ')}</p>
+      )}
+    </div>
+  )
+
+  const selecteur = (
+    <select
+      value={h}
+      onChange={(e) => setH(Number(e.target.value))}
+      title="Hauteur de l'aperçu (cm)"
+      className="absolute bottom-1.5 right-1.5 bg-white/55 border border-border/50 rounded-[6px] px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary/70 cursor-pointer opacity-60 hover:opacity-100 hover:bg-white/90 transition-opacity focus:outline-none focus:border-brand-green"
+    >
+      {APERCU_HAUTEURS.map((v) => (
+        <option key={v} value={v}>
+          H {v}
+        </option>
+      ))}
+    </select>
+  )
+
+  // Coulissant : UNE scène à la fois, choisie par le commutateur Standard/XL
+  // de la carte (demande Mathias 07/08 soir — fini le côte à côte).
+  const largeurApercu =
+    moteur === 'terminus' ? (vueXl ? 500 : 350) : moteur === 'forculus' ? 100 : 350
+  return (
+    <div className="max-w-[640px]">
+      <div ref={boxRef} className="relative">
+        <ApercuScene
+          moteur={moteur}
+          cadrage={cadrage}
+          taille={{ w: largeurApercu, h }}
+          onPart={ouvrirMenu}
+        />
+        {selecteur}
+        {menu}
+      </div>
+      {blocAlertes}
+    </div>
+  )
+}
 
 /** Sélecteur segmenté (Auto / Off, etc.) aux couleurs de l'app. */
 function Seg<T extends string>({
@@ -231,7 +690,7 @@ function SubHeading({ children }: { children: React.ReactNode }) {
 }
 
 export default function MoteursPage() {
-  const [moteurs, setMoteurs] = useState<MoteurEntry[]>([])
+  const [moteurs, setMoteurs] = useState<MoteurEntry[]>(MOTEURS_INITIAUX)
   const [selected, setSelected] = useState<AnyMoteurKey>('battant')
   // Contexte affiché (refonte « affichage complet », maquette reglages-full-v1
   // validée le 29/07/2026) : le panneau empile TOUTES les rubriques du contexte
@@ -456,6 +915,26 @@ export default function MoteursPage() {
     setDirty(true)
   }
 
+  // Cadrage & scène (fiche décor autour, 07/08 soir) : valeurs EFFECTIVES =
+  // recette d'usine du moteur + delta enregistré ; l'édition n'écrit que le delta.
+  const cadEff = isDaKey(selected)
+    ? cadrageDaEffectif(selected, reglages?.cadrageDa)
+    : null
+  function setCadrage(patch: Partial<CadrageDaReglages>) {
+    if (!reglages) return
+    setField('cadrageDa', { ...(reglages.cadrageDa ?? {}), ...patch })
+  }
+  function setCouleurPlan(k: keyof CouleursPlan, hex: string) {
+    if (!cadEff) return
+    setCadrage({ couleurs: { ...cadEff.couleurs, [k]: hex } })
+  }
+  /** COULISSANT : vue affichée dans la carte Cadrage — Standard ou XL, l'aperçu
+   *  ET les options suivent (demande Mathias 07/08 soir). */
+  const [vueXl, setVueXl] = useState(false)
+  useEffect(() => {
+    setVueXl(false)
+  }, [selected])
+
   /** Réglages du jeu Canny XL (alignement, corridor) — fiche TERMINUS. */
   function setFieldXl<K extends keyof MoteurReglages>(key: K, value: MoteurReglages[K]) {
     if (!reglagesXl) return
@@ -483,10 +962,26 @@ export default function MoteursPage() {
     }
     if (reglages.integrationMethod === 'pose-fusion') {
       body.poseDebordPct = Math.min(10, Math.max(0, Number(reglages.poseDebordPct) || 0))
-      body.poseSeuilAlpha = Math.min(255, Math.max(1, Math.round(reglages.poseSeuilAlpha || 200)))
     } else {
       delete body.poseDebordPct
+    }
+    // Seuil alpha : utilisé par pose-fusion ET par le plan gris décor autour
+    // (rubrique Cadrage & scène, 07/08 soir).
+    if (
+      reglages.integrationMethod === 'pose-fusion' ||
+      reglages.integrationMethod === 'decor-autour'
+    ) {
+      body.poseSeuilAlpha = Math.min(255, Math.max(1, Math.round(reglages.poseSeuilAlpha || 200)))
+    } else {
       delete body.poseSeuilAlpha
+    }
+    // Cadrage & scène décor autour (07/08 soir) : delta envoyé tel quel ; null
+    // EXPLICITE = « revenir à la recette d'usine » (le serveur efface le delta).
+    body.cadrageDa = reglages.cadrageDa ?? null
+    // RALify TOUJOURS actif sur les moteurs décor autour (Mathias 08/08 : plus
+    // d'interrupteur) — un ancien « désactivé » en base se répare au 1ᵉʳ save.
+    if (isDaKey(selected)) {
+      body.ralify = { ...reglages.ralify, actif: true }
     }
     // Ombre du pilier sur la lame : réglage PROPRE au coulissant (28/07/2026).
     if (selected === 'coulissant' && reglages.integrationMethod === 'pose-fusion') {
@@ -585,7 +1080,11 @@ export default function MoteursPage() {
     null
   )
 
-  const PromptRows = ({ list }: { list: { name: string; label: string; exact?: boolean }[] }) => (
+  // FONCTION de rendu, PAS un composant (08/08, bug vu par Mathias) : déclaré
+  // comme composant local, chaque re-rendu de la page (scroll-spy compris) en
+  // recréait un « nouveau » → React démontait/remontait tout le bloc et le
+  // PromptEditor ouvert rechargeait en plein défilement.
+  const promptRows = (list: { name: string; label: string; exact?: boolean }[]) => (
     <div className="space-y-1.5">
       {list.map((p) => {
         // exact = nom pris tel quel (prompts d'un JEU, ex. coulissant-xl-…).
@@ -675,17 +1174,20 @@ export default function MoteursPage() {
     setPendingScroll(first)
   }
 
-  // Ordre de la nav (demande Mathias 05/08, révisé le jour même) : les moteurs
-  // décor autour GROUPÉS EN HAUT, les legacy GROUPÉS EN BAS — Battant,
-  // Coulissant, Portillon, puis Battant (legacy), Coulissant (legacy),
-  // Portillon (legacy).
-  const navMoteurs = [...moteurs].sort(
-    (a, b) =>
-      (a.methode === 'decor-autour' ? 0 : 1) - (b.methode === 'decor-autour' ? 0 : 1) ||
-      a.label.localeCompare(b.label, 'fr')
-  )
-  // Rubriques d'une fiche décor autour : RALify, Prompt System, Export.
-  const DA_RUBRIQUES: MoteurRubrique[] = ['ralify', 'prompts', 'export']
+  // Moteurs LEGACY MASQUÉS de la nav (demande Mathias 07/08, MES Contrainte
+  // officiel) : fiches et réglages conservés tels quels — repasser à true pour
+  // les revoir. Ordre historique : décor autour en haut, legacy en bas.
+  const AFFICHER_MOTEURS_LEGACY = false
+  const navMoteurs = [...moteurs]
+    .filter((m) => AFFICHER_MOTEURS_LEGACY || m.methode !== 'legacy')
+    .sort(
+      (a, b) =>
+        (a.methode === 'decor-autour' ? 0 : 1) - (b.methode === 'decor-autour' ? 0 : 1) ||
+        a.label.localeCompare(b.label, 'fr')
+    )
+  // Rubriques d'une fiche décor autour : RALify, Cadrage & scène, Prompt
+  // System, Export.
+  const DA_RUBRIQUES: MoteurRubrique[] = ['ralify', 'cadrage', 'prompts', 'export']
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -737,10 +1239,16 @@ export default function MoteursPage() {
                       : 'text-text-primary font-semibold hover:bg-surface'
                   }`}
                 >
-                  {/* Séparation totale 05/08 : le legacy porte l'étiquette, le
-                      moteur décor autour garde le nom nu. */}
+                  {/* Séparation totale 05/08. 07/08 (demande Mathias) : chaque
+                      moteur affiche son NOM DE CODE — « Battant "Janus" ». */}
                   <span className="flex-1 truncate">
                     {m.label}
+                    {m.methode === 'decor-autour' && m.codeName && (
+                      <span className="text-text-disabled font-semibold">
+                        {' '}
+                        «&nbsp;{m.codeName.charAt(0) + m.codeName.slice(1).toLowerCase()}&nbsp;»
+                      </span>
+                    )}
                     {m.methode === 'legacy' && (
                       <span className="text-text-disabled font-semibold"> (legacy)</span>
                     )}
@@ -808,8 +1316,12 @@ export default function MoteursPage() {
         {/* ============ Panneau : toutes les rubriques du contexte, empilées ============ */}
         <div ref={panelRef}>
           {/* Bandeau de contexte collant : rappelle le contexte affiché et garde
-              l'Enregistrer moteur à portée pendant qu'on parcourt les rubriques. */}
-          <div className="sticky top-20 z-10 mb-4 flex items-center justify-between gap-3 flex-wrap bg-white rounded-[12px] border border-border shadow-sm px-5 py-3">
+              l'Enregistrer moteur à portée. Collé SOUS le header dans une bande
+              OPAQUE couleur de page (retour Mathias 07/08 soir : le bandeau qui
+              flottait au-dessus des cartes en défilant était détestable) — le
+              contenu disparaît proprement dessous, aucune superposition visible. */}
+          <div className="sticky top-14 z-10 mb-4 bg-surface pt-4 pb-2 -mx-1 px-1">
+            <div className="flex items-center justify-between gap-3 flex-wrap bg-white rounded-[12px] border border-border shadow-sm px-5 py-3">
             <div>
               <h2 className={`text-[19px] font-bold leading-tight ${ctx === 'reset' ? 'text-brand-red' : ''}`}>
                 {ctx === 'app' ? 'Application' : ctx === 'reset' ? 'Remise à zéro de l’application' : nomMoteur}
@@ -838,6 +1350,7 @@ export default function MoteursPage() {
                 </button>
               </div>
             )}
+            </div>
           </div>
 
           {ctx === 'app' && <ReglagesApp />}
@@ -870,33 +1383,243 @@ export default function MoteursPage() {
                    moteurs « (legacy) », inchangées. */
                 <div className="space-y-5">
                   <Card id={MOTEUR_ANCHOR('ralify')}>
-                    <CardTitle
-                      extra={
-                        <Seg
-                          value={reglages?.ralify.actif ? 'on' : 'off'}
-                          options={[
-                            { value: 'on', label: 'Activé' },
-                            { value: 'off', label: 'Désactivé' },
-                          ]}
-                          onChange={(val) =>
-                            reglages && setField('ralify', { ...reglages.ralify, actif: val === 'on' })
-                          }
-                          disabled={!reglages}
-                        />
-                      }
-                    >
-                      RALify
-                    </CardTitle>
-                    {/* Aperçus sur les PNG produits de l'homologue legacy (mêmes produits
-                        catalogue) — les RÉGLAGES édités sont bien ceux de CE moteur. */}
+                    {/* Plus d'interrupteur Activé/Désactivé (Mathias 08/08 :
+                        « activé par défaut basta pas de choix ») — RALify est
+                        TOUJOURS actif sur les moteurs décor autour, le tableau
+                        par coloris suffit à dire quoi corriger. save() force
+                        actif:true. */}
+                    <CardTitle>RALify</CardTitle>
+                    {/* Simplification 07/08 soir (« RALify frankenstein ») : plus
+                        de bloc palette séparé — l'ajout/la suppression de coloris
+                        vivent DANS le tableau de la section (RalifySection).
+                        Aperçus sur les PNG produits de l'homologue legacy (mêmes
+                        produits catalogue) — les RÉGLAGES édités sont ceux de CE
+                        moteur. */}
                     <RalifySection
                       moteur={legacySelected}
                       value={reglages?.ralify ?? null}
                       coloris={coloris}
                       onChange={(r) => setField('ralify', r)}
+                      onPaletteChange={setColoris}
                       disabled={!reglages}
                     />
                   </Card>
+
+                  {/* ============ Cadrage & scène (07/08 soir — demande Mathias :
+                      tout le resizing/la scène sous UI, plus rien figé dans le
+                      code ; défauts = la recette rodée au banc) ============ */}
+                  {cadEff && (
+                  <Card id={MOTEUR_ANCHOR('cadrage')}>
+                    <CardTitle>Cadrage</CardTitle>
+                    {/* Au-dessus de la preview : commutateur Standard/XL du
+                        coulissant à gauche, « Réglages par défaut » à droite
+                        (placement demandé par Mathias 08/08). */}
+                    <div className="flex items-center justify-between gap-3 mb-3 max-w-[640px]">
+                      {selected === 'terminus' ? (
+                        <Seg
+                          value={vueXl ? 'xl' : 'std'}
+                          options={[
+                            { value: 'std', label: 'Standard' },
+                            { value: 'xl', label: 'XL' },
+                          ]}
+                          onChange={(v) => setVueXl(v === 'xl')}
+                          disabled={!reglages}
+                        />
+                      ) : (
+                        <span />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setField('cadrageDa', undefined)}
+                        disabled={!reglages}
+                        title="Efface les modifications : le moteur reprend ses réglages par défaut"
+                        className="bg-white border border-border text-text-secondary rounded-[8px] px-3 py-1.5 text-xs font-bold hover:border-brand-green hover:text-brand-green transition-colors disabled:opacity-50"
+                      >
+                        Réglages par défaut
+                      </button>
+                    </div>
+                    {/* Couleurs : ÉDITÉES AU CLIC sur l'aperçu (07/08 soir) —
+                        chaque partie ouvre son petit menu RAL/couleur libre. */}
+                    <ApercuCadrage
+                      moteur={isDaKey(selected) ? selected : 'janus'}
+                      cadrage={cadEff}
+                      vueXl={selected === 'terminus' && vueXl}
+                      onCouleur={(part, hex) => setCouleurPlan(part, hex)}
+                    />
+
+                    {/* « Plan nu » retiré (07/08 soir) ; le titre « Resizing »
+                        aussi — ces champs règlent le CADRAGE, pas le resizing
+                        (remarque Mathias). */}
+                    {/* La LARGEUR ÉTALON n'est PAS réglable (décision Mathias 07/08
+                        soir : « on garde ça ad vitam ») — figée dans la recette :
+                        400 pour battant/coulissant, vraie largeur pour portillon,
+                        600 en XL. Les champs restants ne touchent qu'au cadrage. */}
+                    <div className="flex items-end gap-4 flex-wrap mt-4">
+                      {/* Vue STANDARD : zoom + décalages de la scène standard.
+                          En vue XL du coulissant ces champs disparaissent (la
+                          scène XL a les siens ci-dessous). */}
+                      {!(selected === 'terminus' && vueXl) && (
+                        <>
+                          <div>
+                            <FieldLabel>Zoom caméra (%)</FieldLabel>
+                            <input
+                              type="number"
+                              min={25}
+                              max={400}
+                              value={cadEff.zoom}
+                              onChange={(e) => setCadrage({ zoom: Number(e.target.value) })}
+                              title="100 = neutre ; moins de 100 dézoome (la scène s'élargit)"
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>Décalage X (cm)</FieldLabel>
+                            <input
+                              type="number"
+                              min={-200}
+                              max={200}
+                              value={cadEff.offsetX}
+                              onChange={(e) => setCadrage({ offsetX: Number(e.target.value) })}
+                              title="+ = le portail glisse vers la droite, − vers la gauche"
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>Décalage Y (cm)</FieldLabel>
+                            <input
+                              type="number"
+                              min={-100}
+                              max={100}
+                              value={cadEff.offsetY}
+                              onChange={(e) => setCadrage({ offsetY: Number(e.target.value) })}
+                              title="+ = tout descend (la ligne de sol porte tout)"
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                        </>
+                      )}
+                      {/* Vue XL du coulissant : SES réglages de scène — le seuil
+                          « XL à partir de » ferme la rangée (ordre Mathias). */}
+                      {selected === 'terminus' && vueXl && (
+                        <>
+                          <div>
+                            <FieldLabel>Zoom XL (%)</FieldLabel>
+                            <input
+                              type="number"
+                              min={25}
+                              max={400}
+                              value={cadEff.xlZoom}
+                              onChange={(e) => setCadrage({ xlZoom: Number(e.target.value) })}
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>Hauteur de scène (cm)</FieldLabel>
+                            <input
+                              type="number"
+                              min={200}
+                              max={900}
+                              value={cadEff.xlSceneH}
+                              onChange={(e) => setCadrage({ xlSceneH: Number(e.target.value) })}
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel>Ligne de sol (cm)</FieldLabel>
+                            <input
+                              type="number"
+                              min={0}
+                              max={500}
+                              value={cadEff.xlGroundY}
+                              onChange={(e) => setCadrage({ xlGroundY: Number(e.target.value) })}
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                        </>
+                      )}
+                      {/* Plafond piliers RETIRÉ de l'UI (Mathias 07/08 soir) —
+                          figé dans la recette comme la largeur étalon (202 pour
+                          le portillon, aucun ailleurs). */}
+                      {/* Seuil alpha RETIRÉ de la carte (Mathias 07/08 soir :
+                          tournevis de dépannage, pas un réglage du quotidien —
+                          « ça va juste tout impacter ») : il vit sur sa valeur
+                          par défaut, réglable seulement en me le demandant. */}
+                      {/* Échelle PRODUIT (07/08 soir) : dilate le rectangle de
+                          pose sans toucher à l'échafaudage — largeur centrée,
+                          hauteur ancrée à la ligne de sol. */}
+                      <div>
+                        <FieldLabel>Largeur produit (%)</FieldLabel>
+                        <input
+                          type="number"
+                          min={50}
+                          max={200}
+                          value={cadEff.produitLargeurPct}
+                          onChange={(e) => setCadrage({ produitLargeurPct: Number(e.target.value) })}
+                          title="100 = fidèle ; 110 = produit 10 % plus large dans la scène (centré)"
+                          className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel>Hauteur produit (%)</FieldLabel>
+                        <input
+                          type="number"
+                          min={50}
+                          max={200}
+                          value={cadEff.produitHauteurPct}
+                          onChange={(e) => setCadrage({ produitHauteurPct: Number(e.target.value) })}
+                          title="100 = fidèle ; 110 = produit 10 % plus haut, toujours posé sur la ligne de sol"
+                          className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                        />
+                      </div>
+                      {/* « XL à partir de » EN DERNIER de la rangée (ordre Mathias). */}
+                      {selected === 'terminus' && vueXl && (
+                        <div>
+                          <FieldLabel>XL à partir de (cm)</FieldLabel>
+                          <input
+                            type="number"
+                            min={200}
+                            max={1000}
+                            value={cadEff.xlMinW}
+                            onChange={(e) => setCadrage({ xlMinW: Number(e.target.value) })}
+                            title="Largeur de produit à partir de laquelle la scène XL s'applique"
+                            className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {selected === 'terminus' && (
+                      <>
+                        {/* Seuils de MESURE de la queue (couverture/détection)
+                            RETIRÉS de l'UI (08/08 : internes au PNG, la preview
+                            ne peut rien en montrer — tournevis de dépannage,
+                            comme le seuil alpha). Reste le recouvrement, VISIBLE
+                            en transparence sur l'aperçu. */}
+                        <SubHeading>Coulissant — refoulement</SubHeading>
+                        <div className="flex items-end gap-4 flex-wrap">
+                          <div>
+                            <FieldLabel>Recouvrement pilier droit (cm)</FieldLabel>
+                            <input
+                              type="number"
+                              min={0}
+                              max={60}
+                              value={cadEff.recouvrementCm}
+                              onChange={(e) => setCadrage({ recouvrementCm: Number(e.target.value) })}
+                              title="Longueur de lame CACHÉE sous le pilier droit — montrée en transparence sur l'aperçu"
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Les réglages de scène XL ont rejoint la rangée du
+                            haut, affichés en vue XL (commutateur). */}
+                      </>
+                    )}
+
+                    {/* La rangée de pastilles a DISPARU (07/08 soir) : les
+                        couleurs s'éditent au clic sur l'aperçu, directement. */}
+                  </Card>
+                  )}
 
                   <Card id={MOTEUR_ANCHOR('prompts')}>
                     <CardTitle
@@ -916,7 +1639,7 @@ export default function MoteursPage() {
                       le produit est posé à sa vraie échelle sur un plan gris, Nano peint l’entrée tout
                       autour (élévation à plat, produit verrouillé). Ce prompt est TOUT le rendu.
                     </p>
-                    <PromptRows list={promptDefsDa} />
+                    {promptRows(promptDefsDa)}
                   </Card>
 
                   <Card id={MOTEUR_ANCHOR('export')}>
@@ -928,19 +1651,16 @@ export default function MoteursPage() {
                           2K / 4K — au choix au lancement
                         </span>
                       </div>
+                      {/* « Générations par taille » RETIRÉ de la fiche décor autour
+                          (07/08 soir) : MES Contrainte génère toujours 1 image —
+                          les variantes passent par les VERSIONS (regénération,
+                          retours) de la vue en grand. Le réglage restait affiché
+                          mais n'était jamais lu : un réglage mort ment. */}
                       <div>
-                        <FieldLabel>Générations par taille</FieldLabel>
-                        <input
-                          type="number"
-                          min={1}
-                          max={6}
-                          value={reglages?.generationsParTaille ?? 3}
-                          onChange={(e) =>
-                            setField('generationsParTaille', Math.min(6, Math.max(1, Number(e.target.value) || 1)))
-                          }
-                          disabled={!reglages}
-                          className="w-20 border border-border bg-white rounded-[8px] px-3 py-2 text-sm text-right tabular-nums focus:outline-none focus:border-brand-green transition-colors"
-                        />
+                        <FieldLabel>Générations par image</FieldLabel>
+                        <span className="inline-block bg-surface border border-border rounded-[8px] px-3 py-2 text-sm text-text-secondary">
+                          1 — les variantes passent par les versions
+                        </span>
                       </div>
                       <div>
                         <FieldLabel>Déclinaison Marketplace (2000 × 2000)</FieldLabel>
@@ -955,16 +1675,20 @@ export default function MoteursPage() {
                           disabled={!reglages}
                         />
                       </div>
-                      <div className="flex-1 min-w-72">
-                        <FieldLabel>Nom du livrable</FieldLabel>
-                        <input
-                          type="text"
-                          value={reglages?.livraisonName ?? ''}
-                          onChange={(e) => setField('livraisonName', e.target.value)}
-                          disabled={!reglages}
-                          title="Modèle de nom du livrable"
-                          className="w-full border border-border bg-white rounded-[8px] px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand-green transition-colors"
-                        />
+                      {/* L'ancien modèle éditable ({MARQUE}-{TAILLE}_…) n'était
+                          branché sur RIEN côté MES Contrainte — remplacé par
+                          l'affichage du VRAI format, UNE zone par sortie (08/08). */}
+                      <div>
+                        <FieldLabel>Nom du livrable — WEB</FieldLabel>
+                        <span className="inline-block bg-surface border border-border rounded-[8px] px-3 py-2 text-sm font-mono text-text-secondary">
+                          {'{PRODUIT}_{TAILLE}_{COLORIS}_WEB.jpg'}
+                        </span>
+                      </div>
+                      <div>
+                        <FieldLabel>Nom du livrable — MP</FieldLabel>
+                        <span className="inline-block bg-surface border border-border rounded-[8px] px-3 py-2 text-sm font-mono text-text-secondary">
+                          {'{PRODUIT}_{TAILLE}_{COLORIS}_MP.jpg'}
+                        </span>
                       </div>
                     </div>
                   </Card>
@@ -1123,6 +1847,7 @@ export default function MoteursPage() {
                         value={reglages?.ralify ?? null}
                         coloris={coloris}
                         onChange={(r) => setField('ralify', r)}
+                        onPaletteChange={setColoris}
                         disabled={!reglages}
                       />
                   </Card>
@@ -1421,7 +2146,7 @@ export default function MoteursPage() {
                             <span className="w-[22px] h-[22px] rounded-[6px] bg-surface border border-border grid place-items-center text-xs font-bold text-text-secondary">1</span>
                             <h3 className="font-semibold text-[15px]">Décor</h3>
                           </div>
-                          <PromptRows list={selected === 'coulissant' ? PROMPTS_DECOR_COULISSANT : PROMPTS_DECOR} />
+                          {promptRows(selected === 'coulissant' ? PROMPTS_DECOR_COULISSANT : PROMPTS_DECOR)}
                         </div>
 
                         <div className="py-4">
@@ -1429,7 +2154,7 @@ export default function MoteursPage() {
                             <span className="w-[22px] h-[22px] rounded-[6px] bg-surface border border-border grid place-items-center text-xs font-bold text-text-secondary">2</span>
                             <h3 className="font-semibold text-[15px]">Piliers &amp; murets</h3>
                           </div>
-                          <PromptRows list={PROMPTS_PILIERS} />
+                          {promptRows(PROMPTS_PILIERS)}
                           <div className="mt-3">
                             <FieldLabel>Masquage de la sortie</FieldLabel>
                             <Seg
@@ -1451,7 +2176,7 @@ export default function MoteursPage() {
                               Intégration {PRODUIT_PAR_MOTEUR[selected]}
                             </h3>
                           </div>
-                          <PromptRows list={promptsIntegration(PRODUIT_PAR_MOTEUR[selected])} />
+                          {promptRows(promptsIntegration(PRODUIT_PAR_MOTEUR[selected]))}
                           <div className="flex flex-wrap gap-x-8 gap-y-4 mt-3">
                             <div>
                               <FieldLabel>Méthode</FieldLabel>
@@ -1632,7 +2357,7 @@ export default function MoteursPage() {
                               <b>Jamais</b> : le MP disparaît de l&apos;interface et l&apos;API le refuse.
                             </p>
                           </div>
-                          <PromptRows list={PROMPTS_MARKETPLACE} />
+                          {promptRows(PROMPTS_MARKETPLACE)}
                           <p className="text-xs text-text-secondary mt-2.5">
                             Recadrage serré sur le {PRODUIT_PAR_MOTEUR[selected]} ; s&apos;il dépasse, les
                             bords sont étendus par outpainting natif de Nano Banana (prompt ci-dessus,

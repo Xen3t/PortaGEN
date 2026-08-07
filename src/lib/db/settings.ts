@@ -78,3 +78,60 @@ export function getImageModel(db: Database.Database = getDb()): string {
   return process.env.GEMINI_IMAGE_MODEL ?? 'gemini-3-pro-image'
 }
 
+/**
+ * Modèle VISION des descriptions produit (07/08/2026, demande Mathias : tout
+ * réglage sous UI). Défaut : l'alias pro stable vérifié via ListModels le
+ * 07/08 — tout nom saisi dans l'admin doit être vérifié de la même façon.
+ */
+export const VISION_MODEL_KEY = 'gemini_vision_model'
+export const VISION_MODEL_DEFAULT = 'gemini-pro-latest'
+
+export function getVisionModel(db: Database.Database = getDb()): string {
+  const raw = getSetting(VISION_MODEL_KEY, db)
+  return raw && raw.trim() ? raw.trim() : VISION_MODEL_DEFAULT
+}
+
+/**
+ * Gabarit du PROMPT vision des descriptions produit (07/08/2026) : null =
+ * gabarit d'usine (src/lib/genai/descriptionProduit.ts). Éditable dans
+ * Admin → Réglages → Générations & modèle.
+ */
+export const VISION_TEMPLATE_KEY = 'vision_description_template'
+
+export function getVisionTemplate(db: Database.Database = getDb()): string | null {
+  const raw = getSetting(VISION_TEMPLATE_KEY, db)
+  return raw && raw.trim() ? raw : null
+}
+
+/**
+ * Sas de calcul d'image (07/08/2026) : nombre de phases sharp (RALify, plan
+ * gris, livraison) autorisées de front dans le processus web — au-delà, les
+ * jobs patientent. Réglable depuis Admin → Réglages (défaut 3, borné 1-8).
+ */
+export const SAS_IMAGES_KEY = 'sas_images_limite'
+export const SAS_IMAGES_DEFAULT = 3
+export const SAS_IMAGES_MIN = 1
+export const SAS_IMAGES_MAX = 8
+
+export function getSasImagesLimite(db: Database.Database = getDb()): number {
+  const raw = Number(getSetting(SAS_IMAGES_KEY, db))
+  if (!Number.isFinite(raw) || raw < SAS_IMAGES_MIN) return SAS_IMAGES_DEFAULT
+  return Math.min(SAS_IMAGES_MAX, Math.round(raw))
+}
+
+/**
+ * Chaînes de PRÉPARATION côté page MES Contrainte (07/08/2026) : nombre
+ * d'images préparées de front par le navigateur (détourage → RALify →
+ * description → pose). Défaut 3 (choix Mathias 07/08), borné 1-6.
+ */
+export const PREP_CONCURRENCE_KEY = 'prep_concurrence'
+export const PREP_CONCURRENCE_DEFAUT = 3
+export const PREP_CONCURRENCE_MIN = 1
+export const PREP_CONCURRENCE_MAX = 6
+
+export function getPrepConcurrence(db: Database.Database = getDb()): number {
+  const raw = Number(getSetting(PREP_CONCURRENCE_KEY, db))
+  if (!Number.isFinite(raw) || raw < PREP_CONCURRENCE_MIN) return PREP_CONCURRENCE_DEFAUT
+  return Math.min(PREP_CONCURRENCE_MAX, Math.round(raw))
+}
+

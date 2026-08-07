@@ -3,6 +3,7 @@ import { getDb } from '@/lib/db'
 import { getSetting, setSetting } from '@/lib/db/settings'
 import type { GabaritSetKey } from '@/lib/gabaritSets'
 import { RALIFY_DEFAUTS, sanitizeRalify, type RalifyReglages } from '@/lib/ralify'
+import { sanitizeCadrageDa, type CadrageDaReglages } from '@/lib/cadrageDa'
 
 /**
  * Registre des MOTEURS (cadrage docs/CADRAGE-MOTEURS-2026-07-12.md, maquette
@@ -170,6 +171,13 @@ export interface MoteurReglages {
    * produit + intensité. Config et résolution : src/lib/ralify.ts.
    */
   ralify: RalifyReglages
+  /**
+   * CADRAGE & SCÈNE des moteurs décor autour (07/08/2026) : delta par rapport
+   * aux défauts rodés au banc (src/lib/cadrageDa.ts) — référence de largeur,
+   * zoom/décalage, bascule XL, recouvrement coulissant, couleurs du plan gris.
+   * Jamais consulté par les moteurs legacy.
+   */
+  cadrageDa?: Partial<CadrageDaReglages>
 }
 
 export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
@@ -241,12 +249,15 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
   if (corridorWidthCm !== undefined) out.corridorWidthCm = corridorWidthCm
   const masking = pick(src.masking, ['off', 'pixel-lock'] as const)
   if (masking) out.masking = masking
+  // « decor-autour » n'est PAS une valeur patchable : c'est la méthode immuable
+  // des moteurs DA (défaut moteursDa, jamais écrite via un PATCH) — l'accepter
+  // ici laissait un PATCH API poser 'decor-autour' sur un moteur LEGACY, dont
+  // la gamme dégénérait alors en « simple » (pipeline pré-17/07) sans erreur.
   const integrationMethod = pick(src.integrationMethod, [
     'simple',
     'rectangle',
     'pose-directe',
     'pose-fusion',
-    'decor-autour',
   ] as const)
   if (integrationMethod) out.integrationMethod = integrationMethod
   // Débordement en % avec décimales (mesuré à 3,5 %, ramené à 2 % par Mathias le 17/07).
@@ -274,6 +285,14 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
   if (src.ralify !== undefined) {
     const ralify = sanitizeRalify(src.ralify)
     if (ralify) out.ralify = ralify
+  }
+  // Cadrage & scène décor autour (07/08) : delta validé champ par champ.
+  // `null` explicite = retour à la recette d'usine (le delta est effacé).
+  if (src.cadrageDa === null) {
+    out.cadrageDa = undefined
+  } else if (src.cadrageDa !== undefined) {
+    const cadrageDa = sanitizeCadrageDa(src.cadrageDa)
+    if (cadrageDa) out.cadrageDa = cadrageDa
   }
   if (typeof src.livraisonName === 'string') {
     // Modèle de NOM DE FICHIER : on refuse dès maintenant les caractères invalides

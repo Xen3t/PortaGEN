@@ -38,6 +38,11 @@ export interface DecorAutourLaunchOptions {
   batchId?: string
   /** Champs de payload communs à tous les items (ex. autoMp). */
   extra?: Record<string, unknown>
+  /**
+   * Nombre de générations IMPOSÉ par le lancement, à la place du réglage
+   * generationsParTaille du moteur (banc de test 07/08/2026 : toujours 1).
+   */
+  generations?: number
 }
 
 export function launchDecorAutourJobs(opts: DecorAutourLaunchOptions): {
@@ -46,8 +51,12 @@ export function launchDecorAutourJobs(opts: DecorAutourLaunchOptions): {
 } {
   const batchId =
     opts.batchId ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-  // Générations multiples (05/08/2026) : N MES par taille, réglage du moteur.
-  const nGen = Math.max(1, Math.round(getMoteurDaReglages(opts.moteur).generationsParTaille ?? 1))
+  // Générations multiples (05/08/2026) : N MES par taille, réglage du moteur —
+  // sauf nombre imposé par le lancement (generations, banc de test 07/08).
+  const nGen = Math.max(
+    1,
+    Math.round(opts.generations ?? getMoteurDaReglages(opts.moteur).generationsParTaille ?? 1)
+  )
   // Marketplace automatique et générations multiples ne vont pas ensemble : tant
   // qu'aucune MES n'est CHOISIE, aucun MP ne doit partir (règle Mathias 29/07).
   const stripAutoMp = nGen > 1

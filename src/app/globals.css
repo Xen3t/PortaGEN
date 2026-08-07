@@ -367,6 +367,63 @@ html[data-brand='sicaan'] {
   animation: respire 1.6s ease-in-out infinite;
 }
 
+/* VRAIE respiration (banc de test, maquette banc-generation-v1) : la case
+   BOUGE — léger rétrécissement puis retour, lent — pas un clignotement. */
+@keyframes respire-scale {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.965);
+    opacity: 0.75;
+  }
+}
+.anim-respire-scale {
+  animation: respire-scale 2.4s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Points de suspension ANIMÉS pour les libellés de chargement (banc, 07/08) :
+   les trois points s'allument l'un après l'autre, en boucle. */
+@keyframes dot-vague {
+  0%,
+  80%,
+  100% {
+    opacity: 0.15;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.anim-dots span {
+  animation: dot-vague 1.2s ease-in-out infinite both;
+}
+.anim-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.anim-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* Dévoilement d'un rendu fraîchement généré (banc, 07/08/2026) : le GABARIT
+   prend vie. Plan et rendu sont alignés au pixel : simple fondu du rendu
+   par-dessus le plan, pleines couleurs, sans flou ni noir et blanc
+   (refusés 07/08). */
+@keyframes plan-vivant {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.anim-plan-vivant {
+  animation: plan-vivant 1.2s ease-in-out forwards;
+  will-change: opacity;
+}
+
 /* Toute l'app : les boutons répondent sous le doigt (léger enfoncement).
    La propriété `scale` ne touche pas aux translate/rotate des utilitaires. */
 button {

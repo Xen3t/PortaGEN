@@ -3,8 +3,15 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { isPng } from '@/lib/catalogue/parse'
 import { config } from '@/lib/config'
-import { computeLayout, projection, projectRect } from '@/lib/geometry'
-import { poserProduitSurCible } from '@/lib/images/pose'
+import { computeLayout, projection, projectRect, type GabaritParams } from '@/lib/geometry'
+import {
+  cadrageDaEffectif,
+  COULEURS_PLAN_DEFAUT,
+  type CadrageDaReglages,
+  type CouleursPlan,
+} from '@/lib/cadrageDa'
+import type { MoteurDaKey } from '@/lib/moteursDa'
+import { nettoyerProduit, poserProduitSurCible } from '@/lib/images/pose'
 import { parseSizeFromProductName } from '@/lib/productName'
 
 /**
@@ -178,10 +185,83 @@ export interface PlanGris {
 export interface PlanGrisOptions {
   /** Alpha minimal conservé au nettoyage (0-255) — réglage moteur poseSeuilAlpha */
   seuilAlpha?: number
-  /** Réparation de la bande basse (pieds) — false pour un produit SANS pieds */
-  reparePieds?: boolean
-  /** Réparation des poches enclavées — false pour le coulissant (clairance sous-lame) */
-  reparePochesPieds?: boolean
+  /** Couleurs des aplats (réglage Cadrage & scène 07/08) — défauts du rodage. */
+  couleurs?: Partial<CouleursPlan>
+  /** Échelle largeur du produit (%, 100 = fidèle) — rectangle dilaté, centré. */
+  produitLargeurPct?: number
+  /** Échelle hauteur du produit (%, 100 = fidèle) — ancrée à la ligne de sol. */
+  produitHauteurPct?: number
+  /** Engagement de la lame sous le pilier droit (cm) — coulissant. */
+  recouvrementCm?: number
+  /** Couverture minimale d'une colonne « lame pleine » (%) — mesure de la queue. */
+  queueCouverturePct?: number
+  /** Sous ce ratio de lame pleine (%), une queue est détectée. */
+  queueSeuilPct?: number
+  /** Largeur de référence imposée (cm) — BANC uniquement ; absente = vraie largeur. */
+  refWidth?: number
+  /**
+   * Bloc gabarit FIGÉ appliqué à la pose (banc portillon : zoom, décalage Y,
+   * hauteurs pilier… — voir BANC_PORTILLON_GABARIT). Absent = défauts battant.
+   */
+  gabarit?: Partial<GabaritParams>
+  /**
+   * COULISSANT (07/08, choix Mathias — l'esprit du « 2 étapes » legacy en une
+   * seule image) : la lame est étirée sous le pilier droit (recouvrement fixe)
+   * et l'aplat du pilier droit + son chapeau sont peints PAR-DESSUS après la
+   * pose — la lame passe DERRIÈRE lui par construction. Ne vaut qu'avec bandesSol.
+   */
+  pilierDroitDevant?: boolean
+  /**
+   * BANC uniquement (rodage 07/08, v3) : dessine sous la ligne de pied du
+   * portail les bandes de sol en aplats (trottoir / bordure / route) — la
+   * structure dessinée ancre la géométrie de Nano (le prompt v2 seul laissait
+   * le portail se faire rétrécir ~30 %), comme les aplats piliers/murets de
+   * l'ancienne méthode que Nano texturait sans les déplacer.
+   */
+  bandesSol?: boolean
+}
+
+/**
+ * Cadrage d'une image selon moteur et largeur (source de vérité unique,
+ * partagée par l'aperçu /pose et la génération /generate). Depuis le 07/08
+ * soir, les valeurs viennent des RÉGLAGES « Cadrage & scène » du moteur
+ * (src/lib/cadrageDa.ts — défauts = la recette rodée au banc) :
+ *  - battant + coulissant standard : référence 400, zoom du moteur ;
+ *  - coulissant ≥ xlMinW (450) : bascule XL — référence 600, scène élargie ;
+ *  - portillon : VRAIE largeur, zoom/décalage/plafond pilier de sa recette.
+ */
+export function bancCadrage(
+  moteur: MoteurDaKey,
+  w: number,
+  cadrage?: CadrageDaReglages
+): {
+  refWidth?: number
+  gabarit?: Partial<GabaritParams>
+  pilierDroitDevant?: boolean
+} {
+  const c = cadrage ?? cadrageDaEffectif(moteur)
+  const gab: Partial<GabaritParams> = {}
+  if (c.zoom !== 100) gab.zoom = c.zoom
+  if (c.offsetX !== 0) gab.offsetX = c.offsetX
+  if (c.offsetY !== 0) gab.offsetY = c.offsetY
+  if (c.pillarHMax !== null) gab.pillarHMax = c.pillarHMax
+  const gabarit = Object.keys(gab).length > 0 ? gab : undefined
+  if (moteur === 'terminus' && w >= c.xlMinW) {
+    return {
+      refWidth: c.xlRefWidthCm,
+      gabarit: {
+        sceneH: c.xlSceneH,
+        groundY: c.xlGroundY,
+        ...(c.xlZoom !== 100 ? { zoom: c.xlZoom } : {}),
+      },
+      pilierDroitDevant: true,
+    }
+  }
+  return {
+    ...(c.refWidthCm !== null ? { refWidth: c.refWidthCm } : {}),
+    ...(gabarit ? { gabarit } : {}),
+    ...(moteur === 'terminus' ? { pilierDroitDevant: true } : {}),
+  }
 }
 
 /**
@@ -189,13 +269,35 @@ export interface PlanGrisOptions {
  * portail vient de la géométrie des gabarits (défauts battant) ; AUCUN débord
  * (on ne pose pas de piliers, Nano les peint autour). Accepte un chemin OU un
  * Buffer (produit déjà traité — RALify — côté pipeline).
+ *
+ * Le PNG est posé TEL QUEL : aucune réparation de bande basse ni de poches
+ * (demande Mathias 07/08 — la nouvelle méthode n'a ni juge ni réparation, les
+ * PNG produits sont propres, faits main, décision du 21/07). Seul le seuil
+ * alpha du nettoyage standard s'applique.
  */
 export async function construirePlanGris(
   produit: Buffer | string,
   size: { w: number; h: number },
   opts: PlanGrisOptions = {}
 ): Promise<PlanGris> {
-  const layout = computeLayout(size)
+  // Échelle produit (réglage Cadrage, 07/08 soir) : appliquée DANS la géométrie
+  // — un produit agrandi écarte ses piliers, monte ses murets, tout l'échafaudage
+  // se recompose autour (exigence Mathias : « le reste s'adapte autour »).
+  const echLargeur = (opts.produitLargeurPct ?? 100) / 100
+  const echHauteur = (opts.produitHauteurPct ?? 100) / 100
+  const sizeEff = {
+    w: Math.max(1, Math.round(size.w * echLargeur)),
+    h: Math.max(1, Math.round(size.h * echHauteur)),
+  }
+  // La largeur étalon est dilatée du même facteur : à l'étalon, la largeur du
+  // rectangle vient d'elle, pas de la taille du produit.
+  const refWidthEff = opts.refWidth
+    ? Math.max(1, Math.round(opts.refWidth * echLargeur))
+    : undefined
+  const layout = computeLayout(sizeEff, {
+    ...(opts.gabarit ?? {}),
+    ...(refWidthEff ? { refWidth: refWidthEff } : {}),
+  })
   const planW = config.delivery.width
   const planH = config.delivery.height
   const proj = projection(planW, planH, layout.sceneW, layout.sceneH, 'stretch')
@@ -204,22 +306,158 @@ export async function construirePlanGris(
     proj
   )
 
-  const gris = await sharp({
+  let gris = await sharp({
     create: { width: planW, height: planH, channels: 4, background: { r: 200, g: 200, b: 200, alpha: 1 } },
   })
     .png()
     .toBuffer()
 
-  const pose = await poserProduitSurCible(
-    gris,
-    produit,
-    { x: portail.x, y: portail.y, w: portail.w, h: portail.h },
-    opts.seuilAlpha,
-    opts.reparePochesPieds ?? true,
-    opts.reparePieds ?? true
-  )
+  // Structure dessinée (BANC, rodage 07/08) : aplats posés AVANT le produit.
+  // v3 = bandes de sol (respectées par Nano, hauteur du portail tenue) ;
+  // v4 = AUSSI les piliers/murets/chapeaux du gabarit (refWidth 400), car sans
+  // butées dessinées Nano écrasait la LARGEUR du portail (~85 % → ~60 %). Même
+  // principe que l'échafaudage piliers/murets de l'ancienne méthode.
+  // Coulissant (pilierDroitDevant) : la LAME PLEINE ferme l'ouverture jusqu'à
+  // s'engager sous le pilier droit (20 cm). Si le PNG porte une QUEUE DE
+  // REFOULEMENT (PNG corrigés Mathias 07/08 : bras de cadre fins qui dépassent
+  // du dernier panneau), on la MESURE (profil de couverture des colonnes) et
+  // la pose est calée pour que la lame pleine s'arrête au pilier — la queue
+  // file naturellement derrière/au-delà (c'est le produit, portail FERMÉ).
+  // Sans ça, la queue comptait dans la boîte englobante : la lame pleine
+  // s'arrêtait AVANT le pilier et l'espace entre les bras lisait « ouvert ».
+  const cible = { x: portail.x, y: portail.y, w: portail.w, h: portail.h }
+  // COULISSANT (08/08, retour Mathias) : le RAIL est l'origine — posé SUR la
+  // ligne de sol, et la lame MONTE de sa hauteur pour rouler dessus. Avant, le
+  // rail était planté dans le trottoir et dépassait sous la lame.
+  const railH =
+    opts.pilierDroitDevant && opts.bandesSol ? Math.max(3, Math.round(proj.sy * 2)) : 0
+  if (railH > 0) cible.y -= railH
+  if (opts.pilierDroitDevant) {
+    // Physique du coulissant FERMÉ (enseignée par Mathias 07/08) : la lame vit
+    // sur un plan EN RETRAIT derrière la ligne des piliers. À DROITE son nez
+    // s'engage derrière le pilier (caché, ~20 cm) et la queue file au-delà ;
+    // à GAUCHE son chant de fermeture (serrure/poignée) COLMATE contre
+    // l'arrière du pilier en restant VISIBLE — ni caché, ni « entre » : la
+    // lame démarre au bord intérieur du pilier gauche, en creux derrière lui.
+    const prPx = projectRect(layout.pillarRight, proj)
+    const engPx = Math.round((opts.recouvrementCm ?? 20) * proj.sx)
+    const engagement = Math.min(planW, prPx.x + Math.min(prPx.w, engPx))
+    // Part de LAME PLEINE du PNG : dernière colonne couverte au-delà du seuil
+    // (une colonne de lame est quasi pleine ; un bras de queue couvre ~10-20 %).
+    const nettoye = await nettoyerProduit(produit, opts.seuilAlpha, false, false)
+    const prof = await sharp(nettoye.image)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+    const W = prof.info.width
+    const H = prof.info.height
+    const ch = prof.info.channels
+    const couvertureMin = (opts.queueCouverturePct ?? 50) / 100
+    let finLamePleine = W - 1
+    for (let x = W - 1; x >= 0; x--) {
+      let c = 0
+      for (let y = 0; y < H; y++) {
+        if (prof.data[(y * W + x) * ch + 3] > 0) c++
+      }
+      if (c >= H * couvertureMin) {
+        finLamePleine = x
+        break
+      }
+    }
+    const fracLame = (finLamePleine + 1) / W
+    if (fracLame < (opts.queueSeuilPct ?? 98) / 100) {
+      // Queue détectée : [début..fin de lame pleine] couvre [gauche..engagement],
+      // la queue dépasse au-delà du pilier (bornée au cadre).
+      cible.w = Math.min(planW - cible.x, Math.round((engagement - cible.x) / fracLame))
+    } else {
+      // Pas de queue (PNG historiques) : nez de lame engagé sous le pilier.
+      cible.w = Math.max(cible.w, engagement - cible.x)
+    }
+  }
+
+  // Aplats peints APRÈS la pose (occlusion par construction) : pilier droit +
+  // chapeau du coulissant, par-dessus le bout de lame.
+  let apresSvg: string | null = null
+  if (opts.bandesSol) {
+    // Couleurs de l'échafaudage : réglage « Cadrage & scène » du moteur (07/08),
+    // défauts = les teintes rodées au banc.
+    const coul = { ...COULEURS_PLAN_DEFAUT, ...(opts.couleurs ?? {}) }
+    const yG = portail.y + portail.h
+    const hBelow = planH - yG
+    const rects: string[] = []
+    const rectsApres: string[] = []
+    if (hBelow > 12) {
+      const hTrottoir = Math.round(hBelow * 0.45)
+      const hBordure = Math.max(4, Math.round(hBelow * 0.08))
+      rects.push(
+        `<rect x="0" y="${yG}" width="${planW}" height="${hTrottoir}" fill="${coul.trottoir}"/>`,
+        `<rect x="0" y="${yG + hTrottoir}" width="${planW}" height="${hBordure}" fill="${coul.bordure}"/>`,
+        `<rect x="0" y="${yG + hTrottoir + hBordure}" width="${planW}" height="${hBelow - hTrottoir - hBordure}" fill="${coul.route}"/>`
+      )
+    }
+    // COULISSANT : le RAIL DE GUIDAGE au sol (rodage 07/08 — marqueur visuel
+    // du produit avec les galets ; sans lui, le prior « battant » gagnait).
+    // Fine bande sombre sur la ligne de sol, de la lame jusque sous le pilier
+    // droit — dessinée AVANT la pose : la lame et ses galets passent dessus.
+    if (opts.pilierDroitDevant && hBelow > 12 && railH > 0) {
+      const prPx = projectRect(layout.pillarRight, proj)
+      // Le rail part du début de la LAME posée (cible — échelle produit
+      // comprise), POSÉ sur la ligne de sol — la lame roule dessus (08/08).
+      const railW = Math.max(0, prPx.x + prPx.w - cible.x)
+      if (railW > 0) {
+        rects.push(
+          `<rect x="${cible.x}" y="${yG - railH}" width="${railW}" height="${railH}" fill="${coul.rail}"/>`
+        )
+      }
+    }
+    // Murets d'abord (les piliers passent devant), puis piliers et chapeaux —
+    // rects en cm du gabarit, projetés en px comme le portail.
+    const aplat = (
+      r: { x: number; y: number; w: number; h: number } | null | undefined,
+      fill: string,
+      apres = false
+    ) => {
+      if (!r) return
+      const p = projectRect(r, proj)
+      if (p.w > 0 && p.h > 0) {
+        ;(apres ? rectsApres : rects).push(
+          `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" fill="${fill}"/>`
+        )
+      }
+    }
+    aplat(layout.muretLeft, coul.muret)
+    // Coulissant : le muret droit passe DEVANT la lame lui aussi — la lame file
+    // derrière lui, seul son haut émerge au-dessus (physique du refoulement).
+    aplat(layout.muretRight, coul.muret, opts.pilierDroitDevant === true)
+    // Coulissant : pilier DROIT devant la lame (le nez s'engage derrière lui) ;
+    // le pilier GAUCHE reste peint AVANT la pose — le chant de fermeture
+    // (serrure/poignée, qui peut déborder sur le pilier) doit rester VISIBLE.
+    aplat(layout.pillarLeft, coul.pilier)
+    aplat(layout.pillarRight, coul.pilier, opts.pilierDroitDevant === true)
+    // Chapeaux dans la MÊME famille blanc cassé que les piliers (07/08 : un
+    // aplat plus foncé faisait sortir des chapeaux GRIS au lieu de blancs —
+    // Nano texture la teinte qu'on lui donne).
+    aplat(layout.capLeft?.bbox, coul.chapeau)
+    aplat(layout.capRight?.bbox, coul.chapeau, opts.pilierDroitDevant === true)
+    if (rects.length > 0) {
+      const svg = `<svg width="${planW}" height="${planH}" xmlns="http://www.w3.org/2000/svg">${rects.join('')}</svg>`
+      gris = await sharp(gris).composite([{ input: Buffer.from(svg) }]).png().toBuffer()
+    }
+    if (rectsApres.length > 0) {
+      apresSvg = `<svg width="${planW}" height="${planH}" xmlns="http://www.w3.org/2000/svg">${rectsApres.join('')}</svg>`
+    }
+  }
+
+  const pose = await poserProduitSurCible(gris, produit, cible, opts.seuilAlpha, false, false)
+  let buffer = pose.image
+  if (apresSvg) {
+    buffer = await sharp(buffer)
+      .composite([{ input: Buffer.from(apresSvg) }])
+      .png()
+      .toBuffer()
+  }
   return {
-    buffer: pose.image,
+    buffer,
     portail: pose.cible,
     planW,
     planH,

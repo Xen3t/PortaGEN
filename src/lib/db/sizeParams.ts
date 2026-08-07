@@ -25,7 +25,9 @@ type AllowedKey =
   | 'muretEnabled'
   | 'capStyle'
   | 'offsetX'
+  | 'offsetY'
   | 'sceneH'
+  | 'zoom'
 export type SizeParamsOverride = Partial<Pick<GabaritParams, AllowedKey>>
 
 /** Ne garde que les clés autorisées, avec des valeurs plausibles. */
@@ -43,9 +45,14 @@ export function sanitizeSizeParams(input: unknown): SizeParamsOverride | null {
   if (num(src.pillarH, 20, 320) !== undefined) out.pillarH = src.pillarH
   if (num(src.muretH, 0, 320) !== undefined) out.muretH = src.muretH
   if (num(src.offsetX, -100, 100) !== undefined) out.offsetX = src.offsetX
+  // Décalage vertical de la ligne de sol (07/08, avec le zoom) : + = descend.
+  if (num(src.offsetY, -100, 100) !== undefined) out.offsetY = src.offsetY
   // Recul de la scène (jeu Gabarits XL, 22/07/2026) : hauteur de scène en cm —
   // la largeur suit le ratio MES. 480 par défaut côté XL (gabaritSets.ts).
   if (num(src.sceneH, 250, 800) !== undefined) out.sceneH = src.sceneH
+  // Zoom caméra en % (07/08/2026, demande Mathias pour les portillons) :
+  // 100 = neutre, 200 = deux fois plus proche.
+  if (num(src.zoom, 25, 400) !== undefined) out.zoom = src.zoom
   if (typeof src.muretEnabled === 'boolean') out.muretEnabled = src.muretEnabled
   if (src.capStyle === 'none' || src.capStyle === 'flat' || src.capStyle === 'gendarme') {
     out.capStyle = src.capStyle

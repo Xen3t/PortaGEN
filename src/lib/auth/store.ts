@@ -4,7 +4,11 @@ import { getDb } from '@/lib/db'
 import { hashPassword, verifyPassword } from '@/lib/auth/password'
 
 export const SESSION_COOKIE = 'portagen_session'
+// Expiration glissante : chaque visite repousse l'échéance en base de SESSION_DAYS.
+// Le cookie doit durer plus longtemps que la base (sinon il expire avant elle) :
+// on ne le repose qu'au login, donc on lui donne un an.
 const SESSION_DAYS = 30
+const COOKIE_DAYS = 365
 
 export interface UserRow {
   id: number
@@ -28,7 +32,7 @@ export function authenticate(
 
 export function createSession(userId: number, db: Database.Database = getDb()): { token: string; maxAge: number } {
   const token = crypto.randomBytes(32).toString('hex')
-  const maxAge = SESSION_DAYS * 24 * 3600
+  const maxAge = COOKIE_DAYS * 24 * 3600
   db.prepare(
     `INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', '+${SESSION_DAYS} days'))`
   ).run(token, userId)
@@ -44,6 +48,11 @@ export function getUserBySession(token: string | undefined, db: Database.Databas
        WHERE s.token = ? AND s.expires_at >= datetime('now')`
     )
     .get(token) as UserRow | undefined
+  if (row) {
+    db.prepare(
+      `UPDATE sessions SET expires_at = datetime('now', '+${SESSION_DAYS} days') WHERE token = ?`
+    ).run(token)
+  }
   return row ?? null
 }
 

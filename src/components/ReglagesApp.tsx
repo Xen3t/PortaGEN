@@ -55,6 +55,15 @@ export default function ReglagesApp() {
   // Modèle image global (28/07/2026) : Nano Banana Pro ou Nano Banana.
   const [imageModel, setImageModel] = useState<string | null>(null)
   const [imageModels, setImageModels] = useState<{ id: string; label: string }[]>([])
+  // Modèles & exécution (07/08 soir) : vision descriptions, gabarit du prompt
+  // vision, sas de calcul d'image, chaînes de préparation MES Contrainte.
+  const [visionModel, setVisionModel] = useState('')
+  const [visionTemplate, setVisionTemplate] = useState('')
+  const [visionTemplateDefaut, setVisionTemplateDefaut] = useState('')
+  const [sasImages, setSasImages] = useState<number | null>(null)
+  const [sasBounds, setSasBounds] = useState({ min: 1, max: 8 })
+  const [prepConcurrence, setPrepConcurrence] = useState<number | null>(null)
+  const [prepBounds, setPrepBounds] = useState({ min: 1, max: 6 })
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -68,8 +77,30 @@ export default function ReglagesApp() {
         if (typeof d.marquageIa === 'boolean') setMarquageIa(d.marquageIa)
         if (d.imageModel) setImageModel(d.imageModel)
         if (d.imageModels) setImageModels(d.imageModels)
+        if (typeof d.visionModel === 'string') setVisionModel(d.visionModel)
+        setVisionTemplate(typeof d.visionTemplate === 'string' ? d.visionTemplate : '')
+        if (typeof d.visionTemplateDefaut === 'string')
+          setVisionTemplateDefaut(d.visionTemplateDefaut)
+        if (typeof d.sasImages === 'number') setSasImages(d.sasImages)
+        if (d.sasBounds) setSasBounds(d.sasBounds)
+        if (typeof d.prepConcurrence === 'number') setPrepConcurrence(d.prepConcurrence)
+        if (d.prepBounds) setPrepBounds(d.prepBounds)
       })
   }, [])
+
+  /** Enregistrement générique d'un champ « Modèles & exécution ». */
+  async function savePatch(patch: Record<string, unknown>, message: string) {
+    setBusy(true)
+    setNotice(null)
+    const res = await fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    const data = await res.json().catch(() => null)
+    setBusy(false)
+    setNotice(res.ok ? message : `Erreur : ${data?.error ?? res.status}`)
+  }
 
   /** Bascule du marquage IA — enregistrée immédiatement (un seul bouton Oui/Non). */
   async function saveMarquageIa(next: boolean) {
@@ -219,6 +250,143 @@ export default function ReglagesApp() {
                 </button>
               ))}
             </span>
+
+            <SubHeading>Modèle vision — descriptions produit</SubHeading>
+            <p className="text-xs text-text-secondary mb-3">
+              Modèle Gemini qui rédige la description factuelle d&apos;un produit (bibliothèque
+              des descriptions, MES Contrainte). Vide = défaut{' '}
+              <span className="font-mono">gemini-pro-latest</span>. Vérifie qu&apos;un nom saisi
+              existe vraiment (un modèle inconnu = erreur 404 à la première description).
+            </p>
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
+              <input
+                type="text"
+                value={visionModel}
+                onChange={(e) => setVisionModel(e.target.value)}
+                placeholder="gemini-pro-latest"
+                maxLength={80}
+                className="w-64 font-mono border border-border bg-surface rounded-[8px] px-3 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+              />
+              <button
+                onClick={() =>
+                  void savePatch(
+                    { visionModel: visionModel.trim() },
+                    'Modèle vision enregistré — effet sur les prochaines descriptions.'
+                  )
+                }
+                disabled={busy}
+                className="bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+              >
+                Enregistrer
+              </button>
+            </div>
+
+            <SubHeading>Gabarit du prompt vision</SubHeading>
+            <p className="text-xs text-text-secondary mb-3">
+              Consigne envoyée au modèle vision pour rédiger une description (structure
+              STRUCTURE / FRAME / INFILL / HARDWARE). Vide = gabarit par défaut. Les
+              descriptions déjà en bibliothèque ne bougent pas.
+            </p>
+            <textarea
+              value={visionTemplate}
+              onChange={(e) => setVisionTemplate(e.target.value)}
+              placeholder={visionTemplateDefaut}
+              rows={7}
+              className="w-full font-mono text-[12px] border border-border bg-surface rounded-[8px] px-3 py-2 focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+            />
+            <div className="flex items-center gap-3 mt-2 mb-2 flex-wrap">
+              <button
+                onClick={() =>
+                  void savePatch(
+                    { visionTemplate },
+                    'Gabarit du prompt vision enregistré — effet sur les prochaines descriptions.'
+                  )
+                }
+                disabled={busy}
+                className="bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+              >
+                Enregistrer
+              </button>
+              <button
+                onClick={() => {
+                  setVisionTemplate('')
+                  void savePatch({ visionTemplate: '' }, 'Gabarit par défaut restauré.')
+                }}
+                disabled={busy}
+                className="bg-white border border-border text-text-secondary rounded-[10px] px-4 py-2 text-sm font-bold hover:border-brand-green hover:text-brand-green transition-colors disabled:opacity-50"
+              >
+                Gabarit par défaut
+              </button>
+            </div>
+
+            <SubHeading>Protection de la machine (calculs lourds)</SubHeading>
+            <p className="text-xs text-text-secondary mb-3">
+              Le serveur fait des calculs lourds (RALify, plan gris, recadrage final) pour
+              TOUT le monde à la fois : tes préparations, mais aussi chaque génération qui
+              revient de Nano. Ce plafond limite combien de ces calculs tournent en même
+              temps — au-delà, ils patientent quelques secondes. C&apos;est ce qui empêche
+              l&apos;interface de se figer pendant un gros lot. Effet immédiat.
+            </p>
+            <div className="flex items-center gap-3 mb-2">
+              <input
+                type="number"
+                min={sasBounds.min}
+                max={sasBounds.max}
+                value={sasImages ?? ''}
+                onChange={(e) => setSasImages(Number(e.target.value))}
+                title="Calculs d'image simultanés"
+                className="w-24 border border-border bg-surface rounded-[8px] px-3 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+              />
+              <span className="text-xs text-text-disabled">
+                entre {sasBounds.min} et {sasBounds.max}
+              </span>
+              <button
+                onClick={() => void savePatch({ sasImages }, 'Protection de la machine enregistrée.')}
+                disabled={
+                  busy || sasImages === null || sasImages < sasBounds.min || sasImages > sasBounds.max
+                }
+                className="bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+              >
+                Enregistrer
+              </button>
+            </div>
+
+            <SubHeading>Files d&apos;attente à l&apos;écran (MES Contrainte)</SubHeading>
+            <p className="text-xs text-text-secondary mb-3">
+              Quand tu déposes 10 images, combien de cases avancent EN MÊME TEMPS dans la
+              chaîne détourage → RALify → description → pose — les autres attendent leur
+              tour. Ne change que le rythme visible sur la page (les calculs lourds restent
+              plafonnés par la protection ci-dessus). Pris en compte au prochain chargement
+              de la page.
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min={prepBounds.min}
+                max={prepBounds.max}
+                value={prepConcurrence ?? ''}
+                onChange={(e) => setPrepConcurrence(Number(e.target.value))}
+                title="Images préparées de front"
+                className="w-24 border border-border bg-surface rounded-[8px] px-3 py-2 text-sm focus:outline-none focus:border-brand-green focus:bg-white transition-colors"
+              />
+              <span className="text-xs text-text-disabled">
+                entre {prepBounds.min} et {prepBounds.max}
+              </span>
+              <button
+                onClick={() =>
+                  void savePatch({ prepConcurrence }, 'File d’attente à l’écran enregistrée.')
+                }
+                disabled={
+                  busy ||
+                  prepConcurrence === null ||
+                  prepConcurrence < prepBounds.min ||
+                  prepConcurrence > prepBounds.max
+                }
+                className="bg-brand-green text-white rounded-[10px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+              >
+                Enregistrer
+              </button>
+            </div>
       </AppCard>
 
       <AppCard id="app-marquage" title="Marquage IA">

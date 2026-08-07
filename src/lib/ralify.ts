@@ -58,7 +58,86 @@ export const RAL_CIBLES: ReadonlyArray<{ ral: string; label: string; hex: string
 export function ralCibleLabel(hex: string | null): string {
   if (!hex) return 'Ne pas toucher'
   const known = RAL_CIBLES.find((c) => c.hex.toLowerCase() === hex.toLowerCase())
-  return known ? `${known.ral} · ${known.label}` : hex.toLowerCase()
+  if (known) return `${known.ral} · ${known.label}`
+  const code = ralCodeDepuisHex(hex)
+  return code ? `RAL ${code}` : hex.toLowerCase()
+}
+
+/**
+ * Table RAL Classic → hex (07/08 soir, demande Mathias : « j'indique le RAL,
+ * ça met la bonne couleur en pastille et basta »). Valeurs = approximations
+ * sRGB usuelles, SAUF les codes déjà validés en production (7016 = 67,74,80
+ * de RALify_7016, etc.) qui gardent leur teinte éprouvée. Familles couvertes :
+ * celles des portails (jaunes/beiges, rouges, bleus, verts, gris, bruns,
+ * blancs/noirs, alu).
+ */
+export const RAL_HEX: Record<string, string> = {
+  // — 1000 jaunes / beiges —
+  '1000': '#cdba88', '1001': '#d0b084', '1002': '#d2aa6d', '1003': '#f9a800',
+  '1004': '#e49e00', '1005': '#cb8e00', '1006': '#e29000', '1007': '#e88c00',
+  '1011': '#af8a54', '1013': '#e3d9c6', '1014': '#ddc49a', '1015': '#e6d2b5',
+  '1016': '#f1dd38', '1017': '#f6a950', '1018': '#faca30', '1019': '#a48f7a',
+  '1020': '#a08f65', '1021': '#f6b600', '1023': '#f7b500', '1024': '#ba8f4c',
+  '1027': '#a77f0e', '1028': '#ff9b00', '1032': '#e2a300', '1033': '#f99a1c',
+  '1034': '#eb9c52', '1035': '#908370', '1036': '#80643f', '1037': '#f09200',
+  // — 3000 rouges —
+  '3000': '#af2b1e', '3001': '#a52019', '3002': '#a2231d', '3003': '#9b111e',
+  '3004': '#75151e', '3005': '#5e2129', '3007': '#412227', '3009': '#642424',
+  '3011': '#781f19', '3012': '#c1876b', '3013': '#a12312', '3014': '#d36e70',
+  '3015': '#ea899a', '3016': '#b32821', '3017': '#e63244', '3018': '#d53032',
+  '3020': '#cc0605', '3022': '#d95030', '3027': '#c51d34', '3031': '#b32428',
+  // — 5000 bleus —
+  '5000': '#354d73', '5001': '#1f3438', '5002': '#20214f', '5003': '#1d1e33',
+  '5004': '#18171c', '5005': '#1e2460', '5007': '#3e5f8a', '5008': '#26252d',
+  '5009': '#025669', '5010': '#0e294b', '5011': '#231a24', '5012': '#3b83bd',
+  '5013': '#1e213d', '5014': '#606e8c', '5015': '#2271b3', '5017': '#063971',
+  '5018': '#3f888f', '5019': '#1b5583', '5020': '#1d334a', '5021': '#256d7b',
+  '5022': '#252850', '5023': '#49678d', '5024': '#5d9b9b',
+  // — 6000 verts —
+  '6000': '#316650', '6001': '#287233', '6002': '#2d572c', '6003': '#424632',
+  '6004': '#1f3a3d', '6005': '#2f4538', '6006': '#3e3b32', '6007': '#343b29',
+  '6009': '#31372b', '6011': '#587246', '6012': '#343e40', '6013': '#6c7156',
+  '6015': '#3b3c36', '6016': '#1e5945', '6017': '#4c9141', '6018': '#57a639',
+  '6019': '#bdecb6', '6020': '#2e3a23', '6021': '#89ac76', '6024': '#308446',
+  '6025': '#3d642d', '6026': '#015d52', '6028': '#20603d', '6029': '#005f38',
+  '6032': '#237f52', '6033': '#45877f', '6034': '#7aacac', '6035': '#194d25',
+  '6036': '#04574b', '6037': '#008f39', '6038': '#00bb2d',
+  // — 7000 gris —
+  '7000': '#78858b', '7001': '#8a9597', '7002': '#7e7b52', '7003': '#6c7059',
+  '7004': '#969992', '7005': '#646b63', '7006': '#6d6552', '7008': '#6a5f31',
+  '7009': '#4d5645', '7010': '#4c514a', '7011': '#434b4d', '7012': '#4e5754',
+  '7013': '#464531', '7015': '#434750', '7016': '#434a50', '7021': '#2e3238',
+  '7022': '#4b4d46', '7023': '#818479', '7024': '#474a51', '7026': '#374447',
+  '7030': '#939388', '7031': '#5d6970', '7032': '#b9b9a8', '7033': '#818979',
+  '7034': '#939176', '7035': '#c5c7c4', '7036': '#7d8471', '7037': '#7f7679',
+  '7038': '#b5b8b1', '7039': '#6c6960', '7040': '#9da1aa', '7042': '#8d948d',
+  '7043': '#4e5452', '7044': '#cac4b0', '7045': '#909090', '7046': '#82898f',
+  '7047': '#d0d0d0', '7048': '#898176',
+  // — 8000 bruns —
+  '8000': '#826c34', '8001': '#955f20', '8002': '#6c3b2a', '8003': '#734222',
+  '8004': '#8e402a', '8007': '#59351f', '8008': '#6f4f28', '8011': '#5b3a29',
+  '8012': '#592321', '8014': '#382c1e', '8015': '#633a34', '8016': '#4c2f27',
+  '8017': '#45322e', '8019': '#403a3a', '8022': '#212121', '8023': '#a65e2e',
+  '8024': '#79553d', '8025': '#755c48', '8028': '#4e3b31',
+  // — 9000 blancs / noirs / alu —
+  '9001': '#fdf4e3', '9002': '#e7ebda', '9003': '#f4f4f4', '9004': '#282828',
+  '9005': '#0e0e10', '9006': '#a5a5a5', '9007': '#8f8f8f', '9010': '#f1ece1',
+  '9011': '#1c1c1c', '9016': '#f1f0ea', '9017': '#1e1e1e', '9018': '#d7d7d7',
+  '9022': '#9c9c9c', '9023': '#828282',
+}
+
+/** Hex d'un code RAL saisi (« 7016 », « RAL 7016 ») — null si inconnu. */
+export function ralHexDepuisCode(code: string): string | null {
+  const m = code.trim().match(/^(?:RAL\s*)?(\d{4})$/i)
+  return m ? (RAL_HEX[m[1]] ?? null) : null
+}
+
+/** Code RAL correspondant à un hex de la table — null si hors table. */
+export function ralCodeDepuisHex(hex: string | null): string | null {
+  if (!hex) return null
+  const h = hex.toLowerCase()
+  for (const [code, v] of Object.entries(RAL_HEX)) if (v === h) return code
+  return null
 }
 
 export const RALIFY_DEFAUTS: RalifyReglages = {

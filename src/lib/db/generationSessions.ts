@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { lireBancManifest } from '@/lib/banc'
 import { getDb, listJobsByBatch } from '@/lib/db'
 import { normalizeDecorPath } from '@/lib/db/decors'
 
@@ -183,6 +184,20 @@ export function summarizeGenerationSession(
     }
   }
 
+  // Session MES Contrainte préparée mais pas encore générée : les jobs ne
+  // savent rien — le MANIFESTE du lot donne le compte d'images, les coloris et
+  // le plan gris en vignette (retour Mathias 07/08 : « 0 image » était faux).
+  if (row.batch_id.startsWith('banc-') && totalSlots.size === 0) {
+    const manifest = lireBancManifest(row.batch_id)
+    if (manifest) {
+      for (const it of manifest.items) {
+        totalSlots.add(`${it.coloris.toLowerCase()}|${it.w}x${it.h}`)
+        if (it.coloris && !coloris.includes(it.coloris)) coloris.push(it.coloris)
+      }
+      if (!thumbPath && manifest.items[0]?.planPath) thumbPath = manifest.items[0].planPath
+    }
+  }
+
   return {
     batchId: row.batch_id,
     produit: row.produit,
@@ -190,7 +205,9 @@ export function summarizeGenerationSession(
     decorId: row.decor_id,
     decorName: decor?.name ?? null,
     createdAt: row.created_at,
-    source: hasDecorAutour ? 'decor-autour' : 'directe',
+    // Un lot MES Contrainte (banc-…) SANS job encore lancé doit déjà rouvrir la
+    // bonne page — l'id fait foi quand les jobs ne peuvent pas parler (07/08).
+    source: hasDecorAutour || row.batch_id.startsWith('banc-') ? 'decor-autour' : 'directe',
     mesCount: totalSlots.size,
     mesDone: doneSlots.size,
     coloris,
@@ -243,6 +260,9 @@ function summarizeCatalogueBatch(
   let libreCount = 0
   let libreDone = 0
   let libreLabel = ''
+  // Batch « décor autour » orphelin (session supprimée mais jobs conservés) :
+  // sa carte doit rouvrir /generation/decor-autour, pas la gamme legacy (vide).
+  let hasDecorAutour = false
 
   for (const j of jobs) {
     let payload: Record<string, unknown> = {}
@@ -257,6 +277,7 @@ function summarizeCatalogueBatch(
     if (j.status === 'queued' || j.status === 'running') busy = true
     if (j.status === 'error') anyError = true
     if (j.type === 'marketplace' || j.type === 'libre-mp') mpDone = true
+    if (j.type === 'decor-autour') hasDecorAutour = true
     if (typeof payload.moteur === 'string' && payload.moteur) moteur = payload.moteur
     if (j.type === 'libre') {
       libreCount++
@@ -363,7 +384,10 @@ function summarizeCatalogueBatch(
     decorId: null,
     decorName: null,
     createdAt,
-    source: 'catalogue',
+    // Un batch avec des jobs « decor-autour » est une session du NOUVEAU mode,
+    // même sans ligne de session (supprimée) : sa carte rouvre
+    // /generation/decor-autour?session=… — jamais la gamme legacy.
+    source: hasDecorAutour ? 'decor-autour' : 'catalogue',
     mesCount,
     mesDone: doneMes,
     coloris,

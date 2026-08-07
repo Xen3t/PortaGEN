@@ -4,15 +4,15 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import SessionCards from './generation/SessionCards'
 import { SilhouetteModeIcone, type Mode } from './Silhouette'
-import Chargement from '@/components/Chargement'
 
 /**
  * ACCUEIL — page d'arrivée (navigation v2 validée le 12/07/2026) :
- * mes sessions (directes + gammes), mes dernières générations et mes
- * notifications, filtrées sur la marque active.
+ * les actions + mes sessions, filtrées sur la marque active.
  *
  * 13/07/2026 (maquette sessions-v2) : la page Production a été SUPPRIMÉE —
  * les lancements de gamme sont des sessions comme les autres, affichées ici.
+ * 07/08/2026 : « Mes dernières générations » et « Notifications » retirés de
+ * l'écran (décision Mathias) — le système de notifications reste en place.
  */
 
 interface Job {
@@ -25,51 +25,6 @@ interface Job {
   reviewStatus: string
   batchId: string | null
   createdAt: string
-}
-
-const TYPE_LABELS: Record<string, string> = {
-  decor: 'Décor',
-  'decor-fix': 'Correction de décor',
-  pillars: 'Piliers',
-  integration: 'Intégration',
-}
-
-function art(p: unknown, w?: number): string {
-  const base = `/api/artifacts?p=${encodeURIComponent(String(p))}`
-  return w ? `${base}&w=${w}` : base
-}
-
-function jobImage(j: Job): string | null {
-  const r = j.result ?? {}
-  const p = (r.deliveryPath ?? r.compositePath ?? r.imagePath) as string | undefined
-  return p ? art(p, 160) : null
-}
-
-function jobLabel(j: Job): string {
-  const size = j.payload?.size
-  const sizeLabel =
-    typeof size === 'string'
-      ? size
-      : size && typeof size === 'object'
-        ? `${(size as Record<string, unknown>).w ?? ''}x${(size as Record<string, unknown>).h ?? ''}`
-        : ''
-  return [TYPE_LABELS[j.type] ?? j.type, sizeLabel].filter(Boolean).join(' · ')
-}
-
-function statusBadge(j: Job): { text: string; cls: string } {
-  if (j.status === 'queued' || j.status === 'running') {
-    return { text: '⏳ en cours', cls: 'text-brand-teal anim-respire' }
-  }
-  if (j.status === 'error') return { text: '✗ en erreur', cls: 'text-brand-red' }
-  if (j.status === 'cancelled') return { text: 'annulée', cls: 'text-text-disabled' }
-  // La validation ne concerne plus que les décors (28/07/2026) : une MES
-  // terminée est simplement terminée.
-  if (j.type === 'decor' || j.type === 'decor-fix') {
-    if (j.reviewStatus === 'approved') return { text: '✓ validé', cls: 'text-brand-green' }
-    if (j.reviewStatus === 'rejected') return { text: 'rejeté', cls: 'text-text-disabled' }
-    return { text: '✓ terminé — à valider', cls: 'text-brand-green' }
-  }
-  return { text: '✓ terminée', cls: 'text-brand-green' }
 }
 
 export default function AccueilPage() {
@@ -97,10 +52,6 @@ export default function AccueilPage() {
     )
   }
 
-  // Plus de « X à valider » (décision Mathias 13/07/2026) : pas validé =
-  // simplement ignoré. Les notifications ne gardent que les échecs.
-  const failed = data ? data.jobs.filter((j) => j.status === 'error') : []
-
   return (
     <div className="grid gap-4">
       {/* Les actions au-dessus des sessions (rework 22/07/2026, validé par
@@ -116,7 +67,7 @@ export default function AccueilPage() {
               href: '/generation/decor-autour',
               mode: 'contrainte' as Mode,
               titre: 'MES Contrainte',
-              sous: 'Décor Écrin · vraie échelle, Nano peint autour',
+              sous: 'vraie échelle, Nano peint autour',
             },
             {
               href: '/generation?mode=libre',
@@ -147,80 +98,11 @@ export default function AccueilPage() {
           les deux appels partent en parallèle, les cartes arrivent plus vite. */}
       <SessionCards limit={3} hideWhenEmpty allLink />
 
-      {!data ? (
-        <Chargement />
-      ) : (
-      <div className="grid grid-cols-[1.6fr_1fr] max-md:grid-cols-1 gap-4 items-start">
-      <section className="bg-white rounded-[12px] border border-border shadow-sm p-5">
-        <h2 className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-3">
-          Mes dernières générations
-        </h2>
-        {data.jobs.length === 0 ? (
-          <p className="text-sm text-text-secondary">
-            Vous n&apos;avez encore rien généré. Passez par le{' '}
-            <Link href="/catalogue" className="text-brand-green font-semibold hover:underline">
-              Catalogue
-            </Link>{' '}
-            ou par la{' '}
-            <Link href="/generation" className="text-brand-green font-semibold hover:underline">
-              Génération
-            </Link>
-            .
-          </p>
-        ) : (
-          data.jobs.map((j) => {
-            const badge = statusBadge(j)
-            const img = jobImage(j)
-            return (
-              <Link
-                key={j.id}
-                href={`/production/image/${j.id}`}
-                className="flex items-center gap-3 py-2 border-b border-border last:border-b-0 text-sm hover:bg-surface transition-colors px-1 rounded"
-              >
-                {img ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={img}
-                    alt=""
-                    className="w-[52px] h-[34px] object-cover rounded border border-border flex-none"
-                    loading="lazy"
-                  />
-                ) : (
-                  <span className="w-[52px] h-[34px] rounded border border-border bg-surface flex-none" />
-                )}
-                <span className="font-semibold">{jobLabel(j)}</span>
-                <span className={`ml-auto text-xs font-bold ${badge.cls}`}>{badge.text}</span>
-              </Link>
-            )
-          })
-        )}
-      </section>
-
-      <section className="bg-white rounded-[12px] border border-border shadow-sm p-5">
-        <h2 className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-3">
-          Notifications
-        </h2>
-        {failed.length === 0 ? (
-          <p className="text-sm text-text-secondary">Rien à signaler.</p>
-        ) : (
-          <div className="grid gap-1">
-            {failed.map((j) => (
-              <Link
-                key={j.id}
-                href={`/production/image/${j.id}`}
-                className="text-sm py-2 border-b border-border last:border-b-0 block hover:bg-surface px-1 rounded transition-colors"
-              >
-                <b className="text-brand-red">Échec</b>{' '}
-                <span className="text-text-secondary">
-                  {jobLabel(j)}
-                </span>
-              </Link>
-            ))}
-          </div>
-        )}
-      </section>
-      </div>
-      )}
+      {/* « Mes dernières générations » et « Notifications » RETIRÉS de
+          l'Accueil le 07/08/2026 (décision Mathias) : doublon des sessions, et
+          leurs clics héritaient de la vieille page /production/image. Le
+          système de notifications (API accueil, échecs) reste en place — il
+          n'est simplement plus affiché ici. */}
     </div>
   )
 }

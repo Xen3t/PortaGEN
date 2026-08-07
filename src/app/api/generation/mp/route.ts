@@ -5,6 +5,7 @@ import { requireApiUser } from '@/lib/auth/session'
 import { config } from '@/lib/config'
 import { getJob } from '@/lib/db'
 import { getMoteurReglages, moteurDef } from '@/lib/moteurs'
+import { getMoteurDaReglages, isMoteurDaKey, moteurDaLegacyKey } from '@/lib/moteursDa'
 import { enqueueNewJob } from '@/lib/server/runner'
 
 /**
@@ -67,9 +68,13 @@ export async function POST(req: NextRequest) {
         // racine illisible : on reste sur battant (défaut)
       }
     }
-    // Réglage du moteur : 'jamais' = déclinaison MP interdite (Admin → Réglages par moteur).
+    // Réglage du moteur : 'jamais' = déclinaison MP interdite (Admin → Réglages
+    // par moteur). Un moteur DÉCOR AUTOUR (janus/terminus/forculus) a SES
+    // réglages — jamais ceux du battant legacy (repli historique).
+    const daKey = moteur && isMoteurDaKey(moteur) ? moteur : null
     const moteurKey = moteurDef(moteur ?? 'battant')?.key ?? 'battant'
-    if (getMoteurReglages(moteurKey).marketplace === 'jamais') {
+    const reglages = daKey ? getMoteurDaReglages(daKey) : getMoteurReglages(moteurKey)
+    if (reglages.marketplace === 'jamais') {
       errors.push(`Job ${id} : la déclinaison MP est désactivée pour ce moteur`)
       continue
     }
@@ -97,7 +102,10 @@ export async function POST(req: NextRequest) {
         format: '2000x2000',
         // MES d'origine (intégration / pose-fusion) → l'UI sait quelle MES est déjà passée en MP
         rootJobId: isMesRoot ? job.id : payload.rootJobId,
-        moteur,
+        // runMarketplaceStep est indexé par clé LEGACY (cadrage + prompt
+        // « marketplace-extension ») : une clé DA passée telle quelle retombait
+        // sur le cadrage battant et le prompt générique codé en dur.
+        moteur: daKey ? moteurDaLegacyKey(daKey) : moteur,
       },
       job.batch_id ?? undefined,
       auth.username

@@ -6,6 +6,8 @@ import {
   RALIFY_DEFAUTS,
   isHexColor,
   ralCibleLabel,
+  ralCodeDepuisHex,
+  ralHexDepuisCode,
   type RalifyException,
   type RalifyReglages,
 } from '@/lib/ralify'
@@ -25,6 +27,8 @@ interface ColorisEntry {
   label: string
   ral: string | null
   swatch: string
+  /** true = coloris ajouté à la palette (supprimable), false = d'origine. */
+  custom: boolean
 }
 
 interface ProduitTest {
@@ -119,9 +123,89 @@ function Pastille({ hex }: { hex: string }) {
   )
 }
 
-/** Cible par défaut proposée quand on passe un coloris en « Traiter ». */
-function cibleSuggestion(key: string): string {
-  return RALIFY_DEFAUTS.regles[key]?.cible ?? '#434a50'
+/** Cible par défaut d'un coloris : son RAL de référence (défauts d'usine pour
+ *  gris/noir/blanc), sinon sa pastille — la cible EST le RAL du coloris, on ne
+ *  la répète pas à l'écran (retour Mathias 07/08 soir). */
+function cibleSuggestion(key: string, secours?: string): string {
+  return RALIFY_DEFAUTS.regles[key]?.cible ?? secours ?? '#434a50'
+}
+
+/** Interrupteur on/off (retour Mathias 07/08 soir : plus de boutons segmentés
+ *  sur les lignes) — vert = corrigé, gris = laissé tel quel. */
+function Interrupteur({
+  on,
+  disabled,
+  onChange,
+  title,
+}: {
+  on: boolean
+  disabled: boolean
+  onChange: (on: boolean) => void
+  title?: string
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      disabled={disabled}
+      onClick={() => onChange(!on)}
+      title={title}
+      className={`relative w-11 h-6 rounded-full transition-colors flex-none disabled:opacity-50 ${
+        on ? 'bg-brand-green' : 'bg-[#cfd4da]'
+      }`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+          on ? 'translate-x-5' : ''
+        }`}
+      />
+    </button>
+  )
+}
+
+/** Champ RAL d'une ligne : on TAPE le code (« 7016 »), la couleur suit —
+ *  c'est la seule manière d'exprimer la cible (retour Mathias 07/08 soir). */
+function RalChamp({
+  hex,
+  disabled,
+  onHex,
+}: {
+  hex: string | null
+  disabled: boolean
+  onHex: (hex: string) => void
+}) {
+  const [texte, setTexte] = useState(() => ralCodeDepuisHex(hex) ?? '')
+  useEffect(() => {
+    setTexte(ralCodeDepuisHex(hex) ?? '')
+  }, [hex])
+  const inconnu = texte.trim() !== '' && ralHexDepuisCode(texte) === null
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-xs font-medium text-text-secondary">RAL</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={texte}
+        disabled={disabled}
+        maxLength={4}
+        placeholder="7016"
+        onChange={(e) => {
+          const t = e.target.value
+          setTexte(t)
+          const h = ralHexDepuisCode(t)
+          if (h) onHex(h)
+        }}
+        title="Code RAL cible — la pastille suit automatiquement"
+        className="w-16 border border-border bg-white rounded-[8px] px-2 py-1.5 text-sm font-mono tabular-nums focus:outline-none focus:border-brand-green transition-colors disabled:opacity-45"
+      />
+      {inconnu && (
+        <span title="Code RAL inconnu de la table — la cible précédente reste appliquée" className="text-amber-700 text-xs font-bold">
+          ?
+        </span>
+      )}
+    </span>
+  )
 }
 
 function CibleSelect({
@@ -187,15 +271,71 @@ export default function RalifySection({
   value,
   coloris,
   onChange,
+  onPaletteChange,
   disabled,
 }: {
   moteur: MoteurKey
   value: RalifyReglages | null
   coloris: ColorisEntry[]
   onChange: (next: RalifyReglages) => void
+  /** La palette de coloris (globale, /api/coloris) a changé — ajout/suppression. */
+  onPaletteChange: (next: ColorisEntry[]) => void
   disabled: boolean
 }) {
   const v = value ?? RALIFY_DEFAUTS
+
+  // Ajout d'un coloris À MÊME le tableau (simplification 07/08 soir : plus de
+  // bloc « palette » séparé — un coloris = une ligne, point).
+  const [ajout, setAjout] = useState<{ label: string; ral: string; swatch: string } | null>(null)
+  const [paletteBusy, setPaletteBusy] = useState(false)
+  const [paletteErr, setPaletteErr] = useState<string | null>(null)
+
+  async function ajouterColoris() {
+    if (!ajout || !ajout.label.trim()) return
+    setPaletteBusy(true)
+    setPaletteErr(null)
+    const res = await fetch('/api/coloris', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        label: ajout.label.trim(),
+        ral: ajout.ral.trim() || null,
+        swatch: ajout.swatch,
+      }),
+    })
+    const data = await res.json().catch(() => null)
+    setPaletteBusy(false)
+    if (res.ok && Array.isArray(data?.coloris)) {
+      onPaletteChange(data.coloris)
+      setAjout(null)
+    } else {
+      setPaletteErr(data?.error ?? `Erreur ${res.status}`)
+    }
+  }
+
+  async function supprimerColoris(c: ColorisEntry) {
+    if (!window.confirm(`Supprimer le coloris « ${c.label} » de la palette ?`)) return
+    setPaletteBusy(true)
+    setPaletteErr(null)
+    const res = await fetch('/api/coloris', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: c.key }),
+    })
+    const data = await res.json().catch(() => null)
+    setPaletteBusy(false)
+    if (res.ok && Array.isArray(data?.coloris)) {
+      onPaletteChange(data.coloris)
+      // Sa règle part avec lui (sinon règle orpheline invisible).
+      if (v.regles[c.key]) {
+        const regles = { ...v.regles }
+        delete regles[c.key]
+        onChange({ ...v, regles })
+      }
+    } else {
+      setPaletteErr(data?.error ?? `Erreur ${res.status}`)
+    }
+  }
 
   // Formulaire d'exception (ajout ou modification d'une ligne existante).
   const [form, setForm] = useState<{ index: number | null; ex: RalifyException } | null>(null)
@@ -281,59 +421,163 @@ export default function RalifySection({
 
   return (
     <div>
-      {/* ===== Règle générale par coloris détecté ===== */}
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary mb-3">
-        Règle générale — par coloris détecté
-      </h3>
+      {/* ===== UN SEUL tableau : un coloris = une ligne (qui il est, ce qu'on
+          en fait). Simplification 07/08 soir — la palette et les règles ne
+          font plus qu'un, l'intensité vit dans l'en-tête, exceptions et
+          testeur sont repliés dessous. ===== */}
+      <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+          Coloris → couleur cible
+        </h3>
+        <span className="flex items-center gap-2.5 text-xs">
+          <span className="font-medium text-text-secondary">Intensité</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={v.intensite}
+            disabled={disabled}
+            onChange={(e) => onChange({ ...v, intensite: Number(e.target.value) })}
+            title="Force de la correction (100 % = teinte exactement au RAL)"
+            className="w-36 accent-brand-green"
+          />
+          <span className="font-mono text-text-disabled tabular-nums w-10 text-right">
+            {v.intensite} %
+          </span>
+        </span>
+      </div>
       <div className="space-y-2">
         {coloris.map((c) => {
           const regle = v.regles[c.key] ?? { traiter: false, cible: null }
           const teck = c.key === 'teck'
+          const defaut = cibleSuggestion(c.key, c.swatch)
+          // La pastille montre CE QUI SORTIRA : la cible quand on corrige,
+          // la teinte d'origine quand on ne touche pas.
+          const pastille = regle.traiter ? (regle.cible ?? defaut) : c.swatch
           return (
             <div
               key={c.key}
               className="flex items-center gap-3.5 border border-border rounded-[8px] px-3.5 py-2.5 flex-wrap"
             >
-              <span className="flex items-center gap-2 min-w-[120px] text-sm">
+              <span className="flex items-center gap-2 min-w-[110px] text-sm">
                 <span
                   className="w-4 h-4 rounded-[5px] border border-black/20 flex-none"
-                  style={{ background: c.swatch }}
+                  style={{ background: pastille }}
                 />
                 <b>{c.label}</b>
                 {teck && <small className="text-text-secondary text-[11.5px]">bois</small>}
               </span>
-              <span className="inline-flex border border-border rounded-[8px] overflow-hidden bg-white">
-                {segBtn(
-                  regle.traiter,
-                  'Traiter',
-                  () => setRegle(c.key, { traiter: true, cible: regle.cible ?? cibleSuggestion(c.key) }),
-                  true
-                )}
-                {segBtn(!regle.traiter, 'Ne pas toucher', () => setRegle(c.key, { traiter: false }), false)}
-              </span>
-              <span className={`text-[13px] ${regle.traiter ? 'text-text-disabled' : 'text-text-disabled opacity-45'}`}>
-                →
-              </span>
-              {teck && !regle.traiter ? (
-                <span className="text-[13px] text-text-disabled border border-border rounded-[8px] px-2.5 py-1.5 bg-surface opacity-45">
-                  — le bois n&apos;a pas de RAL —
-                </span>
-              ) : (
-                <CibleSelect
-                  cible={regle.cible}
-                  disabled={disabled || !regle.traiter}
-                  onChange={(hex) => setRegle(c.key, { cible: hex })}
-                />
+              {/* On TAPE le RAL, la pastille suit — et c'est tout (07/08 soir). */}
+              <RalChamp
+                hex={regle.cible ?? defaut}
+                disabled={disabled || !regle.traiter}
+                onHex={(hex) => setRegle(c.key, { traiter: true, cible: hex })}
+              />
+              {/* Interrupteur on/off (07/08 soir) : vert = corrigé vers le RAL,
+                  sans libellé d'état (retiré à la demande de Mathias). */}
+              <Interrupteur
+                on={regle.traiter}
+                disabled={disabled}
+                onChange={(on) =>
+                  setRegle(c.key, on ? { traiter: true, cible: regle.cible ?? defaut } : { traiter: false })
+                }
+                title={regle.traiter ? 'Corrigé vers le RAL — cliquer pour laisser tel quel' : 'Laissé tel quel — cliquer pour corriger vers le RAL'}
+              />
+              {c.custom && (
+                <button
+                  type="button"
+                  disabled={disabled || paletteBusy}
+                  onClick={() => void supprimerColoris(c)}
+                  title="Supprimer ce coloris de la palette (sa ligne disparaît partout)"
+                  className="ml-auto text-text-disabled hover:text-brand-red text-xs font-bold disabled:opacity-50"
+                >
+                  ✕
+                </button>
               )}
             </div>
           )
         })}
+        {/* Ajouter un coloris = ajouter une LIGNE — enregistré aussitôt dans la
+            palette globale ; sa cible se règle ensuite sur la ligne. */}
+        {ajout ? (
+          <div className="flex flex-wrap items-end gap-3 border border-border rounded-[8px] px-3.5 py-2.5 bg-surface">
+            <div>
+              <span className="block text-xs font-medium text-text-secondary mb-1.5">Nom</span>
+              <input
+                type="text"
+                value={ajout.label}
+                onChange={(e) => setAjout({ ...ajout, label: e.target.value })}
+                placeholder="ex. Beige"
+                maxLength={40}
+                className="w-36 border border-border bg-white rounded-[8px] px-3 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+              />
+            </div>
+            <div>
+              <span className="block text-xs font-medium text-text-secondary mb-1.5">
+                RAL (facultatif)
+              </span>
+              <input
+                type="text"
+                value={ajout.ral}
+                onChange={(e) => {
+                  const t = e.target.value
+                  // Le RAL pilote la pastille (même logique que les lignes).
+                  const hex = ralHexDepuisCode(t)
+                  setAjout({ ...ajout, ral: t, ...(hex ? { swatch: hex } : {}) })
+                }}
+                placeholder="ex. 1015"
+                maxLength={20}
+                className="w-28 border border-border bg-white rounded-[8px] px-3 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+              />
+            </div>
+            <div>
+              <span className="block text-xs font-medium text-text-secondary mb-1.5">Pastille</span>
+              <input
+                type="color"
+                value={ajout.swatch}
+                onChange={(e) => setAjout({ ...ajout, swatch: e.target.value })}
+                title="Couleur de la pastille"
+                className="w-10 h-8 border border-border rounded-[6px] bg-white cursor-pointer"
+              />
+            </div>
+            <button
+              type="button"
+              disabled={paletteBusy || !ajout.label.trim()}
+              onClick={() => void ajouterColoris()}
+              className="bg-brand-green text-white text-xs font-bold rounded-[8px] px-4 py-2 hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+            >
+              Ajouter
+            </button>
+            <button
+              type="button"
+              onClick={() => setAjout(null)}
+              className="text-xs text-text-secondary hover:underline py-2"
+            >
+              Annuler
+            </button>
+            {paletteErr && <span className="text-xs text-brand-red">{paletteErr}</span>}
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={disabled || paletteBusy}
+            onClick={() => setAjout({ label: '', ral: '', swatch: '#9ca3af' })}
+            className="w-full border border-dashed border-border rounded-[8px] px-3.5 py-2 text-sm font-bold text-brand-green hover:border-brand-green transition-colors disabled:opacity-50"
+          >
+            ＋ Ajouter un coloris
+          </button>
+        )}
       </div>
 
-      {/* ===== Exceptions par produit ===== */}
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary mt-5 mb-3">
-        Exceptions — par produit
-      </h3>
+      {/* ===== Exceptions par produit — replié (usage rare) ===== */}
+      <details className="mt-4">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-text-secondary select-none">
+          Exceptions par produit ({v.exceptions.length})
+        </summary>
+        <p className="text-xs text-text-disabled mt-2 mb-2">
+          Une exception prime sur le tableau : « si le nom du produit contient … alors cette
+          cible (ou ne pas toucher) ».
+        </p>
       <div className="space-y-1.5">
         {v.exceptions.map((ex, i) => (
           <div
@@ -482,32 +726,14 @@ export default function RalifySection({
           </button>
         </div>
       )}
+      </details>
 
-      {/* ===== Intensité ===== */}
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary mt-5 mb-3">
-        Intensité
-      </h3>
-      <div className="max-w-xs">
-        <div className="flex items-baseline justify-between text-xs mb-1">
-          <span className="font-medium text-text-secondary">Force de la correction</span>
-          <span className="font-mono text-text-disabled tabular-nums">{v.intensite} %</span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={v.intensite}
-          disabled={disabled}
-          onChange={(e) => onChange({ ...v, intensite: Number(e.target.value) })}
-          title="Force de la correction (100 % = teinte exactement au RAL)"
-          className="w-full accent-brand-green"
-        />
-      </div>
-
-      {/* ===== Contrôle : test avant/après ===== */}
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-secondary mt-5 mb-3">
-        Contrôle
-      </h3>
+      {/* ===== Testeur avant/après — replié (contrôle ponctuel) ===== */}
+      <details className="mt-3">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-text-secondary select-none">
+          Tester le réglage (avant / après)
+        </summary>
+        <div className="mt-3">
       <div className="flex flex-wrap items-center gap-2.5">
         <select
           value={produitIdx}
@@ -642,6 +868,9 @@ export default function RalifySection({
           )}
         </div>
       )}
+        </div>
+      </details>
+
       <p className="text-[11px] text-text-disabled mt-3">
         À chaque génération, le PNG corrigé est ajouté aux artefacts de contrôle du job
         (« 0-produit-ralify »).

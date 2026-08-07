@@ -47,7 +47,9 @@ describe('registre des moteurs', () => {
     // Prompts TOUJOURS préfixés par la clé (pas d'exception « battant »).
     expect(moteurDaPromptName('janus', 'decor-autour')).toBe('janus-decor-autour')
     // Réglages : défaut integrationMethod = decor-autour (la méthode du moteur).
-    expect(getMoteurDaReglages('janus').integrationMethod).toBe('decor-autour')
+    // Base :memory: comme les tests voisins — sans elle, getMoteurDaReglages
+    // ouvre et migre la VRAIE data/portagen.db et dépend de son état.
+    expect(getMoteurDaReglages('janus', getDb(':memory:')).integrationMethod).toBe('decor-autour')
   })
 
   it('aiguille automatiquement famille catalogue → moteur', () => {

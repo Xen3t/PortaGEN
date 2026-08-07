@@ -1,16 +1,17 @@
-import fs from 'node:fs'
+import fsp from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { config } from '@/lib/config'
 import { getDb } from '@/lib/db'
 import { getActivePrompt } from '@/lib/db/prompts'
+import { cadrageDaEffectif } from '@/lib/cadrageDa'
 import { construirePlanGris } from '@/lib/decorAutour'
 import { generateImage, type ImageSize } from '@/lib/genai/client'
-import { piedsProduitCatalogue, piedsProduitLibre } from '@/lib/genai/jugePieds'
 import { marquerImageIa } from '@/lib/images/marquage'
 import { appliquerRalify } from '@/lib/images/ralify'
 import { resolveRalifyCible } from '@/lib/ralify'
 import { getMoteurDaReglages, moteurDaPromptName, type MoteurDaKey } from '@/lib/moteursDa'
+import { sasCalculImage } from '@/lib/server/sasImages'
 import type { SizeCm } from '@/lib/geometry'
 
 /**
@@ -45,8 +46,25 @@ export interface DecorAutourStepOptions {
   productName?: string
   /** Moteur décor autour : ses réglages, SON prompt. Absent = janus (battant). */
   moteur?: MoteurDaKey
-  /** Fiche catalogue (drapeau pieds enregistré) — absent = image libre, jugée à chaque rendu */
-  catalogProductId?: number
+  /**
+   * Largeur de référence imposée (cm) — posé UNIQUEMENT par le banc
+   * « génération & resizing » (400, ordre Mathias 07/08). Absent (MES Écrin,
+   * mini-app) = pose à la vraie largeur du produit.
+   */
+  refWidth?: number
+  /** Bandes de sol dessinées sous le portail (BANC uniquement, rodage v3 07/08). */
+  bandesSol?: boolean
+  /** Bloc gabarit FIGÉ (banc portillon : zoom/décalage Y/hauteurs pilier…) —
+   *  porté par le payload, JAMAIS lu sur les gabarits legacy (interdit 07/08). */
+  gabarit?: Partial<import('@/lib/geometry').GabaritParams>
+  /** Coulissant : lame passée DERRIÈRE les deux piliers (aplats repeints devant). */
+  pilierDroitDevant?: boolean
+  /**
+   * Description PRODUIT (bibliothèque vision, rodage 07/08) — injectée dans le
+   * prompt à la place de {PRODUIT} : structure, cadre, remplissage,
+   * quincaillerie. Absente = phrase générique (produit tel que dans l'image).
+   */
+  productDescription?: string
   /** Job existant (créé par le runner) — sinon la fonction crée le sien (scripts CLI) */
   jobId?: number
 }
@@ -63,7 +81,6 @@ export interface DecorAutourStepResult {
   promptVersion: number
   ralifyCible: string | null
   alphaReparePx: number
-  piedsProduit: boolean
 }
 
 /**
@@ -108,54 +125,97 @@ export async function runDecorAutourStep(
 
   try {
     const dir = path.join(config.artifactsDir, 'decor-autour', slug, sizeLabel)
-    fs.mkdirSync(dir, { recursive: true })
+    await fsp.mkdir(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
 
-    // 1. RALify (conservé — décision Mathias 05/08) : la teinte de la matière est
-    //    ramenée au RAL cible du moteur AVANT la pose. null = ne pas toucher.
     const ralifyCible = resolveRalifyCible(
       moteur.ralify,
       `${opts.productName ?? ''} ${path.basename(opts.productPath)}`,
       opts.coloris
     )
-    let produitPret: Buffer | string = opts.productPath
-    if (ralifyCible) {
-      const ralify = await appliquerRalify(fs.readFileSync(opts.productPath), ralifyCible, moteur.ralify.intensite)
-      produitPret = ralify.image
-      fs.writeFileSync(path.join(dir, `0-produit-ralify-${stamp}.png`), produitPret)
-    }
 
-    // Drapeau PIEDS (repris du legacy, validé 29/07) : pilote la réparation de
-    // bande basse à la pose. TERMINUS (coulissant) : une lame n'a jamais de
-    // pieds, et sa clairance sous-lame ne doit jamais être rebouchée.
-    let piedsProduit = true
-    if (moteurKey === 'terminus') {
-      piedsProduit = false
-    } else {
-      const buf = Buffer.isBuffer(produitPret) ? produitPret : fs.readFileSync(produitPret)
-      piedsProduit = opts.catalogProductId
-        ? await piedsProduitCatalogue(opts.catalogProductId, buf, jobId)
-        : await piedsProduitLibre(buf, jobId)
-    }
+    // Phases 1-2 sous sas (07/08) : avec 20 jobs en vol, RALify + pose sharp
+    // simultanés saturaient CPU/RAM du processus web (UI figée). Le sas les fait
+    // passer 3 par 3 ; l'attente Nano, elle, reste libre.
+    const { plan, planPath, produitBuffer } = await sasCalculImage(async () => {
+      // 1. RALify (conservé — décision Mathias 05/08) : la teinte de la matière est
+      //    ramenée au RAL cible du moteur AVANT la pose. null = ne pas toucher.
+      let produitPret: Buffer | string = opts.productPath
+      if (ralifyCible) {
+        const ralify = await appliquerRalify(
+          await fsp.readFile(opts.productPath),
+          ralifyCible,
+          moteur.ralify.intensite
+        )
+        produitPret = ralify.image
+        await fsp.writeFile(path.join(dir, `0-produit-ralify-${stamp}.png`), produitPret)
+      }
 
-    // 2. Plan gris : produit posé à sa vraie échelle (géométrie + pose PortaGEN).
-    const plan = await construirePlanGris(produitPret, opts.size, {
-      seuilAlpha: moteur.poseSeuilAlpha,
-      reparePieds: piedsProduit,
-      reparePochesPieds: moteurKey !== 'terminus',
+      // 2. Plan gris : produit posé à sa vraie échelle (géométrie + pose PortaGEN),
+      //    TEL QUEL — aucun juge ni réparation dans la nouvelle méthode (demande
+      //    Mathias 07/08) : les PNG sont propres, faits main (décision 21/07).
+      // Zoom/décalage Y : valeurs FIGÉES portées par le payload (banc). AUCUNE
+      // lecture des gabarits legacy ici — INTERDIT (Mathias 07/08) : leurs
+      // curseurs ne sont qu'un outil de réglage visuel, les valeurs retenues
+      // sont extraites puis figées dans la recette.
+      // Couleurs + recouvrement + seuils de queue : réglage « Cadrage & scène »
+      // du moteur, lu au moment du run (comme RALify) — 07/08.
+      const cadrage = cadrageDaEffectif(moteurKey, moteur.cadrageDa)
+      const plan = await construirePlanGris(produitPret, opts.size, {
+        seuilAlpha: moteur.poseSeuilAlpha,
+        refWidth: opts.refWidth,
+        bandesSol: opts.bandesSol,
+        gabarit: opts.gabarit,
+        pilierDroitDevant: opts.pilierDroitDevant,
+        couleurs: cadrage.couleurs,
+        recouvrementCm: cadrage.recouvrementCm,
+        queueCouverturePct: cadrage.queueCouverturePct,
+        queueSeuilPct: cadrage.queueSeuilPct,
+        produitLargeurPct: cadrage.produitLargeurPct,
+        produitHauteurPct: cadrage.produitHauteurPct,
+      })
+      const planPath = path.join(dir, `1-plan-gris-${stamp}.png`)
+      await fsp.writeFile(planPath, plan.buffer)
+      // Le produit prêt (RALifié ou brut) ressort en Buffer : le COULISSANT le
+      // joint en 2ᵉ image de référence à l'appel Nano (rodage 07/08).
+      const produitBuffer =
+        typeof produitPret === 'string' ? await fsp.readFile(produitPret) : produitPret
+      return { plan, planPath, produitBuffer }
     })
-    const planPath = path.join(dir, `1-plan-gris-${stamp}.png`)
-    fs.writeFileSync(planPath, plan.buffer)
 
-    // 3. UN appel Nano : le prompt DU moteur (base), {COLORIS} injecté si présent.
+    // 3. UN appel Nano : le prompt DU moteur (base). La consigne de finition
+    //    ({COLORIS}) doit TOUJOURS partir : placeholder remplacé s'il existe,
+    //    sinon ajoutée en fin de prompt (prompts en base seedés sans placeholder
+    //    avant le 06/08 — le replaceAll seul était un no-op silencieux).
+    //    {PRODUIT} (rodage 07/08) : description vision de la bibliothèque —
+    //    quand elle existe, ELLE porte matières et couleurs, l'ajout {COLORIS}
+    //    de secours est inutile (et contredirait un produit bi-matière).
     const promptRow = getActivePrompt(moteurDaPromptName(moteurKey, 'decor-autour'))
-    const prompt = promptRow.content.replaceAll(
-      '{COLORIS}',
-      colorisPromptDescription(opts.coloris)
-    )
+    const colorisTxt = colorisPromptDescription(opts.coloris)
+    const productDesc = opts.productDescription?.trim()
+    let prompt = promptRow.content.includes('{COLORIS}')
+      ? promptRow.content.replaceAll('{COLORIS}', colorisTxt)
+      : productDesc
+        ? promptRow.content
+        : `${promptRow.content}\n\nThe placed product keeps ${colorisTxt}.`
+    if (prompt.includes('{PRODUIT}')) {
+      prompt = prompt.replaceAll(
+        '{PRODUIT}',
+        productDesc ?? 'the gate exactly as it appears in the input image'
+      )
+    } else if (productDesc) {
+      prompt = `${prompt}\n\nTHE PRODUCT, factually (trust this and the input image):\n${productDesc}`
+    }
+    // COULISSANT (rodage 07/08, après échec des leviers texte sur la lecture
+    // « battant ») : le PNG produit est joint en 2ᵉ image de RÉFÉRENCE — le
+    // prompt terminus v5 désigne image 1 = plan à éditer, image 2 = le produit
+    // exact (UN panneau). Approche « photo jointe » validée 5/5 sur les maisons
+    // plausibles. Battant/portillon (recettes validées) : une seule image.
+    const images = [{ source: plan.buffer, mimeType: 'image/png' }]
+    if (moteurKey === 'terminus') images.push({ source: produitBuffer, mimeType: 'image/png' })
     const generated = await generateImage({
       prompt,
-      images: [{ source: plan.buffer, mimeType: 'image/png' }],
+      images,
       aspectRatio: '3:2',
       imageSize,
       jobId,
@@ -164,15 +224,18 @@ export async function runDecorAutourStep(
     })
 
     // 4. Sortie brute = image finale ; seule la livraison e-commerce est recadrée.
-    const delivery = await sharp(generated.buffer)
-      .resize(plan.planW, plan.planH, { fit: 'cover' })
-      .jpeg(config.deliveryJpeg)
-      .toBuffer()
+    //    Recadrage sharp sous sas lui aussi (même raison que les phases 1-2).
+    const delivery = await sasCalculImage(() =>
+      sharp(generated.buffer)
+        .resize(plan.planW, plan.planH, { fit: 'cover' })
+        .jpeg(config.deliveryJpeg)
+        .toBuffer()
+    )
     const deliveryPath = path.join(
       dir,
       `3-livraison-${plan.planW}x${plan.planH}-${stamp}.jpg`
     )
-    fs.writeFileSync(deliveryPath, delivery)
+    await fsp.writeFile(deliveryPath, delivery)
     // Le réencodage sharp repart de zéro côté métadonnées → on re-marque le livrable.
     await marquerImageIa(deliveryPath)
 
@@ -187,7 +250,6 @@ export async function runDecorAutourStep(
       promptVersion: promptRow.version,
       ralifyCible,
       alphaReparePx: plan.alphaReparePx,
-      piedsProduit,
     }
 
     db.prepare(
@@ -197,6 +259,9 @@ export async function runDecorAutourStep(
         kind: 'decor-autour',
         sizeLabel,
         imageSize,
+        // Prompt COMPLET réellement envoyé ({PRODUIT}/{COLORIS} substitués) —
+        // affiché par le banc (demande Mathias 07/08 : contrôle à l'œil).
+        promptFinal: prompt,
         productPath: path.relative(config.rootDir, opts.productPath),
         planPath: path.relative(config.rootDir, planPath),
         rawOutputPath: path.relative(config.rootDir, generated.artifactPath),
@@ -212,7 +277,6 @@ export async function runDecorAutourStep(
         promptVersion: promptRow.version,
         ralifyCible,
         alphaReparePx: plan.alphaReparePx,
-        piedsProduit,
       }),
       jobId
     )

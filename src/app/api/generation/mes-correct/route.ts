@@ -28,8 +28,11 @@ export async function POST(req: NextRequest) {
   }
 
   const job = getJob(jobId)
-  // MES d'origine = intégration OU pose-fusion (chantier 17/07/2026), ou un mes-fix précédent.
-  const isMesRoot = job?.type === 'integration' || job?.type === 'pose-fusion'
+  // MES d'origine = intégration, pose-fusion (17/07/2026) OU decor-autour
+  // (05/08/2026 — la retouche travaille sur l'image livrée, même mécanique),
+  // ou un mes-fix précédent.
+  const isMesRoot =
+    job?.type === 'integration' || job?.type === 'pose-fusion' || job?.type === 'decor-autour'
   if (!job || (!isMesRoot && job.type !== 'mes-fix') || job.status !== 'done' || !job.result) {
     return NextResponse.json({ error: 'Version de MES indisponible.' }, { status: 400 })
   }

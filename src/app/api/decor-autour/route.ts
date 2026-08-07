@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const base = baseArtefact(fileName, size.w, size.h, stamp)
 
-    // 1) Plan gris : produit posé à la vraie échelle PortaGEN.
+    // 1) Plan gris : produit posé à la vraie échelle PortaGEN, tel quel.
     const plan = await construirePlanGris(produitPath, size)
     const planPath = path.join(dir, `plan-${base}.png`)
     fs.writeFileSync(planPath, plan.buffer)
@@ -98,10 +98,13 @@ export async function POST(req: NextRequest) {
       artifactDir: ARTIFACT_DIR,
     })
 
-    // 3) Recadrage exact au format de livraison — rendu BRUT, sans recollage.
+    // 3) Recadrage exact au FORMAT DEMANDÉ — rendu BRUT, sans recollage. En 4:3
+    // la hauteur suit le format : recadrer de force en 3:2 coupait ~170 px en
+    // haut/bas et rendait l'option 4:3 inopérante.
+    const finalH = aspectRatio === '4:3' ? Math.round((plan.planW * 3) / 4) : plan.planH
     const finalPath = path.join(dir, `final-${base}.jpg`)
     await sharp(out.buffer)
-      .resize(plan.planW, plan.planH, { fit: 'cover' })
+      .resize(plan.planW, finalH, { fit: 'cover' })
       .jpeg(config.deliveryJpeg)
       .toFile(finalPath)
 

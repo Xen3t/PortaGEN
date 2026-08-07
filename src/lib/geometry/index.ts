@@ -49,8 +49,21 @@ export interface GabaritParams {
   groundY: number
   /** Hauteur de la scène (cm) — pilote la proportion du portail à l'écran */
   sceneH: number
+  /**
+   * Zoom caméra en POURCENTAGE (option gabarits 07/08/2026, demande Mathias
+   * pour les portillons) : 100 = neutre, 200 = caméra deux fois plus proche —
+   * la scène (sceneH + groundY) est réduite d'autant, tout paraît plus gros,
+   * les proportions internes ne bougent pas.
+   */
+  zoom: number
   /** Décalage horizontal du portail (cm) */
   offsetX: number
+  /**
+   * Décalage VERTICAL de la ligne de sol (cm, option gabarits 07/08/2026 avec
+   * le zoom) : positif = tout descend (portail, piliers, murets, bandes de
+   * sol), négatif = tout monte. 0 = historique.
+   */
+  offsetY: number
   /** Ratio largeur/hauteur du format MES — la largeur de scène en découle */
   mesAspect: number
 }
@@ -69,7 +82,9 @@ export const DEFAULT_PARAMS: GabaritParams = {
   gateHMax: 200,
   groundY: 74,
   sceneH: 320,
+  zoom: 100,
   offsetX: 0,
+  offsetY: 0,
   mesAspect: 2000 / 1330,
 }
 
@@ -201,9 +216,14 @@ export function computeCap(
  */
 export function computeLayout(size: SizeCm, params: Partial<GabaritParams> = {}): Layout {
   const eff: GabaritParams = { ...DEFAULT_PARAMS, ...params }
-  const sceneH = eff.sceneH
+  // Zoom caméra (07/08/2026) : réduire la scène de z grossit tout d'autant —
+  // sceneH ET groundY suivent (proportions du cadre inchangées). 100 = neutre.
+  const z = eff.zoom > 0 ? eff.zoom / 100 : 1
+  const sceneH = eff.sceneH / z
   const sceneW = Math.round(sceneH * eff.mesAspect)
-  const groundLine = sceneH - eff.groundY
+  // Décalage Y (07/08) : la ligne de sol porte tout — la déplacer déplace
+  // portail, piliers, murets et bandes de sol d'un bloc.
+  const groundLine = sceneH - eff.groundY / z + eff.offsetY
 
   // Hauteurs découplées : pilier et muret interpolés chacun entre leurs réglages
   // petite/grande taille (voir effectiveHeights).

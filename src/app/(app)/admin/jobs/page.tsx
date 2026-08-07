@@ -85,6 +85,12 @@ function jobTitle(job: Job): string {
     const size = job.payload?.size as { w: number; h: number } | undefined
     return `${labPrefix}Pose + fusion — ${size ? `${size.w}x${size.h}` : '?'}`
   }
+  if (job.type === 'decor-autour') {
+    // MES Écrin (bascule 05/08/2026) : même gabarit de titre que les autres MES
+    // — la recherche du Journal matche sur ce titre (taille incluse).
+    const size = job.payload?.size as { w: number; h: number } | undefined
+    return `${labPrefix}Décor autour — ${size ? `${size.w}x${size.h}` : '?'}`
+  }
   if (job.type === 'decor-fix') return 'Correction de décor'
   return `${job.type} #${job.id}`
 }

@@ -49,7 +49,9 @@ type Override = Partial<
     | 'muretEnabled'
     | 'capStyle'
     | 'offsetX'
+    | 'offsetY'
     | 'sceneH'
+    | 'zoom'
   >
 >
 type OverrideKey = keyof Override
@@ -72,6 +74,11 @@ const globalSliders = (produit: string): Slider[] => [
   { key: 'muretHMin', label: `Muret · ${produit} 100`, unit: 'cm', min: 20, max: 250 },
   { key: 'muretHMax', label: `Muret · ${produit} 200`, unit: 'cm', min: 20, max: 250 },
   { key: 'offsetX', label: `Décalage X ${produit}`, unit: 'cm', min: -100, max: 100 },
+  // Zoom caméra + décalage Y (07/08/2026, demande Mathias — nés pour les
+  // portillons trop petits dans le cadre) : zoom 100 = neutre, 200 = caméra
+  // deux fois plus proche ; décalage Y positif = tout descend.
+  { key: 'zoom', label: 'Zoom caméra', unit: '%', min: 50, max: 300 },
+  { key: 'offsetY', label: 'Décalage Y (ligne de sol)', unit: 'cm', min: -100, max: 100 },
 ]
 
 // Jeu XL uniquement : reculer la scène l'agrandit (cm de hauteur, la largeur

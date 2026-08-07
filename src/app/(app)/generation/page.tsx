@@ -109,6 +109,11 @@ const TYPO_INFO: Record<Typo, { titre: string; moteur: string; lettre: string }>
   portillon: { titre: 'Portillon', moteur: 'Portillon « FORCULUS (legacy) »', lettre: 'P' },
 }
 
+/** Cartes LEGACY (MES Contrainte legacy, MES Décors) masquées le 07/08/2026
+ *  (demande Mathias — MES Contrainte nouvelle méthode officielle). Le code et
+ *  les flux restent intacts : repasser à true pour les réafficher. */
+const AFFICHER_LEGACY = false
+
 /* Les pictos PNG Fluent Emoji (13/07/2026) ont été remplacés le 22/07/2026 par
    les pictos SVG animés PictoIllu (../Silhouette), même langage que les
    illustrations de mode. */
@@ -975,7 +980,7 @@ export default function GenerationPage() {
               <div className="px-5 pt-4">
                 <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.06em] text-brand-green mb-2.5 whitespace-nowrap">
                   <span className="w-[7px] h-[7px] rounded-full bg-current" />
-                  Décor Écrin · vraie échelle
+                  vraie échelle
                 </span>
                 <h3 className="text-[20px] leading-[1.15] font-bold tracking-tight mb-1.5 whitespace-nowrap">
                   MES Contrainte
@@ -1007,7 +1012,10 @@ export default function GenerationPage() {
               </div>
             </button>
 
-            {/* MES Contrainte (LEGACY) — décor Canny + piliers + pose/fusion, inchangé. */}
+            {/* MES Contrainte (LEGACY) — décor Canny + piliers + pose/fusion,
+                inchangé. MASQUÉ le 07/08 (demande Mathias) : code conservé,
+                repasser AFFICHER_LEGACY à true pour le revoir. */}
+            {AFFICHER_LEGACY && (
             <button
               onClick={() => pickMode('con')}
               className="group flex flex-col text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
@@ -1030,9 +1038,11 @@ export default function GenerationPage() {
                 </p>
               </div>
             </button>
+            )}
 
             {/* MES Décors (LEGACY) — bibliothèque de décors, remplacée à terme par
-                « Nano peint autour ». Conservée telle quelle. */}
+                « Nano peint autour ». Conservée telle quelle, MASQUÉE le 07/08. */}
+            {AFFICHER_LEGACY && (
             <Link
               href="/decors"
               className="group text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
@@ -1055,6 +1065,7 @@ export default function GenerationPage() {
                 </p>
               </div>
             </Link>
+            )}
           </div>
         </section>
       )}

@@ -4,6 +4,7 @@ import { getSetting, setSetting } from '@/lib/db/settings'
 import {
   MOTEUR_REGLAGES_DEFAUTS,
   sanitizeMoteurReglages,
+  type MoteurKey,
   type MoteurReglages,
 } from '@/lib/moteurs'
 
@@ -34,13 +35,25 @@ export interface MoteurDaDef {
   produit: string
   /** Lettre de la nomenclature produit (300B140 → B). */
   lettre: 'B' | 'C' | 'P'
+  /**
+   * Homologue LEGACY (même produit, ancienne méthode) : sert aux briques
+   * partagées encore indexées par clé legacy — cadrage + prompt de la
+   * déclinaison Marketplace notamment. Ce n'est PAS un alias de réglages :
+   * les réglages du moteur DA restent les siens (moteur.<clé>.reglages).
+   */
+  legacyKey: MoteurKey
 }
 
 export const MOTEURS_DA: MoteurDaDef[] = [
-  { key: 'janus', label: 'Battant', codeName: 'JANUS', status: 'actif', famille: 'Portails', produit: 'portail', lettre: 'B' },
-  { key: 'terminus', label: 'Coulissant', codeName: 'TERMINUS', status: 'actif', famille: 'Portails', produit: 'portail', lettre: 'C' },
-  { key: 'forculus', label: 'Portillon', codeName: 'FORCULUS', status: 'actif', famille: 'Portails', produit: 'portillon', lettre: 'P' },
+  { key: 'janus', label: 'Battant', codeName: 'JANUS', status: 'actif', famille: 'Portails', produit: 'portail', lettre: 'B', legacyKey: 'battant' },
+  { key: 'terminus', label: 'Coulissant', codeName: 'TERMINUS', status: 'actif', famille: 'Portails', produit: 'portail', lettre: 'C', legacyKey: 'coulissant' },
+  { key: 'forculus', label: 'Portillon', codeName: 'FORCULUS', status: 'actif', famille: 'Portails', produit: 'portillon', lettre: 'P', legacyKey: 'portillon' },
 ]
+
+/** Clé legacy homologue d'un moteur décor autour (janus → battant…). */
+export function moteurDaLegacyKey(key: MoteurDaKey): MoteurKey {
+  return MOTEURS_DA.find((m) => m.key === key)!.legacyKey
+}
 
 export function isMoteurDaKey(key: string): key is MoteurDaKey {
   return MOTEURS_DA.some((m) => m.key === key)

@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { getDb, getJob, updateJob, createJob } from '@/lib/db'
 import { getConcurrencyPerUser } from '@/lib/db/settings'
+import { isMoteurDaKey, moteurDaLegacyKey } from '@/lib/moteursDa'
 import { config } from '@/lib/config'
 
 /**
@@ -175,7 +176,13 @@ function maybeEnqueueAutoMp(
           coloris: payload.coloris,
           format: '2000x2000',
           rootJobId: id,
-          moteur: payload.moteur,
+          // runMarketplaceStep est indexé par clé LEGACY : un job « decor-autour »
+          // porte une clé DA (janus/terminus/forculus) → homologue legacy, sinon
+          // cadrage battant + prompt d'extension générique en repli silencieux.
+          moteur:
+            payload.moteur && isMoteurDaKey(payload.moteur)
+              ? moteurDaLegacyKey(payload.moteur)
+              : payload.moteur,
         },
         done.batch_id ?? undefined,
         done.created_by ?? undefined

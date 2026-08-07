@@ -352,6 +352,11 @@ export type Picto =
   | 'mp'
   | 'generer'
   | 'wip'
+  | 'biblio'
+  | 'vision'
+  | 'telecharger'
+  | 'relancer'
+  | 'ouvrir'
 
 /**
  * Petits pictos SVG en remplacement des PNG Fluent Emoji (demande Mathias
@@ -461,6 +466,70 @@ export function PictoIllu({
             fill="currentColor"
           />
         </>
+      )}
+      {/* Bibliothèque (livre ouvert) & vision (œil) — banc de test 07/08/2026 :
+          origine de la description produit (réutilisée / fraîchement décrite).
+          En currentColor : la couleur vient du porteur. */}
+      {name === 'biblio' && (
+        <g
+          className="anim-picto"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={4.5}
+          strokeLinejoin="round"
+        >
+          <path d="M32 17 C26 12, 12 12, 7 15 V49 C12 46, 26 46, 32 51 C38 46, 52 46, 57 49 V15 C52 12, 38 12, 32 17 Z" />
+          <line x1={32} y1={17} x2={32} y2={51} />
+        </g>
+      )}
+      {name === 'vision' && (
+        <g className="anim-picto" fill="none" stroke="currentColor" strokeWidth={4.5}>
+          <path d="M4 32 C14 17, 50 17, 60 32 C50 47, 14 47, 4 32 Z" />
+          <circle cx={32} cy={32} r={7} fill="currentColor" stroke="none" />
+        </g>
+      )}
+      {/* Téléchargement (plateau + flèche rentrante) & relance (flèche
+          circulaire) — boutons de case du banc 07/08/2026, en currentColor. */}
+      {name === 'telecharger' && (
+        <g
+          className="anim-picto"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M56 40 v8 a5 5 0 0 1 -5 5 H13 a5 5 0 0 1 -5 -5 v-8" />
+          <polyline points="18.7,25 32,38.5 45.3,25" />
+          <line x1={32} y1={38.5} x2={32} y2={8} />
+        </g>
+      )}
+      {name === 'relancer' && (
+        <g
+          className="anim-picto"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polyline points="61,11 61,27 45,27" />
+          <path d="M54.6 40 A24 24 0 1 1 49 15 L61 27" />
+        </g>
+      )}
+      {/* Flèche « ouvrir » (cartes de session 07/08) — remplace le « → » texte. */}
+      {name === 'ouvrir' && (
+        <g
+          className="anim-picto"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <line x1={8} y1={32} x2={52} y2={32} />
+          <polyline points="38,18 52,32 38,46" />
+        </g>
       )}
       {name === 'wip' && (
         <>
