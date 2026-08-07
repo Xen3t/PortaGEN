@@ -10,23 +10,17 @@ import { useEffect, useRef, useState } from 'react'
  * demande Mathias 10/07/2026 (l'entrée « Administration » quitte la nav).
  */
 
+// Ordre RÉORGANISÉ le 08/08 (demande Mathias) : le pilotage quotidien d'abord
+// (Réglages, Descriptions), le suivi ensuite (Journal), puis les outils
+// ponctuels (Détection) et l'administration pure (Utilisateurs, Feedback).
+// « LAB » et « Coûts API » supprimés le 05/08/2026.
 const ADMIN_LINKS = [
-  { href: '/admin/jobs', label: 'Journal des générations' },
-  // Réorganisation 13/07/2026 (demande Mathias) : « Réglages par moteur » devient
-  // « Réglages » et accueille les réglages généraux (générations simultanées,
-  // tarif, serveur de fichiers) ; l'ex-« Réglages généraux » devient « LAB »
-  // avec un sélecteur de moteur. Gabarits absorbés le 13/07, Prompts le 13/07 —
-  // tout s'édite dans la fiche moteur.
   { href: '/admin/reglages', label: 'Réglages' },
-  // Détection des images (24/07/2026) : atelier d'entraînement (maquette
-  // atelier-detection-v4) + aide au renommage nomenclature.
-  { href: '/admin/detection', label: 'Détection des images' },
-  // Descriptions produit (07/08/2026, maquette descriptions-produit-v3) : la
-  // bibliothèque des briefs vision du décor autour — consulter/modifier/etc.
   { href: '/admin/descriptions', label: 'Descriptions produit' },
-  // « LAB » et « Coûts API » supprimés le 05/08/2026 (demande Mathias).
-  { href: '/admin/feedback', label: 'Feedback' },
+  { href: '/admin/jobs', label: 'Journal des générations' },
+  { href: '/admin/detection', label: 'Détection des images' },
   { href: '/admin/utilisateurs', label: 'Utilisateurs' },
+  { href: '/admin/feedback', label: 'Feedback' },
 ]
 
 export default function UserMenu({

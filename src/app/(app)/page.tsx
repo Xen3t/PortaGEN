@@ -93,10 +93,10 @@ export default function AccueilPage() {
       </div>
 
       {/* Sessions rouvrables : directes ET lancements de gamme (sessions-v2,
-          validée le 13/07/2026). 3 max sur l'accueil (demande Mathias) —
-          masqué tant qu'il n'y en a aucune. Monté SANS attendre /api/accueil :
-          les deux appels partent en parallèle, les cartes arrivent plus vite. */}
-      <SessionCards limit={3} hideWhenEmpty allLink />
+          validée le 13/07/2026). Les 4 DERNIÈRES sur l'accueil (passé de 3 à 4,
+          demande Mathias 08/08) — masqué tant qu'il n'y en a aucune. Monté SANS
+          attendre /api/accueil : les appels partent en parallèle. */}
+      <SessionCards limit={4} hideWhenEmpty allLink />
 
       {/* « Mes dernières générations » et « Notifications » RETIRÉS de
           l'Accueil le 07/08/2026 (décision Mathias) : doublon des sessions, et

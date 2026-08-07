@@ -47,10 +47,10 @@ type Status =
 /** Étape RÉELLE en cours pendant la préparation (demande Mathias 07/08 :
  *  afficher l'étape, pas un « préparation… » générique). */
 const PREP_LABEL: Partial<Record<Status, string>> = {
-  detour: 'détourage',
+  detour: 'Détourage',
   ralify: 'RALify',
-  descr: 'description',
-  pose: 'resizing',
+  descr: 'Description',
+  pose: 'Resizing',
 }
 
 const enPrepa = (s: Status): boolean =>
@@ -182,8 +182,13 @@ function appliquerVersions(it: Item, jobs: JobRow[]): Item {
     }
   }
   const derniere = versions[versions.length - 1]
-  if (derniere.status === 'error' || derniere.status === 'cancelled') {
+  if (derniere.status === 'error') {
     return { ...it, jobId, status: 'error', error: derniere.error ?? 'échec' }
+  }
+  // Génération ANNULÉE en file (08/08) : la case redevient « prêt » — le plan
+  // gris est toujours là, relançable quand on veut.
+  if (derniere.status === 'cancelled') {
+    return { ...it, jobId, status: 'ready', error: undefined }
   }
   return { ...it, jobId }
 }
@@ -251,7 +256,8 @@ function Comparateur({
     // La zone de saisie déborde de 48 px à gauche : la moitié extérieure du
     // rond au repos reste attrapable.
     <div
-      className="absolute inset-y-0 -left-12 right-0 select-none cursor-ew-resize"
+      // Curseur CROIX (crosshair) sur la MES ouverte (08/08, demande Mathias).
+      className="absolute inset-y-0 -left-12 right-0 select-none cursor-crosshair"
       onMouseDown={(e) => {
         e.preventDefault()
         setDrag(true)
@@ -384,8 +390,37 @@ export default function DecorEcrinApp() {
   const [launching, setLaunching] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  /** Entrée « dossier entier » (webkitdirectory) — session vierge seulement. */
-  const dirInput = useRef<HTMLInputElement>(null)
+  /** Images ANNULÉES pendant la préparation (08/08) : la chaîne vérifie ce
+   *  drapeau entre chaque étape et s'arrête sans bruit. */
+  const annulees = useRef(new Set<string>())
+  /** Ouverture d'une session (?lot=/?session=) en cours — anim visible (08/08). */
+  const [ouvertureLot, setOuvertureLot] = useState(false)
+  /** NOM de la session (titre des cartes de l'Accueil) — renommable sur place
+   *  (08/08, demande Mathias : partout, Accueil, liste ET dans la session). */
+  const [nomSession, setNomSession] = useState('')
+  /** Valeur en cours d'édition du nom (null = pas d'édition). */
+  const [renommage, setRenommage] = useState<string | null>(null)
+  async function renommerSession(valeur: string) {
+    const nom = valeur.trim().slice(0, 60)
+    setRenommage(null)
+    if (!nom || !lotId || nom === nomSession) return
+    setNomSession(nom)
+    try {
+      // La ligne de session (cartes Accueil) ET le manifeste du lot.
+      await fetch(`/api/generation/sessions/${encodeURIComponent(lotId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ produit: nom }),
+      })
+      await fetch('/api/banc-generation/lot', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: lotId, produit: nom }),
+      })
+    } catch {
+      setNotice('Impossible d’enregistrer le nouveau nom de session.')
+    }
+  }
   /** Libellés des coloris PERSONNALISÉS de la palette (Admin → Réglages →
    *  RALify, 07/08) : reconnus dans les noms de fichiers avant les règles
    *  historiques Gris/Noir/Blanc/Teck. */
@@ -439,6 +474,7 @@ export default function DecorEcrinApp() {
       return
     }
     let alive = true
+    setOuvertureLot(true)
     ;(async () => {
       try {
         const r = await fetch(`/api/banc-generation/lot?id=${encodeURIComponent(lot)}`)
@@ -449,7 +485,10 @@ export default function DecorEcrinApp() {
           setTypo(d.moteur)
           setTypoDetected(true)
         }
-        if (typeof d.produit === 'string' && d.produit) setProduit(d.produit)
+        if (typeof d.produit === 'string' && d.produit) {
+          setProduit(d.produit)
+          setNomSession(d.produit)
+        }
         let restored: Item[] = (
           d.items as {
             name: string
@@ -502,6 +541,8 @@ export default function DecorEcrinApp() {
         setItems(restored)
       } catch {
         // lot illisible : la page démarre vide
+      } finally {
+        if (alive) setOuvertureLot(false)
       }
     })()
     return () => {
@@ -560,6 +601,38 @@ export default function DecorEcrinApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /** Fichiers d'un glisser-déposer, DOSSIERS COMPRIS (08/08, demande Mathias :
+   *  la boîte de dialogue navigateur ne sait faire QUE fichiers OU dossier —
+   *  le drop, lui, accepte les deux ; un dossier déposé est parcouru
+   *  récursivement). */
+  async function fichiersDepuisDrop(dt: DataTransfer): Promise<File[]> {
+    const entries = Array.from(dt.items).map((i) =>
+      typeof i.webkitGetAsEntry === 'function' ? i.webkitGetAsEntry() : null
+    )
+    if (!entries.some((e) => e?.isDirectory)) return Array.from(dt.files)
+    const out: File[] = []
+    const lire = async (entry: FileSystemEntry): Promise<void> => {
+      if (entry.isFile) {
+        const f = await new Promise<File>((res, rej) =>
+          (entry as FileSystemFileEntry).file(res, rej)
+        )
+        out.push(f)
+      } else if (entry.isDirectory) {
+        const reader = (entry as FileSystemDirectoryEntry).createReader()
+        // readEntries se rappelle jusqu'à liste vide (par paquets de ~100).
+        let paquet: FileSystemEntry[]
+        do {
+          paquet = await new Promise<FileSystemEntry[]>((res, rej) =>
+            reader.readEntries(res, rej)
+          )
+          for (const e of paquet) await lire(e)
+        } while (paquet.length > 0)
+      }
+    }
+    for (const e of entries) if (e) await lire(e)
+    return out
+  }
+
   // — ajout : parse des noms, puis UNE requête PAR image (traitement un à un,
   //   chaque case s'affiche dès que SON plan est prêt — demande Mathias 07/08) —
   async function addFiles(list: FileList | File[] | null) {
@@ -596,10 +669,19 @@ export default function DecorEcrinApp() {
       if (refusees.length > 0) {
         files = files.filter((f) => !refusees.includes(f))
         const n = refusees.length
+        // Message DÉTAILLÉ (08/08, demande Mathias) : quels fichiers, quelle
+        // catégorie détectée pour chacun, et quoi faire.
+        const nomCategorie = (l: string | null) =>
+          l === 'C' ? 'coulissant' : l === 'P' ? 'portillon' : 'battant'
+        const details = refusees
+          .slice(0, 3)
+          .map((f) => `« ${f.name} » (${nomCategorie(lettreDe(f.name))})`)
+          .join(', ')
+        const reste = n > 3 ? ` et ${n - 3} autre${n - 3 > 1 ? 's' : ''}` : ''
         setNotice(
-          `Session ${TYPO_INFO[effTypo].titre} : ${n} image${n > 1 ? 's' : ''} d'une autre catégorie refusée${
-            n > 1 ? 's' : ''
-          } — ouvre une Nouvelle session pour ${n > 1 ? 'les' : 'la'} générer.`
+          n === 1
+            ? `Cette session est en ${TYPO_INFO[effTypo].titre} — ${details} n'en est pas et a été écartée. Clique sur « Nouvelle session » pour la générer à part.`
+            : `Cette session est en ${TYPO_INFO[effTypo].titre} — ${n} images d'autres catégories ont été écartées : ${details}${reste}. Clique sur « Nouvelle session » pour les générer à part.`
         )
         if (files.length === 0) return
       }
@@ -669,8 +751,24 @@ export default function DecorEcrinApp() {
     // vraie étape) : 1. détourage → 2. RALify → 3. description → 4. pose.
     // Chaque image déroule SA chaîne complète ; 3 images avancent de front
     // (choix Mathias 07/08 — même plafond que le sas serveur).
+    /** Point de contrôle d'annulation (08/08) : true = image annulée, la
+     *  chaîne s'arrête là ; les fichiers déjà au manifeste sont nettoyés
+     *  (404 bénin tant que la pose n'a pas écrit le manifeste). */
+    const annulee = (key: string, productPath?: string) => {
+      if (!annulees.current.has(key)) return false
+      annulees.current.delete(key)
+      if (productPath && lot) {
+        void fetch(
+          `/api/banc-generation/lot?id=${encodeURIComponent(lot)}&p=${encodeURIComponent(productPath)}`,
+          { method: 'DELETE' }
+        ).catch(() => {})
+      }
+      return true
+    }
+
     const preparer = async (v: (typeof valides)[number]) => {
       try {
+        if (annulee(v.item.key)) return
         // 1/4 — détourage
         const fd = new FormData()
         fd.append('moteur', effTypo)
@@ -684,11 +782,15 @@ export default function DecorEcrinApp() {
           lot = d1.lotId
           setLotId(lot)
           window.history.replaceState(null, '', `/generation/decor-autour?lot=${lot}`)
+          // Nom de session initial = celui que le serveur donne à la carte
+          // (produit du 1ᵉʳ fichier) — renommable ensuite au ✎.
+          setNomSession((cur) => cur || parseProduitFromFileName(v.file.name) || 'Session')
         }
         if (!r1.ok || typeof d1?.productPath !== 'string') {
           fail(v, d1?.error ?? 'échec du détourage')
           return
         }
+        if (annulee(v.item.key, d1.productPath)) return
         // 2/4 — RALify (le serveur ne touche à rien si la cible est nulle)
         patchItem(v.item.key, {
           status: 'ralify',
@@ -739,6 +841,7 @@ export default function DecorEcrinApp() {
           descPartagees.set(cle, attente)
         }
         const d25 = await attente.catch(() => null)
+        if (annulee(v.item.key, d1.productPath)) return
         if (!d25) {
           fail(v, 'échec de la description produit')
           return
@@ -767,6 +870,8 @@ export default function DecorEcrinApp() {
           }),
         })
         const d3 = await r3.json().catch(() => null)
+        // Après la pose le manifeste est écrit : l'annulation nettoie le serveur.
+        if (annulee(v.item.key, d1.productPath)) return
         if (!r3.ok || typeof d3?.planPath !== 'string') {
           fail(v, d3?.error ?? 'échec de la pose')
           return
@@ -936,6 +1041,40 @@ export default function DecorEcrinApp() {
     }
   }
 
+  /** ANNULER une image PENDANT sa préparation (08/08, demande Mathias) : la
+   *  case disparaît tout de suite, la chaîne s'arrête à son prochain point de
+   *  contrôle et les fichiers déjà posés sont nettoyés. */
+  function annulerPrepa(it: Item) {
+    annulees.current.add(it.key)
+    if (it.localUrl) URL.revokeObjectURL(it.localUrl)
+    setItems((cur) => cur.filter((x) => x.key !== it.key))
+  }
+
+  /** ANNULER une génération encore EN FILE (un appel Nano en vol ne peut pas
+   *  être interrompu — l'API refuse proprement dans ce cas). */
+  async function annulerJob(it: Item) {
+    const versions = versionsPour(it, batchJobs)
+    const enFile = versions.filter((j) => j.status === 'queued')
+    if (enFile.length === 0) return
+    try {
+      let ok = false
+      for (const j of enFile) {
+        const res = await fetch(`/api/jobs/${j.id}/cancel`, { method: 'POST' })
+        if (res.ok) ok = true
+      }
+      if (ok) {
+        // Retour immédiat à « prêt » (plan gris conservé) — le poll confirmera.
+        setItems((cur) =>
+          cur.map((x) => (x.key === it.key ? { ...x, status: 'ready' as Status } : x))
+        )
+      } else {
+        setNotice('Impossible d’annuler : la génération est déjà partie chez Nano.')
+      }
+    } catch {
+      setNotice('Impossible de contacter le serveur.')
+    }
+  }
+
   /** DÉCLINAISON MARKETPLACE (1:1) de la version regardée — route MP commune
    *  (recadrage + bords générés), rebranchee sur la page officielle 07/08 soir.
    *  Le réglage moteur « jamais » est appliqué côté serveur (erreur claire). */
@@ -1090,6 +1229,64 @@ export default function DecorEcrinApp() {
     setInstruction('')
   }, [lightbox])
 
+  // Vue en grand ouverte = la page derrière ne défile plus (08/08, demande
+  // Mathias — même règle que le studio MES).
+  useEffect(() => {
+    if (!lightbox) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [lightbox])
+
+  /** Message FUGACE au centre de l'image (bout de liste, 08/08) — la clé n
+   *  force le rejeu de l'anim à chaque appui. */
+  const [fugace, setFugace] = useState<{ msg: string; n: number } | null>(null)
+  useEffect(() => {
+    if (!fugace) return
+    const t = setTimeout(() => setFugace(null), 1100)
+    return () => clearTimeout(t)
+  }, [fugace])
+
+  // NAVIGATION FLÈCHES dans la vue en grand (08/08, demande Mathias) : ← / →
+  // passent à la MES précédente/suivante dans l'ORDRE VISUEL de la grille ;
+  // en bout de liste, message fugace au centre de l'image.
+  useEffect(() => {
+    if (!lightbox) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      // Jamais pendant la frappe (retour par prompt, renommage…).
+      const cible = e.target as HTMLElement | null
+      if (cible && (cible.tagName === 'INPUT' || cible.tagName === 'TEXTAREA')) return
+      e.preventDefault()
+      // Ordre visuel : groupes du plus récent au plus ancien, puis largeurs et
+      // hauteurs croissantes — le miroir exact du rendu de la grille.
+      const ordre: string[] = []
+      const gs = Array.from(new Set(items.map((i) => i.groupe))).sort((a, b) => b - a)
+      for (const g of gs) {
+        const gItems = items.filter((i) => i.groupe === g)
+        const ws = Array.from(new Set(gItems.map((i) => i.w))).sort((a, b) => a - b)
+        const hs = Array.from(new Set(gItems.map((i) => i.h))).sort((a, b) => a - b)
+        for (const w of ws)
+          for (const h of hs)
+            for (const it of gItems.filter((i) => i.w === w && i.h === h)) ordre.push(it.key)
+      }
+      const idx = ordre.indexOf(lightbox)
+      if (idx === -1) return
+      const suivant = e.key === 'ArrowRight' ? idx + 1 : idx - 1
+      if (suivant < 0) {
+        setFugace((f) => ({ msg: 'Première MES', n: (f?.n ?? 0) + 1 }))
+      } else if (suivant >= ordre.length) {
+        setFugace((f) => ({ msg: 'Dernière MES', n: (f?.n ?? 0) + 1 }))
+      } else {
+        setLightbox(ordre[suivant])
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightbox, items])
+
   // Aperçu en grand du PNG produit d'origine (vignette bas de colonne, comme
   // le studio MES) — par-dessus la vue en grand, fond clair (PNG détouré).
   const [pngZoom, setPngZoom] = useState(false)
@@ -1163,42 +1360,24 @@ export default function DecorEcrinApp() {
   return (
     <div className="min-h-screen bg-surface">
       <div className="max-w-6xl mx-auto px-6 py-5">
+        {/* Ouverture d'une session : l'écran n'affiche QUE l'anim (08/08,
+            demande Mathias) — tout le reste attend que le lot soit chargé. */}
+        {ouvertureLot && items.length === 0 ? (
+          <div className="py-28 text-center">
+            <span className="inline-flex items-center gap-4 text-xl font-bold text-text-secondary">
+              <span className="inline-block w-9 h-9 rounded-full border-[3px] border-border border-t-brand-green animate-spin" />
+              Ouverture de la session
+              <Dots />
+            </span>
+          </div>
+        ) : (
+          <>
         {/* en-tête de page (in-app depuis le 07/08 : plus de barre standalone,
             le menu de PortaGEN est au-dessus) */}
+        {/* Titre seul sur sa ligne, catégorie/produit/compteur en SOUS-TITRE
+            dessous (08/08, demande Mathias — l'alignement en ligne était moche). */}
         <div className="flex items-center gap-2.5 flex-wrap mb-1">
           <h1 className="text-xl font-bold tracking-tight">MES Contrainte</h1>
-          {items.length === 0 ? (
-            // Lot vide : la catégorie n'est PAS un fait, c'est un choix — un
-            // sélecteur corrigeable (la lettre B/C/P du 1ᵉʳ dépôt fait foi si
-            // on n'y touche pas).
-            <select
-              value={typoDetected ? typo : ''}
-              onChange={(e) => {
-                if (!e.target.value) return
-                setTypo(e.target.value as Typo)
-                setTypoDetected(true)
-              }}
-              title="Catégorie de la session — détectée au 1ᵉʳ ajout (lettre B/C/P), corrigeable ici"
-              className="text-[12px] font-semibold text-text-secondary border border-border rounded-full px-2.5 py-0.5 bg-white"
-            >
-              <option value="">catégorie auto (selon les images)</option>
-              {(Object.keys(TYPO_INFO) as Typo[]).map((t) => (
-                <option key={t} value={t}>
-                  {TYPO_INFO[t].titre}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <span className="text-[13px] text-text-secondary">
-              {TYPO_INFO[typo].titre}
-              {produit ? ` · ${produit}` : ''}
-            </span>
-          )}
-          {items.length > 0 && (
-            <span className="text-[13px] text-text-disabled font-semibold tabular-nums">
-              {doneCount}/{items.length} généré{doneCount > 1 ? 's' : ''}
-            </span>
-          )}
           <div className="flex-1" />
           <div className="inline-flex border border-border rounded-[8px] overflow-hidden bg-white">
             {(['2K', '4K'] as const).map((s) => (
@@ -1251,10 +1430,85 @@ export default function DecorEcrinApp() {
             Générer ({aLancer.length} image{aLancer.length > 1 ? 's' : ''})
           </button>
         </div>
-        <p className="text-[12.5px] text-text-secondary mb-4">
-          Chaque case montre le <b className="text-text-primary">plan gris envoyé à Nano</b> (produit posé à sa
-          vraie échelle). 1 génération par image · clic sur une case = vue en grand.
-        </p>
+        {/* SOUS-TITRE : nom de session (renommable au ✎) — catégorie · produit ·
+            compteur, à la ligne sous le titre (08/08). */}
+        <div className="flex items-center gap-2.5 flex-wrap mb-3">
+          {lotId &&
+            (renommage !== null ? (
+              <input
+                type="text"
+                autoFocus
+                maxLength={60}
+                value={renommage}
+                onChange={(e) => setRenommage(e.target.value)}
+                onBlur={() => void renommerSession(renommage)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void renommerSession(renommage)
+                  }
+                  if (e.key === 'Escape') setRenommage(null)
+                }}
+                className="text-[13px] font-bold border border-brand-green rounded-[6px] px-1.5 py-0.5 focus:outline-none"
+              />
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-text-primary">
+                {nomSession || 'Session'}
+                <button
+                  onClick={() => setRenommage(nomSession)}
+                  title="Renommer la session (aussi sur sa carte de l'Accueil)"
+                  className="text-text-disabled hover:text-brand-green"
+                >
+                  ✎
+                </button>
+                <span className="text-text-disabled font-normal">—</span>
+              </span>
+            ))}
+          {items.length === 0 ? (
+            // Lot vide : la catégorie n'est PAS un fait, c'est un choix — un
+            // sélecteur corrigeable (la lettre B/C/P du 1ᵉʳ dépôt fait foi si
+            // on n'y touche pas).
+            <select
+              value={typoDetected ? typo : ''}
+              onChange={(e) => {
+                if (!e.target.value) return
+                setTypo(e.target.value as Typo)
+                setTypoDetected(true)
+              }}
+              title="Catégorie de la session — détectée au 1ᵉʳ ajout (lettre B/C/P), corrigeable ici"
+              className="text-[12px] font-semibold text-text-secondary border border-border rounded-full px-2.5 py-0.5 bg-white"
+            >
+              <option value="">catégorie auto (selon les images)</option>
+              {(Object.keys(TYPO_INFO) as Typo[]).map((t) => (
+                <option key={t} value={t}>
+                  {TYPO_INFO[t].titre}
+                </option>
+              ))}
+            </select>
+          ) : (
+            // TOUS les produits de la session avec leur COLORIS (08/08) :
+            // « Portillon · VELETA Gris, VELETA Noir ».
+            <span className="text-[13px] text-text-secondary">
+              {TYPO_INFO[typo].titre}
+              {(() => {
+                const noms = Array.from(
+                  new Set(
+                    items
+                      .map((i) => [produitDe(i), i.coloris].filter(Boolean).join(' '))
+                      .filter(Boolean)
+                  )
+                )
+                return noms.length > 0 ? ` · ${noms.join(', ')}` : ''
+              })()}
+            </span>
+          )}
+          {items.length > 0 && (
+            <span className="text-[13px] text-text-disabled font-semibold tabular-nums">
+              {doneCount}/{items.length} généré{doneCount > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        {/* Phrase d'aide supprimée (08/08, demande Mathias). */}
 
         {notice && (
           <div className="bg-brand-red-light text-brand-red text-sm rounded-[8px] px-4 py-3 mb-4 flex justify-between gap-4">
@@ -1279,7 +1533,8 @@ export default function DecorEcrinApp() {
             onDrop={(e) => {
               e.preventDefault()
               setHot(false)
-              void addFiles(e.dataTransfer.files)
+              // Dossiers acceptés au drop (parcourus récursivement) — 08/08.
+              void fichiersDepuisDrop(e.dataTransfer).then((fs) => addFiles(fs))
             }}
             className={`rounded-[12px] border-2 border-dashed text-center cursor-pointer transition-colors mb-5 py-14 ${
               hot
@@ -1287,19 +1542,16 @@ export default function DecorEcrinApp() {
                 : 'border-[#c8d3bb] bg-white hover:border-brand-green hover:bg-[#fbfdf8]'
             }`}
           >
-            <div className="text-[14px] font-bold">Glisse la ou les images produit ici</div>
-            <div className="text-xs text-text-disabled mt-0.5">
-              — ou clique pour choisir — la taille est lue dans le nom (« EIGER 300B140 » → 300×140)
+            {/* UNE seule entrée (08/08, colère justifiée de Mathias sur la boîte
+                « dossier » qui grisait les images — limite système : aucune
+                boîte de dialogue ne sait mélanger dossier ET fichiers) : le clic
+                ouvre l'explorateur d'images classique (dossiers navigables,
+                Ctrl+A pour tout un dossier) ; le glisser accepte images ET
+                dossiers entiers. */}
+            <div className="text-[14px] font-bold">
+              Glisse tes images ou un dossier entier ici
             </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                dirInput.current?.click()
-              }}
-              className="mt-4 bg-white border border-border rounded-[10px] px-3.5 py-1.5 text-[12.5px] font-bold text-text-secondary hover:text-brand-green hover:border-brand-green"
-            >
-              Sélectionner un dossier
-            </button>
+            <div className="text-xs text-text-disabled mt-0.5">— ou clique pour parcourir —</div>
           </div>
         )}
         <input
@@ -1313,20 +1565,9 @@ export default function DecorEcrinApp() {
             e.target.value = ''
           }}
         />
-        {/* Sélection d'un DOSSIER entier (entrée « comme le legacy », 07/08) :
-            le navigateur remonte tout le contenu, addFiles ne garde que les
-            images — la taille reste lue dans chaque nom de fichier. */}
-        <input
-          ref={dirInput}
-          type="file"
-          multiple
-          className="hidden"
-          {...({ webkitdirectory: '' } as Record<string, string>)}
-          onChange={(e) => {
-            void addFiles(e.target.files)
-            e.target.value = ''
-          }}
-        />
+        {/* La boîte « dossier » (webkitdirectory) a été RETIRÉE (08/08) : elle
+            grisait les images et rendait fou — le dossier entier passe par le
+            glisser-déposer ou Ctrl+A dans l'explorateur d'images. */}
 
         {/* un DÉPÔT = un bloc, du plus récent au plus ancien ; dedans, la
             grille habituelle : une largeur = UNE ligne, colonnes = hauteurs */}
@@ -1337,12 +1578,29 @@ export default function DecorEcrinApp() {
           const heights = Array.from(new Set(gItems.map((i) => i.h))).sort((a, b) => a - b)
           return (
             <section key={g} className="mb-7 pt-4 border-t border-border first-of-type:border-t-0 first-of-type:pt-0">
-              <h3 className="text-[13px] font-bold mb-2.5">
-                Ajout {g === 0 ? '—' : g}
-                <span className="text-text-disabled font-semibold ml-2 tabular-nums">
-                  {gDone}/{gItems.length} généré{gDone > 1 ? 's' : ''}
-                </span>
-              </h3>
+              {/* En-tête de groupe = le NOM DU PRODUIT (08/08, demande Mathias
+                  — fini « Dépôt n ») ; masqué quand il n'y a qu'un seul groupe
+                  (le sous-titre de la page dit déjà tout). */}
+              {groupes.length > 1 && (
+                <h3 className="text-[13px] font-bold mb-2.5">
+                  {/* Catégorie rappelée DEVANT le produit (08/08) :
+                      « Portillon · VELETA ». */}
+                  <span className="text-text-secondary font-semibold">
+                    {TYPO_INFO[typo].titre} ·{' '}
+                  </span>
+                  {/* Produit + COLORIS (08/08) : « VELETA Gris, VELETA Noir ». */}
+                  {Array.from(
+                    new Set(
+                      gItems
+                        .map((i) => [produitDe(i), i.coloris].filter(Boolean).join(' '))
+                        .filter(Boolean)
+                    )
+                  ).join(', ') || `Dépôt ${g === 0 ? '—' : g}`}
+                  <span className="text-text-disabled font-semibold ml-2 tabular-nums">
+                    {gDone}/{gItems.length} généré{gDone > 1 ? 's' : ''}
+                  </span>
+                </h3>
+              )}
               {widths.map((w) => (
           <div key={w} className="mb-5">
             <h4 className="text-xs font-bold text-text-secondary mb-1.5">Largeur {w} cm</h4>
@@ -1389,8 +1647,7 @@ export default function DecorEcrinApp() {
                                   }
                                   setLightbox(it.key)
                                 }}
-                                title="Agrandir (Maj+clic : rejouer l'apparition)"
-                                className="absolute inset-0 cursor-zoom-in"
+                                className="absolute inset-0"
                               >
                                 {it.status === 'done' && it.deliveryPath && it.fraiche ? (
                                   // Rendu tombé en direct : il se dessine zone
@@ -1435,7 +1692,7 @@ export default function DecorEcrinApp() {
                               <div className="absolute inset-0 grid place-items-center text-text-secondary text-[12.5px]">
                                 <span className="inline-flex items-center gap-2">
                                   <span className="inline-block w-4 h-4 rounded-full border-2 border-white/70 border-t-brand-green animate-spin" />
-                                  {PREP_LABEL[it.status] ?? 'préparation'}
+                                  {PREP_LABEL[it.status] ?? 'Préparation'}
                                   <Dots />
                                 </span>
                               </div>
@@ -1490,6 +1747,24 @@ export default function DecorEcrinApp() {
                                 ✕
                               </button>
                             )}
+                            {/* ANNULER pendant le traitement (08/08) : visible
+                                seulement en préparation ou en file — un appel
+                                Nano déjà parti ne peut pas être interrompu. */}
+                            {(enPrepa(it.status) || it.status === 'queued') && (
+                              <button
+                                onClick={() =>
+                                  enPrepa(it.status) ? annulerPrepa(it) : void annulerJob(it)
+                                }
+                                title={
+                                  enPrepa(it.status)
+                                    ? 'Annuler cette image (la préparation s’arrête)'
+                                    : 'Annuler la génération en file (le plan gris reste)'
+                                }
+                                className="text-text-disabled hover:text-brand-red text-[14px]"
+                              >
+                                ✕
+                              </button>
+                            )}
                             <span
                               className={`text-[10.5px] font-bold rounded-full px-2 py-0.5 ${
                                 it.status === 'done'
@@ -1502,23 +1777,23 @@ export default function DecorEcrinApp() {
                               }`}
                             >
                               {it.status === 'done' ? (
-                                '✓ généré'
+                                '✓ Généré'
                               ) : it.status === 'running' ? (
                                 <>
-                                  Nano peint
+                                  Génération
                                   <Dots />
                                 </>
                               ) : it.status === 'queued' ? (
-                                'en attente'
+                                'En attente'
                               ) : it.status === 'error' ? (
-                                '⚠ échec'
+                                '⚠ Échec'
                               ) : enPrepa(it.status) ? (
                                 <>
                                   {PREP_LABEL[it.status]}
                                   <Dots />
                                 </>
                               ) : (
-                                'prêt'
+                                'Prêt'
                               )}
                             </span>
                           </div>
@@ -1564,6 +1839,8 @@ export default function DecorEcrinApp() {
             </div>
           </div>
         )}
+          </>
+        )}
       </div>
 
       {/* vue en grand — identique à MES Écrin : poignée à gauche, liens, Échap */}
@@ -1600,11 +1877,20 @@ export default function DecorEcrinApp() {
           return (
             <div
               className="fixed inset-0 z-[80] bg-[#0f1216]/85 flex items-center justify-center p-6"
-              onClick={() => setLightbox(null)}
+              // Fermeture (08/08, v2) : tout appui HORS du contenu ferme —
+              // testé par inclusion DOM (le test target===backdrop ratait des
+              // zones selon la structure, galerie comprise).
+              onMouseDown={(e) => {
+                const contenu = (e.currentTarget as HTMLElement).firstElementChild
+                if (contenu && !contenu.contains(e.target as Node)) setLightbox(null)
+              }}
             >
-              <div className="flex items-start gap-3 max-w-[96vw]" onClick={(e) => e.stopPropagation()}>
+              {/* pointer-events-none sur les conteneurs invisibles (08/08) :
+                  les clics dans le « vide » (à côté de la galerie…) traversent
+                  jusqu'au fond et FERMENT ; les blocs visibles réactivent. */}
+              <div className="flex items-start gap-3 max-w-[96vw] pointer-events-none">
               <div className="flex flex-col gap-2.5 min-w-0">
-                <div className="flex items-center gap-3 text-white">
+                <div className="flex items-center gap-3 text-white pointer-events-auto">
                   <b className="text-[15px]">{labelOf(it)}</b>
                   <div className="flex-1" />
                   {/* Chaque état du pipeline inspectable, dans l'ordre (07/08) :
@@ -1651,8 +1937,14 @@ export default function DecorEcrinApp() {
                     })
                   }}
                   onMouseLeave={() => setLoupe(null)}
-                  className={`relative aspect-[3/2] rounded-[10px] shadow-2xl bg-[#181d23] ${
-                    infos ? 'w-[min(63vw,calc(80vh*1.5))]' : 'w-[min(94vw,calc(86vh*1.5))]'
+                  className={`relative aspect-[3/2] rounded-[10px] shadow-2xl bg-[#181d23] cursor-crosshair pointer-events-auto ${
+                    infos
+                      ? pretes.length > 1
+                        ? 'w-[min(63vw,calc(70vh*1.5))]'
+                        : 'w-[min(63vw,calc(80vh*1.5))]'
+                      : pretes.length > 1
+                        ? 'w-[min(94vw,calc(76vh*1.5))]'
+                        : 'w-[min(94vw,calc(86vh*1.5))]'
                   }`}
                 >
                   {avant && apres ? (
@@ -1682,78 +1974,113 @@ export default function DecorEcrinApp() {
                         <span className="inline-flex items-center gap-2.5">
                           <span className="inline-block w-5 h-5 rounded-full border-2 border-white/25 border-t-white animate-spin" />
                           <span>
-                            {PREP_LABEL[it.status] ?? 'préparation'}
+                            {PREP_LABEL[it.status] ?? 'Préparation'}
                             <Dots />
                           </span>
                         </span>
                       )}
                     </div>
                   )}
+                  {/* Regénération/retour EN COURS (08/08, gros oubli signalé par
+                      Mathias : rien ne bougeait à l'écran) : voile + roue par-
+                      dessus l'ancien rendu, qui reste visible dessous. */}
+                  {working && (avant || apres) && (
+                    <div className="absolute inset-0 z-10 grid place-items-center pointer-events-none bg-black/25 rounded-[10px]">
+                      <span className="inline-flex items-center gap-2.5 bg-black/70 text-white text-sm font-bold rounded-full px-4 py-2">
+                        <span className="inline-block w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                        {it.status === 'queued' ? 'En attente de génération' : 'Génération en cours'}
+                        <Dots />
+                      </span>
+                    </div>
+                  )}
+                  {/* Message fugace (bout de liste ← →, 08/08) : centré sur
+                      l'image, apparaît puis s'efface tout seul. */}
+                  {fugace && (
+                    <div
+                      key={fugace.n}
+                      className="absolute inset-0 z-20 grid place-items-center pointer-events-none"
+                    >
+                      <span className="bg-black/70 text-white text-sm font-bold rounded-full px-4 py-2 anim-toast-fugace">
+                        {fugace.msg}
+                      </span>
+                    </div>
+                  )}
                 </div>
+
+                {/* GALERIE DE VERSIONS SOUS L'IMAGE (08/08, demande Mathias —
+                    plus dans la colonne de droite) : clic = regarder,
+                    « Choisir » = la case l'affiche (persisté au manifeste). */}
+                {pretes.length > 1 && (
+                  // Centrée quand elle tient, défilante sans rien couper quand
+                  // elle déborde (w-max + mx-auto, pas justify-center).
+                  <div className="overflow-x-auto pb-1">
+                  <div className="flex items-center gap-2 w-max mx-auto">
+                    {pretes.map((j) => {
+                      const n = versions.findIndex((v) => v.id === j.id) + 1
+                      const active = regardee?.id === j.id
+                      const retenue = it.chosenJobId === j.id
+                      return (
+                        <button
+                          key={j.id}
+                          onClick={() => setVerJobId(j.id)}
+                          title={
+                            j.payload?.instruction ??
+                            j.result?.instruction ??
+                            (j.type === 'decor-autour' ? 'Génération' : 'Retour')
+                          }
+                          className={`shrink-0 w-[110px] rounded-[8px] overflow-hidden border-2 bg-white text-left relative pointer-events-auto ${
+                            active ? 'border-brand-green' : 'border-transparent hover:border-white/50'
+                          }`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={imgUrl(j.result!.deliveryPath!, 240)}
+                            alt=""
+                            loading="lazy"
+                            className="w-full aspect-[3/2] object-cover"
+                          />
+                          <span className="absolute bottom-1 left-1 text-[10px] font-bold text-white bg-black/50 rounded-full px-1.5">
+                            V{n}
+                          </span>
+                          {/* Version choisie = COCHE verte (08/08, à la place du texte). */}
+                          {retenue && (
+                            <span
+                              title="Version choisie — c'est elle que la case affiche"
+                              className="absolute top-1 right-1 w-5 h-5 rounded-full bg-brand-green text-white grid place-items-center text-[11px] font-bold"
+                            >
+                              ✓
+                            </span>
+                          )}
+                          {/* « Choisir » SUR la vignette sélectionnée (08/08,
+                              demande Mathias — plus de bouton à part). */}
+                          {active && caseJob?.id !== j.id && (
+                            <span
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void epinglerVersion(it, j.id)
+                              }}
+                              title="La case affichera cette version"
+                              className="absolute top-1 right-1 bg-brand-green text-white text-[10px] font-bold rounded-full px-2 py-0.5 cursor-pointer hover:bg-brand-green-hover"
+                            >
+                              Choisir
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  </div>
+                )}
               </div>
 
               {/* colonne latérale : description + prompt, pleine hauteur, scrollable */}
               {(infos || it.productPath) && (
-                <aside className="w-[380px] shrink-0 self-stretch relative">
+                <aside className="w-[380px] shrink-0 self-stretch relative pointer-events-auto">
                 <div
                   className={`h-full max-h-[86vh] overflow-y-auto flex flex-col gap-2 transition-opacity ${
                     loupe ? 'opacity-30 grayscale pointer-events-none select-none' : ''
                   }`}
                 >
-                  {/* VERSIONS (retour arrière, 07/08) : chaque génération et
-                      chaque retour = une version ; clic = la regarder,
-                      « Choisir » = la case l'affiche (persisté au manifeste). */}
-                  {pretes.length > 1 && (
-                    <div className="bg-white/10 rounded-[8px] px-3 py-2.5">
-                      <p className="font-bold text-white text-[12.5px] mb-1.5">
-                        Versions ({pretes.length})
-                      </p>
-                      <div className="flex gap-2 overflow-x-auto pb-1">
-                        {pretes.map((j) => {
-                          const n = versions.findIndex((v) => v.id === j.id) + 1
-                          const active = regardee?.id === j.id
-                          const retenue = it.chosenJobId === j.id
-                          return (
-                            <button
-                              key={j.id}
-                              onClick={() => setVerJobId(j.id)}
-                              title={
-                                j.payload?.instruction ??
-                                j.result?.instruction ??
-                                (j.type === 'decor-autour' ? 'Génération' : 'Retour')
-                              }
-                              className={`shrink-0 w-[96px] rounded-[8px] overflow-hidden border-2 bg-white text-left relative ${
-                                active
-                                  ? 'border-brand-green'
-                                  : 'border-transparent hover:border-white/50'
-                              }`}
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={imgUrl(j.result!.deliveryPath!, 240)}
-                                alt=""
-                                loading="lazy"
-                                className="w-full aspect-[3/2] object-cover"
-                              />
-                              <span className="absolute bottom-1 left-1 text-[10px] font-bold text-white bg-black/50 rounded-full px-1.5">
-                                V{n}
-                                {retenue ? ' · retenue' : ''}
-                              </span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {regardee && regardee.id !== caseJob?.id && (
-                        <button
-                          onClick={() => void epinglerVersion(it, regardee.id)}
-                          className="mt-2 w-full bg-brand-green text-white rounded-[10px] py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors"
-                        >
-                          Choisir cette version
-                        </button>
-                      )}
-                    </div>
-                  )}
-
                   {/* RETOUR par prompt (07/08, mécanique du studio MES) : une
                       consigne → Nano retouche la version regardée → nouvelle
                       version dans la galerie. */}
@@ -1765,9 +2092,9 @@ export default function DecorEcrinApp() {
                       <textarea
                         value={instruction}
                         onChange={(e) => setInstruction(e.target.value)}
-                        rows={3}
-                        placeholder="Ex. : éloigne la maison, éclaircis le crépi des piliers…"
-                        className="w-full rounded-[8px] bg-white text-text-primary text-[12.5px] p-2 resize-y"
+                        rows={1}
+                        placeholder="Ex. : éloigne la maison…"
+                        className="w-full rounded-[8px] bg-white text-text-primary text-[12.5px] p-2 resize-y min-h-[34px]"
                       />
                       <button
                         onClick={() => void envoyerRetour(it, regardee.id)}
@@ -1838,12 +2165,9 @@ export default function DecorEcrinApp() {
                   </div>
 
                   {/* Description + prompt AU-DESSUS du PNG d'origine (demande
-                      Mathias 07/08) — la description reste ouverte, le prompt
-                      fermé. Le mt-auto les colle en bas avec le PNG. */}
-                  <details
-                    className="mt-auto bg-white/10 rounded-[8px] px-3 py-2.5 text-white/90 text-[12px]"
-                    open
-                  >
+                      Mathias 07/08) — les deux FERMÉS par défaut (08/08).
+                      Le mt-auto les colle en bas avec le PNG. */}
+                  <details className="mt-auto bg-white/10 rounded-[8px] px-3 py-2.5 text-white/90 text-[12px]">
                     <summary className="cursor-pointer font-bold text-white text-[12.5px] select-none">
                       Description produit{' '}
                       {it.description

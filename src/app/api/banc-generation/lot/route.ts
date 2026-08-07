@@ -27,19 +27,34 @@ export async function GET(req: NextRequest) {
  * CHOIX DE VERSION (retour arrière, 07/08) : épingle — ou désépingle — la
  * version affichée par une case. Corps : { id, p: productPath,
  * chosenJobId: number | null } ; null = suivre la dernière version prête.
+ * RENOMMAGE (08/08) : { id, produit } — met le nom de session du manifeste en
+ * phase avec la ligne generation_sessions (renommée par sa propre route).
  */
 export async function PATCH(req: NextRequest) {
   const auth = requireApiUser(req)
   if (auth instanceof NextResponse) return auth
   const body = await req.json().catch(() => null)
   const id = typeof body?.id === 'string' ? body.id : ''
-  const p = typeof body?.p === 'string' ? body.p : ''
-  const chosen = body?.chosenJobId
-  if (!BANC_LOT_RE.test(id) || !p || (chosen !== null && !Number.isInteger(chosen))) {
+  if (!BANC_LOT_RE.test(id)) {
     return NextResponse.json({ error: 'Requête invalide' }, { status: 400 })
   }
   const manifest = lireBancManifest(id)
   if (!manifest) return NextResponse.json({ error: 'Lot introuvable' }, { status: 404 })
+
+  // Renommage du lot (nom de session).
+  if (typeof body?.produit === 'string') {
+    const produit = body.produit.trim().slice(0, 60)
+    if (!produit) return NextResponse.json({ error: 'Nom de session vide' }, { status: 400 })
+    manifest.produit = produit
+    ecrireBancManifest(id, manifest)
+    return NextResponse.json({ ok: true })
+  }
+
+  const p = typeof body?.p === 'string' ? body.p : ''
+  const chosen = body?.chosenJobId
+  if (!p || (chosen !== null && !Number.isInteger(chosen))) {
+    return NextResponse.json({ error: 'Requête invalide' }, { status: 400 })
+  }
   const item = manifest.items.find((i) => i.productPath === p)
   if (!item) return NextResponse.json({ error: 'Image absente du lot' }, { status: 404 })
   if (chosen === null) delete item.chosenJobId

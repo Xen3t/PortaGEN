@@ -424,6 +424,28 @@ html[data-brand='sicaan'] {
   will-change: opacity;
 }
 
+/* Message FUGACE au centre de l'image (08/08) : bout de liste en navigation
+   flèches dans la vue en grand — apparaît, tient un instant, disparaît. */
+@keyframes toast-fugace {
+  0% {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.anim-toast-fugace {
+  animation: toast-fugace 1.1s ease forwards;
+}
+
 /* Toute l'app : les boutons répondent sous le doigt (léger enfoncement).
    La propriété `scale` ne touche pas aux translate/rotate des utilitaires. */
 button {

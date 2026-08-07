@@ -93,6 +93,16 @@ export function deleteGenerationSession(batchId: string, db: Database.Database =
   db.prepare('DELETE FROM generation_sessions WHERE batch_id = ?').run(batchId)
 }
 
+/** RENOMME une session (08/08, demande Mathias) — le nom = la colonne produit,
+ *  affichée en titre de carte partout. */
+export function renameGenerationSession(
+  batchId: string,
+  produit: string,
+  db: Database.Database = getDb()
+): void {
+  db.prepare('UPDATE generation_sessions SET produit = ? WHERE batch_id = ?').run(produit, batchId)
+}
+
 /**
  * Masque un lancement de gamme (carte Catalogue) de « Mes sessions » : pas de
  * ligne de session à effacer, on inscrit le lot dans hidden_session_batches.

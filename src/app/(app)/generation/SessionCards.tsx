@@ -118,8 +118,11 @@ export default function SessionCards({
 
   useEffect(() => {
     let alive = true
+    // Sur l'accueil (pas de filtres), on demande PLUS large que le nombre
+    // affiché : les sessions legacy sont écartées côté navigateur — sinon 4
+    // demandées moins 2 legacy = 2 cartes au lieu des 4 dernières (08/08).
     const load = () =>
-      fetch(`/api/generation/sessions?limit=${limit}`)
+      fetch(`/api/generation/sessions?limit=${showFilters ? limit : Math.min(100, limit * 5)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (Array.isArray(d?.sessions)) {
@@ -134,7 +137,7 @@ export default function SessionCards({
       alive = false
       clearInterval(timer)
     }
-  }, [limit])
+  }, [limit, showFilters])
 
   // Confirmation intégrée au bouton (pas de window.confirm : certains
   // navigateurs/vues intégrées le bloquent silencieusement — le ✕ semblait
@@ -142,6 +145,39 @@ export default function SessionCards({
   const [confirm, setConfirm] = useState<{ id: string; state: 'ask' | 'busy' | 'error' } | null>(
     null
   )
+
+  // RENOMMAGE d'une session (08/08, demande Mathias) : ✎ sur la carte → le
+  // titre devient un champ, Entrée/clic ailleurs enregistre, Échap annule.
+  const [renommage, setRenommage] = useState<{ id: string; valeur: string; busy: boolean } | null>(
+    null
+  )
+  async function renommerSession(s: SessionSummary, valeur: string) {
+    const nom = valeur.trim()
+    if (!nom || nom === s.produit) {
+      setRenommage(null)
+      return
+    }
+    setRenommage({ id: s.batchId, valeur: nom, busy: true })
+    try {
+      const res = await fetch(`/api/generation/sessions/${encodeURIComponent(s.batchId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ produit: nom }),
+      })
+      if (res.ok) {
+        setSessions((cur) => {
+          const next = (cur ?? []).map((x) =>
+            x.batchId === s.batchId ? { ...x, produit: nom } : x
+          )
+          lastLoaded.set(limit, next)
+          return next
+        })
+      }
+    } catch {
+      // serveur injoignable : on garde l'ancien nom
+    }
+    setRenommage(null)
+  }
 
   async function removeSession(s: SessionSummary) {
     setConfirm({ id: s.batchId, state: 'busy' })
@@ -165,7 +201,21 @@ export default function SessionCards({
   }
 
   if (sessions == null) {
-    return hideWhenEmpty ? null : <Chargement />
+    if (!hideWhenEmpty) return <Chargement />
+    // Accueil (08/08, demande Mathias) : UNE roue de chargement centrée dans le
+    // container le temps que les sessions arrivent.
+    return (
+      <section className="bg-white rounded-[12px] border border-border shadow-sm p-5">
+        {showTitle && (
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-text-secondary mb-3">
+            Mes sessions
+          </h2>
+        )}
+        <div className="py-16 grid place-items-center">
+          <span className="inline-block w-8 h-8 rounded-full border-[3px] border-border border-t-brand-green animate-spin" />
+        </div>
+      </section>
+    )
   }
 
   // Sessions des flux LEGACY (directe / catalogue / décors) MASQUÉES le
@@ -186,7 +236,8 @@ export default function SessionCards({
             (typeFilter === 'contrainte' ? s.source === 'decor-autour' : s.source === 'libre')) &&
           (daysFilter === '' || matchesPeriod(s.createdAt, daysFilter))
       )
-    : visibles
+    : // Accueil : les N dernières VISIBLES (le fetch ratisse plus large).
+      visibles.slice(0, limit)
   const filtersActive = moteurFilter !== '' || typeFilter !== '' || daysFilter !== ''
   const resetFilters = () => {
     setMoteurFilter('')
@@ -329,9 +380,9 @@ export default function SessionCards({
             // sorti, gris sinon. « en cours » et « en erreur » restent factuels.
             const accord = s.source === 'decor' ? '' : 'e'
             const statut = s.busy
-              ? { text: 'en cours', cls: 'text-brand-teal anim-respire' }
+              ? { text: 'En cours', cls: 'text-brand-teal anim-respire' }
               : s.failed
-                ? { text: '✗ en erreur', cls: 'text-brand-red' }
+                ? { text: '✗ En erreur', cls: 'text-brand-red' }
                 : {
                     text: `${s.mesDone}/${s.mesCount} généré${accord}${s.mesCount > 1 ? 's' : ''}`,
                     cls:
@@ -405,7 +456,33 @@ export default function SessionCards({
                   </div>
                   <div className="px-3.5 pt-2.5 pb-3">
                     <div className="flex items-center gap-2">
-                      <b className="text-[14px] truncate">{s.produit || 'Sans nom'}</b>
+                      {renommage?.id === s.batchId ? (
+                        <input
+                          type="text"
+                          autoFocus
+                          maxLength={60}
+                          value={renommage.valeur}
+                          disabled={renommage.busy}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                          }}
+                          onChange={(e) =>
+                            setRenommage({ id: s.batchId, valeur: e.target.value, busy: false })
+                          }
+                          onBlur={() => void renommerSession(s, renommage.valeur)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              void renommerSession(s, renommage.valeur)
+                            }
+                            if (e.key === 'Escape') setRenommage(null)
+                          }}
+                          className="text-[14px] font-bold border border-brand-green rounded-[6px] px-1.5 py-0.5 w-full min-w-0 focus:outline-none"
+                        />
+                      ) : (
+                        <b className="text-[14px] truncate">{s.produit || 'Sans nom'}</b>
+                      )}
                       <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-brand-green-light text-brand-green shrink-0">
                         {MOTEUR_LABELS[s.moteur] ?? s.moteur}
                       </span>
@@ -465,14 +542,27 @@ export default function SessionCards({
                           : 'Confirmer la suppression ?'}
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setConfirm({ id: s.batchId, state: 'ask' })}
-                      title="Supprimer cette session de la liste"
-                      className="absolute top-2 left-2 w-6 h-6 rounded-full bg-white/95 border border-border text-text-disabled text-[11px] leading-none grid place-items-center opacity-0 group-hover:opacity-100 hover:text-brand-red hover:border-brand-red/40 transition-opacity"
-                    >
-                      ✕
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setConfirm({ id: s.batchId, state: 'ask' })}
+                        title="Supprimer cette session de la liste"
+                        className="absolute top-2 left-2 w-6 h-6 rounded-full bg-white/95 border border-border text-text-disabled text-[11px] leading-none grid place-items-center opacity-0 group-hover:opacity-100 hover:text-brand-red hover:border-brand-red/40 transition-opacity"
+                      >
+                        ✕
+                      </button>
+                      {/* Renommer (08/08) : le titre devient un champ. */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRenommage({ id: s.batchId, valeur: s.produit, busy: false })
+                        }
+                        title="Renommer cette session"
+                        className="absolute top-2 left-9 w-6 h-6 rounded-full bg-white/95 border border-border text-text-disabled text-[11px] leading-none grid place-items-center opacity-0 group-hover:opacity-100 hover:text-brand-green hover:border-brand-green/40 transition-opacity"
+                      >
+                        ✎
+                      </button>
+                    </>
                   )}
               </div>
             )

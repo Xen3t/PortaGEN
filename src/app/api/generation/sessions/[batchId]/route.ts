@@ -5,6 +5,7 @@ import {
   deleteGenerationSession,
   getGenerationSession,
   hideSessionBatch,
+  renameGenerationSession,
   summarizeGenerationSession,
 } from '@/lib/db/generationSessions'
 
@@ -28,6 +29,24 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ batchId: st
     return NextResponse.json({ error: 'Session introuvable' }, { status: 404 })
   }
   return NextResponse.json({ session: summarizeGenerationSession(row) })
+}
+
+/** RENOMMAGE d'une session (08/08) : { produit } — réservé à son auteur (ou admin). */
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ batchId: string }> }) {
+  const auth = requireApiUser(req)
+  if (auth instanceof NextResponse) return auth
+  const { batchId } = await ctx.params
+  const row = getGenerationSession(batchId)
+  if (!row || (row.created_by !== auth.username && auth.role !== 'admin')) {
+    return NextResponse.json({ error: 'Session introuvable' }, { status: 404 })
+  }
+  const body = await req.json().catch(() => null)
+  const produit = typeof body?.produit === 'string' ? body.produit.trim().slice(0, 60) : ''
+  if (!produit) {
+    return NextResponse.json({ error: 'Nom de session vide' }, { status: 400 })
+  }
+  renameGenerationSession(batchId, produit)
+  return NextResponse.json({ ok: true, produit })
 }
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ batchId: string }> }) {
