@@ -26,6 +26,9 @@ export interface MesDecorRow {
   /** Version RÉÉCRITE par le LLM (obligatoire, 08/08 soir) — c'est ELLE qui
    *  remplit {DECOR} ; null = réécriture pas encore faite (repli : prompt). */
   promptIa: string | null
+  /** Aperçu Nano 1K du décor seul (bibliothèque 17/08) — chemin RELATIF
+   *  projet sous data/mes-decors/<id>/ ; null = pas encore généré. */
+  apercu: string | null
   /** Chemins RELATIFS projet des images de référence (JSON en base). */
   images: string[]
   isDefault: boolean
@@ -39,6 +42,7 @@ interface RawRow {
   name: string
   prompt: string
   prompt_ia: string | null
+  apercu: string | null
   images: string
   is_default: number
   created_by: string | null
@@ -59,6 +63,7 @@ function hydrate(r: RawRow): MesDecorRow {
     name: r.name,
     prompt: r.prompt,
     promptIa: r.prompt_ia,
+    apercu: r.apercu,
     images,
     isDefault: r.is_default === 1,
     created_by: r.created_by,
@@ -90,11 +95,14 @@ export function getMesDecorDefaut(db: Database.Database = getDb()): MesDecorRow 
 export function createMesDecor(
   name: string,
   createdBy: string,
-  db: Database.Database = getDb()
+  db: Database.Database = getDb(),
+  // Création « en une phrase » (bibliothèque 17/08) : le texte humain et sa
+  // version IA arrivent en même temps que le nom.
+  champs?: { prompt?: string; promptIa?: string | null }
 ): MesDecorRow {
   const res = db
-    .prepare(`INSERT INTO mes_decors (name, prompt, created_by) VALUES (?, '', ?)`)
-    .run(name, createdBy)
+    .prepare(`INSERT INTO mes_decors (name, prompt, prompt_ia, created_by) VALUES (?, ?, ?, ?)`)
+    .run(name, champs?.prompt ?? '', champs?.promptIa ?? null, createdBy)
   return getMesDecor(Number(res.lastInsertRowid), db)!
 }
 
@@ -156,6 +164,31 @@ export function deleteMesDecor(id: number, db: Database.Database = getDb()): { o
 /** Dossier des images de référence d'un décor (créé à la demande). */
 export function mesDecorImagesDir(id: number): string {
   return path.join(config.dataDir, 'mes-decors', String(id))
+}
+
+/** Enregistre l'aperçu généré (chemin relatif projet) — l'ancien fichier part. */
+export function setMesDecorApercu(
+  id: number,
+  relPath: string,
+  db: Database.Database = getDb()
+): MesDecorRow | undefined {
+  const decor = getMesDecor(id, db)
+  if (!decor) return undefined
+  if (decor.apercu && decor.apercu !== relPath) {
+    const ancien = path.resolve(config.rootDir, decor.apercu)
+    if (ancien.startsWith(mesDecorImagesDir(id) + path.sep)) {
+      try {
+        fs.rmSync(ancien, { force: true })
+      } catch {
+        // fichier verrouillé : la base fait foi
+      }
+    }
+  }
+  db.prepare(`UPDATE mes_decors SET apercu = ?, updated_at = datetime('now') WHERE id = ?`).run(
+    relPath,
+    id
+  )
+  return getMesDecor(id, db)
 }
 
 /** Enregistre une image de référence et l'ajoute à la liste du décor. */

@@ -26,6 +26,10 @@ export async function POST(req: NextRequest) {
     /** true = IGNORER la bibliothèque : nouvel appel vision + écrasement de
      *  l'entrée (bouton « forcer la vision », 07/08). */
     force?: boolean
+    /** Texte fourni = ÉDITION MANUELLE (18/08, demande Mathias) : enregistré
+     *  tel quel dans la bibliothèque (aucun appel vision), origine « manuel »
+     *  — toutes les prochaines générations de la clé le réutilisent. */
+    description?: string
   }
   try {
     body = await req.json()
@@ -46,6 +50,12 @@ export async function POST(req: NextRequest) {
     parseProduitFromFileName(name) || name.replace(/\.[a-z0-9]+$/i, '').slice(0, 60) || 'PRODUIT'
 
   try {
+    if (typeof body.description === 'string' && body.description.trim()) {
+      const texte = body.description.trim().slice(0, 4000)
+      saveProduitDescription(produit, coloris, moteur.key, texte, 'manuel')
+      return NextResponse.json({ produit, description: texte, source: 'bibliotheque' })
+    }
+
     const existante = body.force === true ? undefined : getProduitDescription(produit, coloris, moteur.key)
     if (existante) {
       return NextResponse.json({
@@ -56,7 +66,7 @@ export async function POST(req: NextRequest) {
     }
 
     const full = resoudreSousLot(String(body.lot ?? ''), String(body.productPath ?? ''))
-    const { description, model } = await decrireProduit(fs.readFileSync(full))
+    const { description, model } = await decrireProduit(fs.readFileSync(full), moteur.key)
     saveProduitDescription(produit, coloris, moteur.key, description, model)
     return NextResponse.json({ produit, description, source: 'vision' })
   } catch (err) {

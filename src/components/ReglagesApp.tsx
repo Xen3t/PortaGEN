@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import MesDecorsManager from '@/components/MesDecorsManager'
+import BibliothequeDecors from '@/components/BibliothequeDecors'
 
 /**
  * Réglages GÉNÉRAUX de l'application — universels, donc À PART des moteurs
@@ -390,11 +390,12 @@ export default function ReglagesApp() {
             </div>
       </AppCard>
 
-      {/* DÉCORS des MES Contrainte (08/08) : MÊME bibliothèque que la modale
-          « Gérer les décors » de la page — exigence : tout réglage pilotable
-          depuis l'admin. Ici on est admin, donc défaut + suppression visibles. */}
+      {/* DÉCORS des MES Contrainte (08/08, refonte bibliothèque 17/08) : MÊME
+          bibliothèque que la modale « Décors » de la page MES Contrainte —
+          exigence : tout réglage pilotable depuis l'admin. Ici on est admin,
+          donc défaut + suppression visibles. */}
       <AppCard id="app-decors" title="Décors">
-        <MesDecorsManager isAdmin />
+        <BibliothequeDecors isAdmin />
       </AppCard>
 
       <AppCard id="app-marquage" title="Marquage IA">

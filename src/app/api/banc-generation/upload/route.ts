@@ -9,6 +9,7 @@ import {
   createGenerationSession,
   getGenerationSession,
 } from '@/lib/db/generationSessions'
+import { detectColoris, colorisDef } from '@/lib/images/coloris'
 import { detourProduct, hasRealTransparency } from '@/lib/images/detourage'
 import { moteurDaDef } from '@/lib/moteursDa'
 import { parseProduitFromFileName } from '@/lib/productName'
@@ -100,7 +101,26 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    return NextResponse.json({ lotId, productPath: rel(pngPath), originalPath: rel(originalPath) })
+    // MESURE COULEUR (18/08, demande Mathias après le piège du « Gris silencieux » :
+    // un ATHOS teck sans jeton coloris dans le nom était RALifié vers le 7016) :
+    // la couleur dominante de la matière est mesurée sur le PNG détouré (brique
+    // de la Détection des images). Le client ne s'en sert QUE si le nom de
+    // fichier ne porte aucun jeton coloris — le nom reste prioritaire.
+    let colorisMesure: { label: string; confidence: string; hex: string | null } | null = null
+    try {
+      const mesure = await detectColoris(productPng)
+      const def = mesure.coloris ? colorisDef(mesure.coloris) : undefined
+      if (def) colorisMesure = { label: def.label, confidence: mesure.confidence, hex: mesure.hex }
+    } catch {
+      // mesure impossible (image atypique) : le client garde son défaut
+    }
+
+    return NextResponse.json({
+      lotId,
+      productPath: rel(pngPath),
+      originalPath: rel(originalPath),
+      colorisMesure,
+    })
   } catch (err) {
     return NextResponse.json(
       { lotId, error: err instanceof Error ? err.message : String(err) },

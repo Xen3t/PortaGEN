@@ -439,12 +439,92 @@ export async function construirePlanGris(
     // Nano texture la teinte qu'on lui donne).
     aplat(layout.capLeft?.bbox, coul.chapeau)
     aplat(layout.capRight?.bbox, coul.chapeau, opts.pilierDroitDevant === true)
+    // FACETTES DE PROFONDEUR (18/08, maquette gabarit-profondeur v3 validée par
+    // Mathias — sans arêtes grises) : chaque pilier du coulissant est dessiné
+    // comme un BLOC 3D vu de face — facette interne sur le fût et le chapeau
+    // (le retour du pilier vers le plan de la lame, en retrait) + fine ombre
+    // sous le débord du chapeau. Indices visibles quel que soit le coloris du
+    // produit : ils vivent sur les piliers clairs, pas sur la lame (l'ombre à
+    // 40 % disparaissait sur un produit anthracite). Teintes DÉRIVÉES des
+    // couleurs réglées, jamais de gris en dur.
+    if (opts.pilierDroitDevant) {
+      const assombrir = (hex: string, frac: number): string => {
+        const n = hex.replace('#', '')
+        if (n.length !== 6) return hex
+        const v = [0, 2, 4].map((i) =>
+          Math.max(0, Math.round(parseInt(n.slice(i, i + 2), 16) * (1 - frac)))
+        )
+        return '#' + v.map((x) => x.toString(16).padStart(2, '0')).join('')
+      }
+      const facette = (
+        pilier: { x: number; y: number; w: number; h: number } | null | undefined,
+        cap: { x: number; y: number; w: number; h: number } | null | undefined,
+        interieurADroite: boolean,
+        couche: string[]
+      ) => {
+        if (!pilier) return
+        const p = projectRect(pilier, proj)
+        if (p.w <= 0 || p.h <= 0) return
+        const fw = Math.max(3, Math.round(p.w * 0.2))
+        const xFut = interieurADroite ? p.x + p.w - fw : p.x
+        couche.push(
+          `<rect x="${xFut}" y="${p.y}" width="${fw}" height="${p.h}" fill="${assombrir(coul.pilier, 0.09)}"/>`
+        )
+        if (cap) {
+          const c = projectRect(cap, proj)
+          if (c.w > 0 && c.h > 0) {
+            const xCap = interieurADroite ? c.x + c.w - fw : c.x
+            couche.push(
+              `<rect x="${xCap}" y="${c.y}" width="${fw}" height="${c.h}" fill="${assombrir(coul.chapeau, 0.14)}"/>`
+            )
+            couche.push(
+              `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${Math.max(3, Math.round(proj.sy * 2))}" fill="rgba(0,0,0,0.16)"/>`
+            )
+          }
+        }
+      }
+      facette(layout.pillarLeft, layout.capLeft?.bbox, true, rects)
+      facette(layout.pillarRight, layout.capRight?.bbox, false, rectsApres)
+    }
     if (rects.length > 0) {
       const svg = `<svg width="${planW}" height="${planH}" xmlns="http://www.w3.org/2000/svg">${rects.join('')}</svg>`
       gris = await sharp(gris).composite([{ input: Buffer.from(svg) }]).png().toBuffer()
     }
-    if (rectsApres.length > 0) {
-      apresSvg = `<svg width="${planW}" height="${planH}" xmlns="http://www.w3.org/2000/svg">${rectsApres.join('')}</svg>`
+    // PROFONDEUR PAR L'OMBRE (17/08 soir, demande Mathias « donner de la
+    // perspective au gabarit ») : l'élévation frontale n'offre aucun indice de
+    // profondeur et Nano re-dessinait la jonction lame/pilier à sa façon (lame
+    // traversant le pilier droit, chant au milieu du pilier gauche — jobs
+    // 123/125/126, trois itérations de prompt sans effet). Recette VALIDÉE du
+    // coulissant legacy reprise (28/07 : sans ombre « la lame s'arrêtait AVANT
+    // le pilier » ; étude fiabilité 25 % = 2/4, 40 % = 3/3 → 40) : bande
+    // d'occlusion ambiante TRÈS progressive sur la lame le long de la face
+    // gauche du pilier droit (1,5 × sa largeur, 0 → 40 % au contact, jusqu'au
+    // sol — jamais de bloc sombre). Face droite du pilier GAUCHE : même indice
+    // moitié moins large (le chant de fermeture vit en creux DERRIÈRE lui).
+    let ombresSvg = ''
+    if (opts.pilierDroitDevant && portail.y + portail.h > cible.y) {
+      const prPx = projectRect(layout.pillarRight, proj)
+      const plPx = projectRect(layout.pillarLeft, proj)
+      const ombreY = cible.y
+      const ombreH = portail.y + portail.h - cible.y
+      const bandeDroite = Math.round(prPx.w * 1.5)
+      const bandeGauche = Math.round(plPx.w * 0.75)
+      ombresSvg =
+        `<defs>` +
+        `<linearGradient id="ombrePilierDroit" x1="0" y1="0" x2="1" y2="0">` +
+        `<stop offset="0" stop-color="black" stop-opacity="0"/>` +
+        `<stop offset="1" stop-color="black" stop-opacity="0.4"/>` +
+        `</linearGradient>` +
+        `<linearGradient id="ombrePilierGauche" x1="0" y1="0" x2="1" y2="0">` +
+        `<stop offset="0" stop-color="black" stop-opacity="0.4"/>` +
+        `<stop offset="1" stop-color="black" stop-opacity="0"/>` +
+        `</linearGradient>` +
+        `</defs>` +
+        `<rect x="${prPx.x - bandeDroite}" y="${ombreY}" width="${bandeDroite}" height="${ombreH}" fill="url(#ombrePilierDroit)"/>` +
+        `<rect x="${plPx.x + plPx.w}" y="${ombreY}" width="${bandeGauche}" height="${ombreH}" fill="url(#ombrePilierGauche)"/>`
+    }
+    if (rectsApres.length > 0 || ombresSvg) {
+      apresSvg = `<svg width="${planW}" height="${planH}" xmlns="http://www.w3.org/2000/svg">${ombresSvg}${rectsApres.join('')}</svg>`
     }
   }
 

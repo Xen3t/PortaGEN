@@ -25,6 +25,10 @@ import { usePathname } from 'next/navigation'
  * « Décors » SORT de la barre — la page devient « MES Décors » sur /decors
  * (ex-/bibliotheque, redirigée), accessible depuis l'Accueil et la page
  * Générer. Nav : Accueil · Générer · Catalogue.
+ *
+ * 17/08/2026 : la bibliothèque de Décors (maquette bibliotheque-decors-v1)
+ * vit DANS la page MES Contrainte (modale « Décors ») — PAS d'entrée de nav,
+ * demande explicite Mathias.
  */
 
 const MAIN_LINKS = [

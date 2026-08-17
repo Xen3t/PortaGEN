@@ -8,7 +8,11 @@ import {
   setMesDecorDefaut,
   updateMesDecor,
 } from '@/lib/db/mesDecors'
-import { ameliorerDecorPrompt } from '@/lib/genai/decorPromptIa'
+import {
+  ameliorerDecorPrompt,
+  creerDecorDepuisIdee,
+  modifierDecorParConsigne,
+} from '@/lib/genai/decorPromptIa'
 
 /**
  * DÉCORS des MES Contrainte (08/08/2026, maquette decors-mes-contrainte-v2) :
@@ -24,11 +28,34 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ decors: listMesDecors() })
 }
 
-/** Création : { name } — le texte se remplit ensuite par PATCH. */
+/**
+ * Création : { name } — le texte se remplit ensuite par PATCH (modale MES
+ * Contrainte) — OU { idee } (bibliothèque 17/08) : l'IA écrit le prompt et
+ * propose le nom depuis la phrase de l'utilisateur ; l'aperçu se génère
+ * ensuite par POST /api/mes-decors/apercu.
+ */
 export async function POST(req: NextRequest) {
   const auth = requireApiUser(req)
   if (auth instanceof NextResponse) return auth
   const body = await req.json().catch(() => null)
+
+  const idee = typeof body?.idee === 'string' ? body.idee.trim().slice(0, 4000) : ''
+  if (idee) {
+    try {
+      const ia = await creerDecorDepuisIdee(idee)
+      const decor = createMesDecor(ia.nom, auth.username, undefined, {
+        prompt: idee,
+        promptIa: ia.prompt,
+      })
+      return NextResponse.json({ decor, decors: listMesDecors() })
+    } catch {
+      return NextResponse.json(
+        { error: 'Création IA impossible (modèle injoignable) — réessaie.' },
+        { status: 502 }
+      )
+    }
+  }
+
   const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 60) : ''
   if (!name) return NextResponse.json({ error: 'Nom de décor vide' }, { status: 400 })
   const decor = createMesDecor(name, auth.username)
@@ -60,6 +87,27 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'Décor introuvable' }, { status: 404 })
     }
     return NextResponse.json({ decors: listMesDecors() })
+  }
+
+  // Modification par CONSIGNE (bibliothèque 17/08) : « moins de végétation »
+  // → l'IA met à jour le texte humain ET le prompt, cohérents entre eux.
+  if (typeof body?.consigne === 'string' && body.consigne.trim()) {
+    const decor = getMesDecor(id)
+    if (!decor) return NextResponse.json({ error: 'Décor introuvable' }, { status: 404 })
+    const texteActuel = decor.prompt.trim() || decor.promptIa || ''
+    if (!texteActuel) {
+      return NextResponse.json({ error: 'Écris d’abord un texte de décor.' }, { status: 400 })
+    }
+    try {
+      const ia = await modifierDecorParConsigne(texteActuel, body.consigne.trim().slice(0, 1000))
+      updateMesDecor(id, { prompt: ia.texte, promptIa: ia.prompt })
+      return NextResponse.json({ decors: listMesDecors() })
+    } catch {
+      return NextResponse.json(
+        { error: 'Modification IA impossible (modèle injoignable) — réessaie.' },
+        { status: 502 }
+      )
+    }
   }
 
   // Relance manuelle de la réécriture IA (bouton « Réécrire »).

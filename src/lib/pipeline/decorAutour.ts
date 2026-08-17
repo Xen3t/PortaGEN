@@ -218,6 +218,46 @@ export async function runDecorAutourStep(
     } else if (productDesc) {
       prompt = `${prompt}\n\nTHE PRODUCT, factually (trust this and the input image):\n${productDesc}`
     }
+    // {AJOURE} (17/08, étendu aux 3 moteurs le soir même) : le paragraphe
+    // « openwork » historique ne part que si le produit est réellement ajouré.
+    // Sur un produit PLEIN de grande hauteur (≥ 50 % de la hauteur d'image), il
+    // donnait à Nano une sortie légitime pour percer le panneau et montrer le
+    // décor à travers — sessions banc-msxgayzw (battants 7/7) et jobs 92-96
+    // (coulissants). Détection sur la ligne STRUCTURE de la description vision
+    // (vocabulaire garanti : solid / openwork / mixed, cf.
+    // PROMPT_DESCRIPTION_DEFAUT). « mixed » décrit ses zones pleines avec le mot
+    // « solid », d'où les deux exclusions. Sans description : paragraphe
+    // historique (non-régression). Prompt sans {AJOURE} : rien à faire.
+    // Textes PAR MOTEUR (jamais cloner-renommer) : le battant a deux vantaux et
+    // une allée carrossable, le portillon UN vantail et une allée de jardin, le
+    // coulissant UN panneau continu.
+    if (prompt.includes('{AJOURE}')) {
+      const AJOURE_OUVERT: Record<MoteurDaKey, string> = {
+        janus:
+          'If the gate is an OPENWORK design (bars or slats with gaps between them), the gaps are SEE-THROUGH openings: paint the environment BEHIND the gate through every gap — driveway, garden, the house further back. NEVER fill the gaps with gate material, panels or solid colour: the exact silhouette of bars AND openings from the input is preserved, opening for opening.',
+        forculus:
+          'If the gate is an OPENWORK design (bars or slats with gaps between them), the gaps are SEE-THROUGH openings: paint the environment BEHIND the gate through every gap — garden path, garden, the house further back. NEVER fill the gaps with gate material, panels or solid colour: the exact silhouette of bars AND openings from the input is preserved, opening for opening.',
+        terminus:
+          'If the gate has an OPENWORK section (bars or slats with gaps between them), the gaps are SEE-THROUGH openings: paint the environment BEHIND the gate through every gap — driveway, garden, the house further back. NEVER fill the gaps with gate material, panels or solid colour: the exact silhouette of bars AND openings from the input is preserved, opening for opening.',
+      }
+      const AJOURE_PLEIN: Record<MoteurDaKey, string> = {
+        janus:
+          'The gate is a SOLID opaque panel: NOTHING behind it is ever visible through it. The grooves between slats are shallow surface joints on a closed panel, NOT gaps — NEVER open them, NEVER paint sky, garden, driveway or house through ANY part of the gate, and NEVER lower, shorten or cut the gate to reveal what stands behind: whatever the scenery places behind the gate stays HIDDEN behind it.',
+        forculus:
+          'The gate is a SOLID opaque leaf: NOTHING behind it is ever visible through it. The grooves between slats are shallow surface joints on a closed leaf, NOT gaps — NEVER open them, NEVER paint sky, garden, path or house through ANY part of the gate, and NEVER lower, shorten or cut the gate to reveal what stands behind: whatever the scenery places behind the gate stays HIDDEN behind it.',
+        terminus:
+          'The gate is ONE SOLID opaque panel: NOTHING behind it is ever visible through it. The grooves between slats are shallow surface joints on a closed panel, NOT gaps — NEVER open them, NEVER paint sky, garden, driveway or house through ANY part of the panel, and NEVER lower, shorten or cut the panel to reveal what stands behind: whatever the scenery places behind the gate stays HIDDEN behind it.',
+      }
+      const structureLigne = productDesc?.match(/^STRUCTURE:(.*)$/im)?.[1]?.toLowerCase() ?? ''
+      const produitPlein =
+        structureLigne.includes('solid') &&
+        !structureLigne.includes('openwork') &&
+        !structureLigne.includes('mixed')
+      prompt = prompt.replaceAll(
+        '{AJOURE}',
+        produitPlein ? AJOURE_PLEIN[moteurKey] : AJOURE_OUVERT[moteurKey]
+      )
+    }
     // {DECOR} (08/08) : l'ambiance vient de la bibliothèque de décors — celui
     // demandé par le lancement, sinon le décor par défaut. La règle « maison
     // toujours vue de face » vit dans le texte FIGÉ du prompt, pas ici. Prompt

@@ -340,6 +340,7 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
       name TEXT NOT NULL,
       prompt TEXT NOT NULL DEFAULT '',
       prompt_ia TEXT,
+      apercu TEXT,
       images TEXT NOT NULL DEFAULT '[]',
       is_default INTEGER NOT NULL DEFAULT 0,
       created_by TEXT,
@@ -359,6 +360,13 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
     db.exec(`ALTER TABLE mes_decors ADD COLUMN prompt_ia TEXT`)
   }
   db.exec(`UPDATE mes_decors SET prompt_ia = prompt WHERE prompt_ia IS NULL AND prompt != ''`)
+
+  // Bibliothèque de Décors (17/08/2026, maquette bibliotheque-decors-v1) :
+  // aperçu Nano 1K du décor seul, fichier sous data/mes-decors/<id>/ (chemin
+  // relatif projet) — hors remise à zéro, comme les images de référence.
+  if (decorCols.length > 0 && !decorCols.includes('apercu')) {
+    db.exec(`ALTER TABLE mes_decors ADD COLUMN apercu TEXT`)
+  }
 
   // Bibliothèque de descriptions créée quelques minutes avant l'ajout du
   // coloris dans la clé (07/08/2026, rechargement DEV entre les deux) :
@@ -535,6 +543,12 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
   seedPrompts(db)
   seedMesDecors(db)
   seedDecorPlaceholder(db)
+  seedAjourePlaceholder(db)
+  seedSceneCachee(db)
+  seedDecorDepassement(db)
+  seedQueueFlottante(db)
+  seedJugeAffine(db)
+  seedOmbresExpliquees(db)
   seedAdmin(db, opts.ephemeral)
 }
 
@@ -587,6 +601,221 @@ function seedDecorPlaceholder(db: Database.Database): void {
       actif.version + 1,
       contenu,
       'Décor externalisé ({DECOR}) + maison de face verrouillée hors décor (08/08/2026)',
+      'seed'
+    )
+  }
+}
+
+/**
+ * Paragraphe « openwork » conditionnel (17/08/2026) : sur un produit PLEIN de
+ * grande hauteur, ce paragraphe donnait à Nano une sortie légitime pour percer
+ * le panneau (session banc-msxgayzw-gh9twi, 7/7 percés dès 50 % de couverture
+ * verticale). Il devient un emplacement {AJOURE} rempli par le pipeline selon
+ * la ligne STRUCTURE de la description produit. Étendu aux 3 moteurs le 17/08
+ * soir (feu vert Mathias après validation battant, coulissants percés jobs
+ * 92-96) ; même garde anti hot-reload que {DECOR}.
+ */
+function seedAjourePlaceholder(db: Database.Database): void {
+  const noms = ['janus-decor-autour', 'forculus-decor-autour', 'terminus-decor-autour']
+  for (const name of noms) {
+    const actif = db
+      .prepare('SELECT version, content FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1')
+      .get(name) as { version: number; content: string } | undefined
+    if (!actif || actif.content.includes('{AJOURE}')) continue
+    const file = PROMPT_FILES[name]
+    if (!file) continue
+    const filePath = path.join(config.promptSystemDir, file)
+    if (!fs.existsSync(filePath)) continue
+    const contenu = fs.readFileSync(filePath, 'utf8')
+    if (!contenu.includes('{AJOURE}')) continue
+    db.prepare(
+      'INSERT INTO prompts (name, version, content, comment, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      actif.version + 1,
+      contenu,
+      'Paragraphe openwork conditionnel ({AJOURE}) : produit plein = jamais percé (17/08/2026)',
+      'seed'
+    )
+  }
+}
+
+/**
+ * « Ce qui est caché reste caché » (17/08/2026, remède 2 du perçage) : {AJOURE}
+ * seul n'a pas suffi — Nano a cessé de percer mais s'est mis à RAPETISSER le
+ * portail/les piliers pour dégager la vue (session banc-msxmzlbt-w782di, 5 lames
+ * au lieu de 8). Le texte figé dit désormais que le décor peut être presque
+ * entièrement masqué par le portail et que c'est VOULU : on ne rétrécit rien,
+ * on ne révèle rien. JANUS seul ; même garde anti hot-reload que {DECOR}.
+ */
+function seedSceneCachee(db: Database.Database): void {
+  const marqueur = 'NOT what must be visible'
+  const noms = ['janus-decor-autour']
+  for (const name of noms) {
+    const actif = db
+      .prepare('SELECT version, content FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1')
+      .get(name) as { version: number; content: string } | undefined
+    if (!actif || actif.content.includes(marqueur)) continue
+    const file = PROMPT_FILES[name]
+    if (!file) continue
+    const filePath = path.join(config.promptSystemDir, file)
+    if (!fs.existsSync(filePath)) continue
+    const contenu = fs.readFileSync(filePath, 'utf8')
+    if (!contenu.includes(marqueur)) continue
+    db.prepare(
+      'INSERT INTO prompts (name, version, content, comment, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      actif.version + 1,
+      contenu,
+      'Remède 2 : le décor caché par le portail reste caché — jamais rétrécir pour dégager la vue (17/08/2026)',
+      'seed'
+    )
+  }
+}
+
+/**
+ * Décor « ce qui dépasse » (17/08/2026 soir, règle Mathias « voyons simple ») :
+ * le paragraphe ENVIRONMENT devient le modèle 3 bandes — sol dessiné, produit
+ * dessiné, la bande HAUTE est la seule à inventer (ciel + ce qui dépasse
+ * derrière le portail). Fini les décors complets invisibles (jardin, allée) qui
+ * poussaient Nano à altérer le produit ; le gros pavé défensif du remède 2
+ * disparaît avec la cause. Étendu aux 3 moteurs le 17/08 soir (feu vert Mathias
+ * après validation battant — le coulissant EXIGEAIT même la façade toujours
+ * visible, l'ordre parfait pour tricher) ; garde anti hot-reload idem {DECOR}.
+ */
+function seedDecorDepassement(db: Database.Database): void {
+  const marqueur = 'What peeks above:'
+  const noms = ['janus-decor-autour', 'forculus-decor-autour', 'terminus-decor-autour']
+  for (const name of noms) {
+    const actif = db
+      .prepare('SELECT version, content FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1')
+      .get(name) as { version: number; content: string } | undefined
+    if (!actif || actif.content.includes(marqueur)) continue
+    const file = PROMPT_FILES[name]
+    if (!file) continue
+    const filePath = path.join(config.promptSystemDir, file)
+    if (!fs.existsSync(filePath)) continue
+    const contenu = fs.readFileSync(filePath, 'utf8')
+    if (!contenu.includes(marqueur)) continue
+    db.prepare(
+      'INSERT INTO prompts (name, version, content, comment, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      actif.version + 1,
+      contenu,
+      'Décor « ce qui dépasse » : bande haute seule à inventer, plus de décor complet invisible (17/08/2026)',
+      'seed'
+    )
+  }
+}
+
+/**
+ * Queue flottante du coulissant (17/08/2026 soir, job 123 ATHOS) : le prompt
+ * décrivait « deux bras haut et bas » alors que le plan n'en MONTRE qu'un (le
+ * bas est caché derrière le muret peint devant — physiquement juste) ; Nano
+ * résolvait la contradiction en couchant le bras sur le muret comme un rail,
+ * et fondait la lame dans le pilier droit. Le prompt décrit désormais ce qui
+ * est réellement dessiné (un bras qui FLOTTE au-dessus du muret, jamais une
+ * main courante) + pilier droit pleine largeur aux bords nets. Même garde anti
+ * hot-reload que {DECOR}.
+ */
+function seedQueueFlottante(db: Database.Database): void {
+  const marqueur = 'NEVER a handrail'
+  const noms = ['terminus-decor-autour']
+  for (const name of noms) {
+    const actif = db
+      .prepare('SELECT version, content FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1')
+      .get(name) as { version: number; content: string } | undefined
+    if (!actif || actif.content.includes(marqueur)) continue
+    const file = PROMPT_FILES[name]
+    if (!file) continue
+    const filePath = path.join(config.promptSystemDir, file)
+    if (!fs.existsSync(filePath)) continue
+    const contenu = fs.readFileSync(filePath, 'utf8')
+    if (!contenu.includes(marqueur)) continue
+    db.prepare(
+      'INSERT INTO prompts (name, version, content, comment, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      actif.version + 1,
+      contenu,
+      'Queue flottante : le prompt décrit le bras unique réellement dessiné (jamais une main courante sur le muret) + pilier droit net (17/08/2026)',
+      'seed'
+    )
+  }
+}
+
+/**
+ * Affinage du juge vision (17/08/2026 soir, jobs 124-125 ATHOS : le juge a
+ * refusé le BON rendu — faux comptage « 7 lames au lieu de 10 » — et retenu le
+ * MAUVAIS — lame traversant les piliers, invisible pour le contrôle « sommet
+ * seul » du gabarit). Juge scène : jamais de refus sur un COMPTAGE de lames,
+ * jugement à l'ÉCHELLE (épaisseur d'une lame vs hauteur). Juge gabarit : du
+ * portail visible DANS le magenta d'un pilier = pilier non conforme (le pilier
+ * doit être un bloc de maçonnerie ininterrompu). Même garde anti hot-reload.
+ */
+function seedJugeAffine(db: Database.Database): void {
+  const cibles = [
+    { name: 'juge-mes', marqueur: 'slat COUNT' },
+    { name: 'juge-mes-gabarit', marqueur: 'INSIDE the magenta pillar' },
+  ]
+  for (const { name, marqueur } of cibles) {
+    const actif = db
+      .prepare('SELECT version, content FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1')
+      .get(name) as { version: number; content: string } | undefined
+    if (!actif || actif.content.includes(marqueur)) continue
+    const file = PROMPT_FILES[name]
+    if (!file) continue
+    const filePath = path.join(config.promptSystemDir, file)
+    if (!fs.existsSync(filePath)) continue
+    const contenu = fs.readFileSync(filePath, 'utf8')
+    if (!contenu.includes(marqueur)) continue
+    db.prepare(
+      'INSERT INTO prompts (name, version, content, comment, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      actif.version + 1,
+      contenu,
+      name === 'juge-mes'
+        ? 'Jamais de refus sur un comptage de lames — jugement à l’échelle (17/08/2026, faux refus job 124)'
+        : 'Portail visible dans le magenta d’un pilier = non conforme (17/08/2026, faux accept job 125)',
+      'seed'
+    )
+  }
+}
+
+/**
+ * Ombres expliquées + queue neutralisée (17/08/2026 tard, gammes msxr9qso et
+ * msxrig10) : les dégradés d'ombre ajoutés au plan n'étaient PAS déclarés dans
+ * le prompt, et la v16 parlait d'« un bras sombre fin » — Nano matérialisait
+ * des BARRES partout où il voyait du sombre (jusqu'à une barre à GAUCHE, où il
+ * n'y a aucune queue). v17 : les dégradés sont déclarés comme OMBRES PORTÉES
+ * des piliers (jamais des objets), la queue est décrite de façon neutre
+ * (« reproduis ce qui dépasse tel que dessiné ») et tout ajout de barre non
+ * dessinée est interdit des deux côtés. Même garde anti hot-reload.
+ */
+function seedOmbresExpliquees(db: Database.Database): void {
+  const marqueur = 'CAST SHADOWS'
+  const noms = ['terminus-decor-autour']
+  for (const name of noms) {
+    const actif = db
+      .prepare('SELECT version, content FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1')
+      .get(name) as { version: number; content: string } | undefined
+    if (!actif || actif.content.includes(marqueur)) continue
+    const file = PROMPT_FILES[name]
+    if (!file) continue
+    const filePath = path.join(config.promptSystemDir, file)
+    if (!fs.existsSync(filePath)) continue
+    const contenu = fs.readFileSync(filePath, 'utf8')
+    if (!contenu.includes(marqueur)) continue
+    db.prepare(
+      'INSERT INTO prompts (name, version, content, comment, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      actif.version + 1,
+      contenu,
+      'Ombres des piliers déclarées (jamais des objets) + queue neutre + interdit d’ajouter des barres non dessinées (17/08/2026)',
       'seed'
     )
   }

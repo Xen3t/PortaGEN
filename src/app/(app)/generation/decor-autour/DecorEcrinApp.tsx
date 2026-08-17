@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import MesDecorsManager, { type MesDecor } from '@/components/MesDecorsManager'
+import BibliothequeDecors, { type MesDecor } from '@/components/BibliothequeDecors'
+import { CANONICAL_COLORIS, colorisDef } from '@/lib/catalogue/colorisPalette'
 import { parseProduitFromFileName, parseSizeFromProductName } from '@/lib/productName'
 import { PictoIllu } from '../../Silhouette'
 
@@ -96,6 +97,9 @@ interface Item {
   description?: string
   /** D'où vient la description : réutilisée ou fraîchement décrite. */
   descriptionSource?: 'bibliotheque' | 'vision'
+  /** D'où vient le coloris (18/08) : jeton du nom de fichier, mesure couleur
+   *  du PNG détouré, correction manuelle — ou défaut aveugle (avant mesure). */
+  colorisSource?: 'nom' | 'defaut' | 'mesure' | 'manuel'
   /** Prompt COMPLET réellement envoyé à Nano (résultat du job). */
   promptFinal?: string
   /** Rendu tombé EN DIRECT (pas restauré au reload) : la case le dévoile
@@ -108,8 +112,11 @@ interface Item {
    *  Absent = suivre la dernière version prête. Persisté dans le manifeste. */
   chosenJobId?: number
   /** Phase du job EN COURS (17/08) : 'harmonisation-ral' pendant la passe
-   *  RALify post-MES — la case l'affiche à la place de « Génération ». */
+   *  RALify post-MES, 'juge-vision' pendant le verdict ou entre deux essais de
+   *  la boucle du juge — la case l'affiche à la place de « Génération ». */
   phase?: string
+  /** Essai courant de la boucle du juge (1-3) quand phase = 'juge-vision'. */
+  jugeEssai?: number
 }
 
 interface JobRow {
@@ -119,7 +126,15 @@ interface JobRow {
   /** payload.productPath raccroche les jobs aux images du lot ; rootJobId
    *  raccroche les retours « mes-fix » à leur version d'origine ; phase =
    *  étape en cours posée par le pipeline ('harmonisation-ral'). */
-  payload: { productPath?: string; rootJobId?: number; instruction?: string; phase?: string } | null
+  payload: {
+    productPath?: string
+    rootJobId?: number
+    instruction?: string
+    phase?: string
+    /** Boucle du juge : drapeau posé au lancement + numéro d'essai (1-3). */
+    juge?: boolean
+    jugeEssai?: number
+  } | null
   result: {
     deliveryPath?: string
     planPath?: string
@@ -130,6 +145,9 @@ interface JobRow {
     juge?: { acceptee?: boolean; motif?: string; essai?: number; erreur?: string }
   } | null
   error: string | null
+  /** Horodatage SQLite UTC (« YYYY-MM-DD HH:MM:SS ») de la dernière écriture —
+   *  sert de garde-fou : une attente de verdict trop vieille n'attend plus. */
+  updatedAt?: string
 }
 
 // —————————————————————————————————————————————— versions d'une case
@@ -166,15 +184,50 @@ function appliquerVersions(it: Item, jobs: JobRow[]): Item {
   const choisie = it.chosenJobId ? pretes.find((j) => j.id === it.chosenJobId) : undefined
   const affichee = choisie ?? (pretes.length ? pretes[pretes.length - 1] : undefined)
   const enCours = versions.some((j) => j.status === 'queued' || j.status === 'running')
-  if (enCours) {
+  // BOUCLE DU JUGE OUVERTE (17/08 soir, règle Mathias : le juge est un DÉLÉGUÉ,
+  // on ne montre rien tant qu'il travaille) : le verdict s'écrit APRÈS le
+  // passage du job à done (10-20 s de vision) et la relance n'est créée
+  // qu'après un refus — pendant ces trous, plus rien n'est queued/running alors
+  // que la boucle n'a pas conclu. Sans cette attente, le polling mourait dans
+  // le trou (page figée sans verdicts, session banc-msxmzlbt) et ↻ redevenait
+  // cliquable en plein travail du juge (double génération). Erreur du juge =
+  // verdict {erreur} écrit → boucle close. Garde-fou : une attente de plus de
+  // 3 min (serveur redémarré entre done et verdict) rend la main au lieu de
+  // bloquer la case pour toujours.
+  const derniereRacine = racines.length ? racines[racines.length - 1] : undefined
+  const fraicheEnBase =
+    !!derniereRacine?.updatedAt &&
+    Date.now() - Date.parse(derniereRacine.updatedAt.replace(' ', 'T') + 'Z') < 3 * 60_000
+  const attenteVerdict =
+    derniereRacine?.status === 'done' &&
+    derniereRacine.payload?.juge === true &&
+    !derniereRacine.result?.juge &&
+    fraicheEnBase
+  const attenteRelance =
+    derniereRacine?.status === 'done' &&
+    derniereRacine.result?.juge?.acceptee === false &&
+    (derniereRacine.result.juge.essai ?? 1) < 3 &&
+    fraicheEnBase
+  const boucleJuge =
+    attenteVerdict ||
+    attenteRelance ||
+    versions.some(
+      (j) => (j.status === 'queued' || j.status === 'running') && j.payload?.juge === true
+    )
+  if (enCours || boucleJuge) {
     const active = versions.find((j) => j.status === 'running')
     return {
       ...it,
       jobId,
-      status: active ? 'running' : 'queued',
-      // Phase du job actif (17/08) : « Harmonisation RAL » pendant la passe finale.
-      phase: active?.payload?.phase,
-      deliveryPath: affichee?.result?.deliveryPath ?? it.deliveryPath,
+      status: active || attenteVerdict || attenteRelance ? 'running' : 'queued',
+      // Phase du job actif (17/08) : « Harmonisation RAL » pendant la passe
+      // finale, « Juge vision » pendant le verdict / entre deux essais.
+      phase: attenteVerdict || attenteRelance ? 'juge-vision' : active?.payload?.phase,
+      jugeEssai:
+        attenteVerdict || attenteRelance ? (derniereRacine?.payload?.jugeEssai ?? 1) : undefined,
+      // Boucle ouverte : la case garde son visuel d'avant (plan gris en 1ʳᵉ
+      // génération) — les essais refusés ne se dévoilent qu'à la conclusion.
+      deliveryPath: boucleJuge ? it.deliveryPath : (affichee?.result?.deliveryPath ?? it.deliveryPath),
       error: undefined,
     }
   }
@@ -225,7 +278,9 @@ function imgUrl(p: string, w?: number): string {
 /** Coloris lu dans le nom de fichier. Les coloris AJOUTÉS à la palette
  *  (Admin → Réglages → RALify, 07/08) sont reconnus en premier — sinon un
  *  « Beige » retomberait sur Gris et sa règle RALify ne jouerait jamais. */
-function parseColoris(name: string, palette: string[] = []): string {
+/** Coloris lu dans le NOM seulement — null si aucun jeton (18/08 : plus de
+ *  « Gris » silencieux, la mesure couleur du PNG prend le relais au dépôt). */
+function parseColoris(name: string, palette: string[] = []): string | null {
   const up = name.toUpperCase()
   for (const label of palette) {
     if (label && up.includes(label.toUpperCase())) return label
@@ -233,7 +288,7 @@ function parseColoris(name: string, palette: string[] = []): string {
   if (/WHITE|BLANC/.test(up)) return 'Blanc'
   if (/BLACK|NOIR|9005/.test(up)) return 'Noir'
   if (/TECK|TEAK|BOIS/.test(up)) return 'Teck'
-  return 'Gris'
+  return null
 }
 
 // —————————————————————————————————————————————— comparateur avant/après
@@ -759,6 +814,9 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
         sansTaille.push(f.name)
         continue
       }
+      // Coloris : jeton du nom d'abord ; sans jeton, « Gris » provisoire — la
+      // MESURE COULEUR du PNG détouré (réponse /upload) le remplacera (18/08).
+      const colorisNom = parseColoris(f.name, paletteColoris)
       valides.push({
         file: f,
         item: {
@@ -766,7 +824,8 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
           name: f.name,
           w: size.w,
           h: size.h,
-          coloris: parseColoris(f.name, paletteColoris),
+          coloris: colorisNom ?? 'Gris',
+          colorisSource: colorisNom ? ('nom' as const) : ('defaut' as const),
           status: 'detour',
           localUrl: URL.createObjectURL(f),
           groupe: 0, // posé juste après (un seul n° pour tout le dépôt)
@@ -844,11 +903,24 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
           return
         }
         if (annulee(v.item.key, d1.productPath)) return
+        // Coloris DÉFINITIF de l'image (18/08) : le jeton du nom fait foi ;
+        // sans jeton, la MESURE COULEUR du serveur remplace le « Gris »
+        // provisoire — c'est ce coloris-là qui part au RALify, à la
+        // description et à la pose (v.item est un instantané, ne plus s'y fier).
+        let coloris = v.item.coloris
+        if (v.item.colorisSource === 'defaut' && typeof d1?.colorisMesure?.label === 'string') {
+          coloris = d1.colorisMesure.label
+        }
         // 2/4 — RALify (le serveur ne touche à rien si la cible est nulle)
         patchItem(v.item.key, {
           status: 'ralify',
           productPath: d1.productPath,
           originalPath: typeof d1.originalPath === 'string' ? d1.originalPath : undefined,
+          coloris,
+          colorisSource:
+            v.item.colorisSource === 'defaut' && typeof d1?.colorisMesure?.label === 'string'
+              ? ('mesure' as const)
+              : v.item.colorisSource,
         })
         const r2 = await fetch('/api/banc-generation/ralify', {
           method: 'POST',
@@ -858,7 +930,7 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
             moteur: effTypo,
             productPath: d1.productPath,
             name: v.file.name,
-            coloris: v.item.coloris,
+            coloris,
           }),
         })
         const d2 = await r2.json().catch(() => null)
@@ -873,7 +945,7 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
           status: 'descr',
           ralifyPath: typeof d2?.ralifyPath === 'string' ? d2.ralifyPath : undefined,
         })
-        const cle = `${parseProduitFromFileName(v.file.name) || v.file.name}|${v.item.coloris}|${effTypo}`
+        const cle = `${parseProduitFromFileName(v.file.name) || v.file.name}|${coloris}|${effTypo}`
         let attente = descPartagees.get(cle)
         if (!attente) {
           attente = (async () => {
@@ -885,7 +957,7 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                 moteur: effTypo,
                 productPath: d1.productPath,
                 name: v.file.name,
-                coloris: v.item.coloris,
+                coloris,
               }),
             })
             const d25 = await r25.json().catch(() => null)
@@ -916,7 +988,7 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
             w: v.item.w,
             h: v.item.h,
             name: v.file.name,
-            coloris: v.item.coloris,
+            coloris,
             produit: effProduit,
             groupe: v.item.groupe,
             originalPath: d1.originalPath ?? null,
@@ -1250,6 +1322,130 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
     }
   }
 
+  // —— CORRECTION COLORIS (18/08, demande Mathias : « afficher/corriger le
+  // coloris ») : sur une case PRÊTE (pas encore générée), changer le coloris
+  // redéroule RALify → description → pose — les mêmes étapes que le dépôt, la
+  // case affiche chaque étape. Un ATHOS teck classé « Gris » repart donc avec
+  // son PNG non-RALifié et sa bonne fiche produit.
+  async function changerColoris(it: Item, nouveau: string) {
+    if (!it.productPath || !lotId || it.status !== 'ready' || it.jobId || nouveau === it.coloris)
+      return
+    const patchItem = (key: string, patch: Partial<Item>) =>
+      setItems((cur) => cur.map((i) => (i.key === key ? { ...i, ...patch } : i)))
+    patchItem(it.key, { coloris: nouveau, colorisSource: 'manuel', status: 'ralify' })
+    const json = { 'Content-Type': 'application/json' }
+    try {
+      const r2 = await fetch('/api/banc-generation/ralify', {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({
+          lot: lotId,
+          moteur: typo,
+          productPath: it.productPath,
+          name: it.name,
+          coloris: nouveau,
+        }),
+      })
+      const d2 = await r2.json().catch(() => null)
+      if (!r2.ok) throw new Error(d2?.error ?? 'échec RALify')
+      patchItem(it.key, {
+        status: 'descr',
+        ralifyPath: typeof d2?.ralifyPath === 'string' ? d2.ralifyPath : undefined,
+      })
+      const r25 = await fetch('/api/banc-generation/description', {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({
+          lot: lotId,
+          moteur: typo,
+          productPath: it.productPath,
+          name: it.name,
+          coloris: nouveau,
+        }),
+      })
+      const d25 = await r25.json().catch(() => null)
+      if (!r25.ok || typeof d25?.description !== 'string')
+        throw new Error(d25?.error ?? 'échec de la description produit')
+      patchItem(it.key, {
+        status: 'pose',
+        description: d25.description,
+        descriptionSource: d25.source === 'bibliotheque' ? 'bibliotheque' : 'vision',
+      })
+      const r3 = await fetch('/api/banc-generation/pose', {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({
+          lot: lotId,
+          moteur: typo,
+          productPath: it.productPath,
+          ralifyPath: d2?.ralifyPath ?? null,
+          w: it.w,
+          h: it.h,
+          name: it.name,
+          coloris: nouveau,
+          produit: produitDe(it),
+          groupe: it.groupe,
+          originalPath: it.originalPath ?? null,
+        }),
+      })
+      const d3 = await r3.json().catch(() => null)
+      if (!r3.ok || typeof d3?.planPath !== 'string') throw new Error(d3?.error ?? 'échec de la pose')
+      patchItem(it.key, {
+        status: 'ready',
+        planPath: d3.planPath,
+        planBrutPath: d3.planBrutPath ?? undefined,
+      })
+    } catch (e) {
+      patchItem(it.key, {
+        status: 'error',
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
+  // —— ÉDITION MANUELLE de la description produit (18/08, demande Mathias) :
+  // le texte édité est enregistré dans la BIBLIOTHÈQUE (clé produit+coloris+
+  // moteur, origine « manuel ») — toutes les cases de la clé et toutes les
+  // prochaines générations le réutilisent. null = éditeur fermé.
+  const [editDesc, setEditDesc] = useState<string | null>(null)
+  const [editDescBusy, setEditDescBusy] = useState(false)
+  async function enregistrerDescription(it: Item) {
+    if (editDesc === null || !editDesc.trim() || !lotId || editDescBusy) return
+    setEditDescBusy(true)
+    try {
+      const res = await fetch('/api/banc-generation/description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lot: lotId,
+          moteur: typo,
+          productPath: it.productPath,
+          name: it.name,
+          coloris: it.coloris,
+          description: editDesc.trim(),
+        }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || typeof data?.description !== 'string') {
+        setNotice(data?.error ?? 'Enregistrement impossible.')
+        return
+      }
+      const cle = `${parseProduitFromFileName(it.name) || it.name}|${it.coloris}`
+      setItems((cur) =>
+        cur.map((x) =>
+          `${parseProduitFromFileName(x.name) || x.name}|${x.coloris}` === cle
+            ? { ...x, description: data.description, descriptionSource: 'bibliotheque' as const }
+            : x
+        )
+      )
+      setEditDesc(null)
+    } catch {
+      setNotice('Impossible de contacter le serveur.')
+    } finally {
+      setEditDescBusy(false)
+    }
+  }
+
   // — poll du lot tant que des jobs tournent (générations, retours… et les
   //   déclinaisons Marketplace, qui ne passent pas par le statut des cases) —
   const active =
@@ -1288,6 +1484,7 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
   useEffect(() => {
     setVerJobId(null)
     setInstruction('')
+    setEditDesc(null)
   }, [lightbox])
 
   // Vue en grand ouverte = la page derrière ne défile plus (08/08, demande
@@ -1832,6 +2029,52 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                                 />
                               </span>
                             )}
+                            {/* COLORIS détecté (18/08, demande Mathias) : pastille +
+                                libellé ; corrigeable au select tant que la case est
+                                prête (la correction redéroule RALify → description →
+                                pose). Provenance au survol. */}
+                            {it.coloris && (
+                              <span
+                                title={
+                                  it.colorisSource === 'nom'
+                                    ? 'Coloris lu dans le nom du fichier'
+                                    : it.colorisSource === 'mesure'
+                                      ? 'Coloris MESURÉ sur l’image (aucun jeton dans le nom) — à vérifier'
+                                      : it.colorisSource === 'manuel'
+                                        ? 'Coloris corrigé à la main'
+                                        : it.colorisSource === 'defaut'
+                                          ? 'Coloris par défaut (aucun jeton dans le nom, mesure indisponible)'
+                                          : undefined
+                                }
+                                className="shrink-0 inline-flex items-center gap-1.5 border border-border bg-white rounded-[8px] px-1.5 py-[2px] text-[11px] font-bold text-text-secondary"
+                              >
+                                <span
+                                  className="inline-block w-2.5 h-2.5 rounded-full border border-border"
+                                  style={{ backgroundColor: colorisDef(it.coloris)?.swatch ?? '#9ca3af' }}
+                                />
+                                {it.status === 'ready' && !it.jobId && it.productPath ? (
+                                  <select
+                                    value={it.coloris}
+                                    onChange={(e) => void changerColoris(it, e.target.value)}
+                                    className="bg-transparent outline-none cursor-pointer font-bold"
+                                  >
+                                    {Array.from(
+                                      new Set([
+                                        ...CANONICAL_COLORIS.map((c) => c.label),
+                                        ...paletteColoris.filter(Boolean),
+                                        it.coloris,
+                                      ])
+                                    ).map((c) => (
+                                      <option key={c} value={c}>
+                                        {c}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  it.coloris
+                                )}
+                              </span>
+                            )}
                             <div className="flex-1" />
                             {/* Vrais petits boutons bordés (demande Mathias 07/08 :
                                 on doit COMPRENDRE que ce sont des boutons). */}
@@ -1896,7 +2139,11 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                               >
                                 {it.status === 'running' ? (
                                   <>
-                                    {it.phase === 'harmonisation-ral' ? 'Harmonisation RAL' : 'Génération'}
+                                    {it.phase === 'harmonisation-ral'
+                                      ? 'Harmonisation RAL'
+                                      : it.phase === 'juge-vision'
+                                        ? `Juge vision (essai ${it.jugeEssai ?? 1}/3)`
+                                        : 'Génération'}
                                     <Dots />
                                   </>
                                 ) : it.status === 'queued' ? (
@@ -1960,9 +2207,11 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
         )}
       </div>
 
-      {/* GÉRER LES DÉCORS (08/08) : modale ouverte à TOUS les utilisateurs —
-          création/édition collectives ; défaut et suppression admin (boutons
-          masqués sinon, l'API vérifie aussi). */}
+      {/* GÉRER LES DÉCORS : modale ouverte à TOUS les utilisateurs — depuis le
+          17/08 c'est la BIBLIOTHÈQUE (cartes + aperçus 1K + recherche +
+          création en une phrase + consigne, maquette bibliotheque-decors-v1),
+          intégrée ICI à la demande de Mathias (pas de page dédiée, pas d'entrée
+          de nav). Défaut et suppression admin (l'API vérifie aussi). */}
       {gererDecors && (
         <div
           className="fixed inset-0 bg-[rgba(31,41,55,0.45)] z-50 flex items-center justify-center p-6"
@@ -1970,9 +2219,9 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
             if (e.target === e.currentTarget) setGererDecors(false)
           }}
         >
-          <div className="bg-white rounded-[12px] shadow-lg w-[860px] max-w-full max-h-[85vh] overflow-y-auto p-5">
+          <div className="bg-white rounded-[12px] shadow-lg w-[980px] max-w-full max-h-[88vh] overflow-y-auto p-5">
             <div className="flex items-center gap-3 mb-3">
-              <h2 className="text-[17px] font-bold">Gérer les décors</h2>
+              <h2 className="text-[17px] font-bold">Décors</h2>
               <div className="flex-1" />
               <button
                 onClick={() => setGererDecors(false)}
@@ -1981,7 +2230,14 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                 ✕ Fermer
               </button>
             </div>
-            <MesDecorsManager isAdmin={isAdmin} onDecorsChange={setDecors} />
+            <BibliothequeDecors
+              isAdmin={isAdmin}
+              onDecorsChange={setDecors}
+              onUtiliser={(id) => {
+                setDecorId(id)
+                setGererDecors(false)
+              }}
+            />
           </div>
         </div>
       )}
@@ -2367,22 +2623,60 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                           : '(vision)'
                         : ''}
                     </summary>
-                    {it.description ? (
+                    {/* ÉDITION MANUELLE (18/08, demande Mathias) : le texte
+                        édité écrase l'entrée de la bibliothèque (origine
+                        « manuel ») et se diffuse à toutes les cases de la clé
+                        et aux prochaines générations. */}
+                    {editDesc !== null ? (
+                      <>
+                        <textarea
+                          value={editDesc}
+                          onChange={(e) => setEditDesc(e.target.value)}
+                          className="w-full mt-2 rounded-[8px] bg-white/95 text-text-primary text-[12px] p-2 resize-y min-h-[120px]"
+                        />
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => void enregistrerDescription(it)}
+                            disabled={editDescBusy || !editDesc.trim()}
+                            className="bg-brand-green hover:bg-brand-green-hover text-white font-bold text-[12px] rounded-[8px] px-3 py-1.5 disabled:opacity-50"
+                          >
+                            {editDescBusy ? 'Enregistrement…' : 'Enregistrer'}
+                          </button>
+                          <button
+                            onClick={() => setEditDesc(null)}
+                            className="bg-white/15 hover:bg-white/25 text-white font-bold text-[12px] rounded-[8px] px-3 py-1.5"
+                          >
+                            Annuler
+                          </button>
+                        </div>
+                      </>
+                    ) : it.description ? (
                       <p className="whitespace-pre-wrap mt-2 leading-relaxed">{it.description}</p>
                     ) : (
                       <p className="mt-2 text-white/60">
                         Pas de description chargée pour cette case (dépôt antérieur ou page rechargée).
                       </p>
                     )}
-                    {it.productPath && (
-                      <button
-                        onClick={() => void forcerVision(it)}
-                        disabled={visionBusy}
-                        title="Ignore la bibliothèque : nouvel appel vision, l'entrée est écrasée"
-                        className="mt-2.5 bg-white/15 hover:bg-white/25 text-white font-bold text-[12px] rounded-[8px] px-3 py-1.5 disabled:opacity-50"
-                      >
-                        {visionBusy ? 'Vision en cours…' : 'Forcer la vision (redécrire)'}
-                      </button>
+                    {it.productPath && editDesc === null && (
+                      <div className="mt-2.5 flex gap-2">
+                        {it.description && (
+                          <button
+                            onClick={() => setEditDesc(it.description ?? '')}
+                            title="Corriger le texte à la main — enregistré en bibliothèque, réutilisé par toutes les prochaines générations"
+                            className="bg-white/15 hover:bg-white/25 text-white font-bold text-[12px] rounded-[8px] px-3 py-1.5"
+                          >
+                            Éditer
+                          </button>
+                        )}
+                        <button
+                          onClick={() => void forcerVision(it)}
+                          disabled={visionBusy}
+                          title="Ignore la bibliothèque : nouvel appel vision, l'entrée est écrasée"
+                          className="bg-white/15 hover:bg-white/25 text-white font-bold text-[12px] rounded-[8px] px-3 py-1.5 disabled:opacity-50"
+                        >
+                          {visionBusy ? 'Vision en cours…' : 'Forcer la vision (redécrire)'}
+                        </button>
+                      </div>
                     )}
                   </details>
                   {it.promptFinal && (

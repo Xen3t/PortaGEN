@@ -27,9 +27,25 @@ export interface DescriptionProduitResult {
   model: string
 }
 
-export async function decrireProduit(png: Buffer): Promise<DescriptionProduitResult> {
+/** Complément COULISSANT (18/08/2026, chaos EIGER 300×160 jobs 149-153) : le
+ *  gabarit d'usine impose « one leaf or two leaves » — un coulissant à montant
+ *  central devenait « Two leaves », en contradiction frontale avec le prompt
+ *  terminus (« ONE panel, never two leaves ») : Nano tranchait au hasard
+ *  (moitié de portail supprimée, deux portails, montant gommé). La fiche ATHOS
+ *  TECK renforcée à la main (« structural member of this same single panel »)
+ *  prouvait déjà le bon format. Ajouté APRÈS le gabarit (réglé ou d'usine) :
+ *  la règle produit vaut quel que soit le texte édité dans l'Admin. */
+const ADDENDUM_COULISSANT = `
+
+ADDENDUM — this product is a SLIDING gate: it is ALWAYS "One leaf" — ONE single continuous sliding panel, whatever the photo suggests. If a vertical frame bar divides the panel, describe it as a structural member of this same single panel and state its position PRECISELY as seen in the photo (e.g. "a vertical frame bar slightly right of centre, part of the same single panel") — NEVER as a second leaf, NEVER as a junction between two doors. Never write "two leaves".`
+
+export async function decrireProduit(
+  png: Buffer,
+  moteur?: string
+): Promise<DescriptionProduitResult> {
   const model = getVisionModel()
-  const prompt = getVisionTemplate() ?? PROMPT_DESCRIPTION_DEFAUT
+  const base = getVisionTemplate() ?? PROMPT_DESCRIPTION_DEFAUT
+  const prompt = moteur === 'terminus' ? base + ADDENDUM_COULISSANT : base
   const { text } = await generateText({
     prompt,
     images: [{ source: png, mimeType: 'image/png' }],
