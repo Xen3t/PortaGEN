@@ -5,6 +5,7 @@ import { requireApiUser } from '@/lib/auth/session'
 import { config } from '@/lib/config'
 import { cadrageDaEffectif } from '@/lib/cadrageDa'
 import { bancCadrage } from '@/lib/decorAutour'
+import { getMesDecor } from '@/lib/db/mesDecors'
 import { getProduitDescription } from '@/lib/db/produitDescriptions'
 import {
   createGenerationSession,
@@ -53,6 +54,9 @@ export async function POST(req: NextRequest) {
     imageSize?: string
     batchId?: string
     produit?: string
+    decorId?: number
+    /** true = regénération manuelle (↻) : jamais de juge (règle 17/08). */
+    regen?: boolean
   }
   try {
     body = await req.json()
@@ -72,6 +76,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Aucune image à générer.' }, { status: 400 })
   }
 
+  // Décor demandé (08/08) : validé ici — un id fantôme retomberait silencieusement
+  // sur le défaut dans le pipeline, autant le dire tout de suite.
+  let decorId: number | undefined
+  if (body.decorId !== undefined) {
+    decorId = Number(body.decorId)
+    if (!Number.isInteger(decorId) || !getMesDecor(decorId)) {
+      return NextResponse.json({ error: 'Décor introuvable.' }, { status: 400 })
+    }
+  }
+
   // Les chemins reviennent du client : on ne lance QUE des PNG déposés par
   // l'upload du banc (sous data/generation/banc-…) — anti-évasion de chemin.
   const genRoot = path.join(config.dataDir, 'generation')
@@ -80,7 +94,8 @@ export async function POST(req: NextRequest) {
   let premierProduit = ''
   // Réglages « Cadrage & scène » du moteur (07/08 soir) : pilotent bancCadrage
   // (réf./gabarit/bascule XL) et l'interrupteur bandes de sol.
-  const cadrage = cadrageDaEffectif(moteur.key, getMoteurDaReglages(moteur.key).cadrageDa)
+  const reglagesMoteur = getMoteurDaReglages(moteur.key)
+  const cadrage = cadrageDaEffectif(moteur.key, reglagesMoteur.cadrageDa)
   for (const it of body.items) {
     const w = Number(it.w)
     const h = Number(it.h)
@@ -131,6 +146,14 @@ export async function POST(req: NextRequest) {
       // Bandes de sol : réglage « Cadrage & scène » du moteur (défaut activé).
       bandesSol: cadrage.bandesSol,
       ...(produit ? { productName: produit } : {}),
+      // Décor choisi dans l'en-tête (08/08) — id validé plus haut ; absent =
+      // le pipeline prend le décor par défaut de la bibliothèque.
+      ...(decorId !== undefined ? { decorId } : {}),
+      // Juge vision (17/08) : réglage moteur `jugeMes` — le runner juge chaque
+      // rendu et relance une version en cas de refus (2 relances max).
+      // JAMAIS sur une regénération manuelle (règle Mathias 17/08 : « le juge
+      // c'est une fois au début, pas ensuite ») — le ↻ envoie regen:true.
+      ...(reglagesMoteur.jugeMes === 'on' && body.regen !== true ? { juge: true } : {}),
     },
   })
 

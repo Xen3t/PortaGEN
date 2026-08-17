@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import MesDecorsManager from '@/components/MesDecorsManager'
 
 /**
  * Réglages GÉNÉRAUX de l'application — universels, donc À PART des moteurs
@@ -12,7 +13,7 @@ import { useEffect, useState } from 'react'
  * image. « Tarif Gemini » supprimée le 05/08/2026 avec le LAB (demande Mathias).
  */
 
-export type AppRubrique = 'generations' | 'marquage' | 'serveur'
+export type AppRubrique = 'generations' | 'decors' | 'marquage' | 'serveur'
 
 function SubHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -387,6 +388,13 @@ export default function ReglagesApp() {
                 Enregistrer
               </button>
             </div>
+      </AppCard>
+
+      {/* DÉCORS des MES Contrainte (08/08) : MÊME bibliothèque que la modale
+          « Gérer les décors » de la page — exigence : tout réglage pilotable
+          depuis l'admin. Ici on est admin, donc défaut + suppression visibles. */}
+      <AppCard id="app-decors" title="Décors">
+        <MesDecorsManager isAdmin />
       </AppCard>
 
       <AppCard id="app-marquage" title="Marquage IA">

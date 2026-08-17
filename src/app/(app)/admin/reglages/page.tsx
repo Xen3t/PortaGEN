@@ -161,6 +161,9 @@ const MOTEUR_ANCHOR = (rub: MoteurRubrique) => `m-${rub}`
 
 const APP_RUBRIQUES: { rub: AppRubrique; label: string }[] = [
   { rub: 'generations', label: 'Générations & modèle' },
+  // Décors des MES Contrainte (08/08) : même bibliothèque que la modale
+  // « Gérer les décors » de la page — tout réglage reste pilotable en admin.
+  { rub: 'decors', label: 'Décors' },
   { rub: 'marquage', label: 'Marquage IA' },
   { rub: 'serveur', label: 'Serveur de fichiers' },
 ]
@@ -982,6 +985,10 @@ export default function MoteursPage() {
     // d'interrupteur) — un ancien « désactivé » en base se répare au 1ᵉʳ save.
     if (isDaKey(selected)) {
       body.ralify = { ...reglages.ralify, actif: true }
+      // La méthode d'un moteur décor autour est IMMUABLE ('decor-autour') et
+      // volontairement NON patchable côté API (protection des moteurs legacy) :
+      // l'envoyer faisait rejeter tout l'enregistrement (bug 17/08).
+      delete body.integrationMethod
     }
     // Ombre du pilier sur la lame : réglage PROPRE au coulissant (28/07/2026).
     if (selected === 'coulissant' && reglages.integrationMethod === 'pose-fusion') {
@@ -1060,6 +1067,13 @@ export default function MoteursPage() {
       name: `${selected}-decor-autour`,
       exact: true,
       label: `Décor autour — rendu complet (${PRODUIT_PAR_MOTEUR[legacySelected]} posé, Nano peint l’entrée)`,
+    },
+    // Juge vision (17/08) : PARTAGÉ entre les trois moteurs décor autour — les
+    // critères de refus (défauts flagrants seulement) s'éditent ici.
+    {
+      name: 'juge-mes',
+      exact: true,
+      label: 'Juge des MES — critères d’acceptation du rendu (partagé aux 3 moteurs)',
     },
   ]
   const promptDefs: { name: string; label: string; exact?: boolean }[] = isDa
@@ -1402,6 +1416,7 @@ export default function MoteursPage() {
                       onChange={(r) => setField('ralify', r)}
                       onPaletteChange={setColoris}
                       disabled={!reglages}
+                      avecApplication
                     />
                   </Card>
 
@@ -1661,6 +1676,22 @@ export default function MoteursPage() {
                         <span className="inline-block bg-surface border border-border rounded-[8px] px-3 py-2 text-sm text-text-secondary">
                           1 — les variantes passent par les versions
                         </span>
+                      </div>
+                      {/* Juge vision (17/08) : chaque rendu est jugé (produit
+                          intact, échelle, scène) — refus flagrant = relance
+                          automatique d'une version, 2 relances max. Critères :
+                          prompt « Juge des MES » de la carte Prompt System. */}
+                      <div>
+                        <FieldLabel>Juge vision (relance auto, 2 max)</FieldLabel>
+                        <Seg
+                          value={reglages?.jugeMes ?? 'off'}
+                          options={[
+                            { value: 'on', label: 'Activé' },
+                            { value: 'off', label: 'Désactivé' },
+                          ]}
+                          onChange={(v) => setField('jugeMes', v)}
+                          disabled={!reglages}
+                        />
                       </div>
                       <div>
                         <FieldLabel>Déclinaison Marketplace (2000 × 2000)</FieldLabel>

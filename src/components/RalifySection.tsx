@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   RAL_CIBLES,
+  RALIFY_APPLICATION_DEFAUT,
   RALIFY_DEFAUTS,
   isHexColor,
   ralCibleLabel,
@@ -273,6 +274,7 @@ export default function RalifySection({
   onChange,
   onPaletteChange,
   disabled,
+  avecApplication = false,
 }: {
   moteur: MoteurKey
   value: RalifyReglages | null
@@ -281,6 +283,10 @@ export default function RalifySection({
   /** La palette de coloris (globale, /api/coloris) a changé — ajout/suppression. */
   onPaletteChange: (next: ColorisEntry[]) => void
   disabled: boolean
+  /** Moteurs MES Contrainte uniquement : choix du moment (avant / après
+   *  génération) SUR CHAQUE ligne de RAL (demande Mathias 17/08) — le legacy
+   *  ne connaît pas l'« après ». */
+  avecApplication?: boolean
 }) {
   const v = value ?? RALIFY_DEFAUTS
 
@@ -347,6 +353,7 @@ export default function RalifySection({
   const [testBusy, setTestBusy] = useState(false)
   const [test, setTest] = useState<TestResult | null>(null)
   const [testError, setTestError] = useState<string | null>(null)
+  const [modeleDetection, setModeleDetection] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -360,12 +367,18 @@ export default function RalifySection({
       .then((d) => {
         setProduits(d.produits ?? [])
         setServeurOk(d.serveurOk !== false)
+        setModeleDetection(typeof d.modeleDetection === 'string' ? d.modeleDetection : null)
       })
       .catch(() => setProduits([]))
   }, [moteur])
 
-  function setRegle(key: string, patch: Partial<{ traiter: boolean; cible: string | null }>) {
-    const cur = v.regles[key] ?? { traiter: false, cible: null }
+  function setRegle(
+    key: string,
+    patch: Partial<{ traiter: boolean; cible: string | null; application: { avant: boolean; apres: boolean } }>
+  ) {
+    const cur =
+      v.regles[key] ??
+      ({ traiter: false, cible: null, application: { ...RALIFY_APPLICATION_DEFAUT } } as const)
     onChange({ ...v, regles: { ...v.regles, [key]: { ...cur, ...patch } } })
   }
 
@@ -448,7 +461,10 @@ export default function RalifySection({
       </div>
       <div className="space-y-2">
         {coloris.map((c) => {
-          const regle = v.regles[c.key] ?? { traiter: false, cible: null }
+          const regle =
+            v.regles[c.key] ??
+            ({ traiter: false, cible: null, application: { ...RALIFY_APPLICATION_DEFAUT } } as const)
+          const appli = regle.application ?? RALIFY_APPLICATION_DEFAUT
           const teck = c.key === 'teck'
           const defaut = cibleSuggestion(c.key, c.swatch)
           // La pastille montre CE QUI SORTIRA : la cible quand on corrige,
@@ -483,6 +499,39 @@ export default function RalifySection({
                 }
                 title={regle.traiter ? 'Corrigé vers le RAL — cliquer pour laisser tel quel' : 'Laissé tel quel — cliquer pour corriger vers le RAL'}
               />
+              {/* Application PAR RAL (demande Mathias 17/08) : quand corriger CE
+                  coloris — avant la génération (PNG produit) et/ou après (alu
+                  harmonisé sur la MES). MES Contrainte uniquement. */}
+              {avecApplication && regle.traiter && (
+                <span className="flex items-center gap-4 pl-3 border-l border-border text-xs text-text-secondary">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={appli.avant}
+                      disabled={disabled}
+                      onChange={(e) =>
+                        setRegle(c.key, { application: { ...appli, avant: e.target.checked } })
+                      }
+                      title="Corriger le PNG produit avant l'envoi à Nano"
+                      className="accent-brand-green w-3.5 h-3.5"
+                    />
+                    Avant la génération
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={appli.apres}
+                      disabled={disabled}
+                      onChange={(e) =>
+                        setRegle(c.key, { application: { ...appli, apres: e.target.checked } })
+                      }
+                      title="Harmoniser l'aluminium vers ce RAL sur la MES générée (détection du produit + recoloration)"
+                      className="accent-brand-green w-3.5 h-3.5"
+                    />
+                    Après la génération
+                  </label>
+                </span>
+              )}
               {c.custom && (
                 <button
                   type="button"
@@ -628,7 +677,13 @@ export default function RalifySection({
             onClick={() =>
               setForm({
                 index: null,
-                ex: { contient: '', coloris: null, traiter: true, cible: '#434a50' },
+                ex: {
+                  contient: '',
+                  coloris: null,
+                  traiter: true,
+                  cible: '#434a50',
+                  application: { ...RALIFY_APPLICATION_DEFAUT },
+                },
               })
             }
             className="w-full border border-dashed border-border rounded-[8px] px-3.5 py-2 text-sm font-bold text-brand-green hover:border-brand-green transition-colors disabled:opacity-50"
@@ -699,6 +754,56 @@ export default function RalifySection({
                 disabled={false}
                 onChange={(hex) => setForm({ ...form, ex: { ...form.ex, cible: hex } })}
               />
+            </div>
+          )}
+          {/* Application par exception (17/08) — même choix que sur les lignes. */}
+          {avecApplication && form.ex.traiter && (
+            <div>
+              <span className="block text-xs font-medium text-text-secondary mb-1.5">
+                Application
+              </span>
+              <span className="flex items-center gap-4 text-xs text-text-secondary py-2">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(form.ex.application ?? RALIFY_APPLICATION_DEFAUT).avant}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        ex: {
+                          ...form.ex,
+                          application: {
+                            ...(form.ex.application ?? RALIFY_APPLICATION_DEFAUT),
+                            avant: e.target.checked,
+                          },
+                        },
+                      })
+                    }
+                    className="accent-brand-green w-3.5 h-3.5"
+                  />
+                  Avant la génération
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={(form.ex.application ?? RALIFY_APPLICATION_DEFAUT).apres}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        ex: {
+                          ...form.ex,
+                          application: {
+                            ...(form.ex.application ?? RALIFY_APPLICATION_DEFAUT),
+                            apres: e.target.checked,
+                          },
+                        },
+                      })
+                    }
+                    className="accent-brand-green w-3.5 h-3.5"
+                  />
+                  Après la génération
+                </label>
+              </span>
             </div>
           )}
           <button
@@ -874,6 +979,21 @@ export default function RalifySection({
       <p className="text-[11px] text-text-disabled mt-3">
         À chaque génération, le PNG corrigé est ajouté aux artefacts de contrôle du job
         (« 0-produit-ralify »).
+        {avecApplication && (
+          <>
+            {' '}
+            « Après la génération » : le produit est détecté dans la MES
+            {modeleDetection ? (
+              <>
+                {' '}par <span className="font-mono">{modeleDetection}</span>
+              </>
+            ) : (
+              ' par le modèle texte de l’app'
+            )}
+            , puis l’aluminium est harmonisé vers le RAL — la version corrigée devient la
+            livraison (« 4-livraison-ralify »), la brute est conservée.
+          </>
+        )}
       </p>
     </div>
   )

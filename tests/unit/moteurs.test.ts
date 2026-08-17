@@ -161,6 +161,21 @@ describe('prompts du moteur Coulissant « TERMINUS » (recherche 13/07/2026)', (
   })
 })
 
+describe('juge vision des MES (17/08/2026)', () => {
+  it('seed du prompt juge-mes : contrat JSON + biais « dans le doute, accepter »', async () => {
+    const { getActivePrompt } = await import('@/lib/db/prompts')
+    const db = getDb(':memory:')
+    const p = getActivePrompt('juge-mes', db).content
+    // Contrat de sortie lu par jugerMes (src/lib/genai/jugeMes.ts).
+    expect(p).toContain('"acceptee"')
+    expect(p).toContain('"motif"')
+    // Frilosité Mathias sur les IA vision : refus SEULEMENT sur défaut flagrant,
+    // dans le doute le juge accepte (un humain revoit toutes les images).
+    expect(p.toUpperCase()).toContain('IF IN DOUBT, ACCEPT')
+    expect(p.toUpperCase()).toContain('FLAGRANT')
+  })
+})
+
 describe('réglages moteur — invariance des défauts', () => {
   it('sans réglage en base, les défauts = comportements historiques du pipeline', () => {
     const db = getDb(':memory:')
@@ -182,17 +197,20 @@ describe('réglages moteur — invariance des défauts', () => {
       ombrePilierPct: 25, // ombre pilier→lame coulissant : dégradé 0→25 % sur 1,5× la largeur du pilier (profil Mathias 28/07)
       marketplace: 'choix', // case au lancement + bouton 1:1 (décision 13/07/2026)
       generationsParTaille: 3, // 3 générations par taille (demande Mathias 29/07/2026)
+      jugeMes: 'off', // juge vision désactivé par défaut (17/08/2026) — à activer dans l'admin
       livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
       // RALify (28/07/2026) : ACTIVÉ par défaut — validation Mathias du 28/07
       // (démos ARLBERG/EIGER), survit à une remise à zéro.
       ralify: {
         actif: true,
         intensite: 100,
+        // Application PAR RÈGLE (17/08/2026) : avant seul par défaut —
+        // l'« après » (harmonisation post-MES) s'active RAL par RAL dans l'admin.
         regles: {
-          gris: { traiter: true, cible: '#434a50' }, // RAL 7016
-          noir: { traiter: true, cible: '#0e0e10' }, // RAL 9005
-          blanc: { traiter: true, cible: '#f1f0ea' }, // RAL 9016 (décision 28/07)
-          teck: { traiter: false, cible: null }, // bois : pas de RAL
+          gris: { traiter: true, cible: '#434a50', application: { avant: true, apres: false } }, // RAL 7016
+          noir: { traiter: true, cible: '#0e0e10', application: { avant: true, apres: false } }, // RAL 9005
+          blanc: { traiter: true, cible: '#f1f0ea', application: { avant: true, apres: false } }, // RAL 9016 (décision 28/07)
+          teck: { traiter: false, cible: null, application: { avant: true, apres: false } }, // bois : pas de RAL
         },
         exceptions: [],
       },
@@ -234,6 +252,13 @@ describe('sanitizeMoteurReglages', () => {
     ).toEqual({ masking: 'pixel-lock', cannyPlacement: 'off' })
     expect(sanitizeMoteurReglages(null)).toEqual({})
     expect(sanitizeMoteurReglages('texte')).toEqual({})
+  })
+
+  it('juge vision (17/08/2026) : on/off seulement, tout le reste écarté', () => {
+    expect(sanitizeMoteurReglages({ jugeMes: 'on' })).toEqual({ jugeMes: 'on' })
+    expect(sanitizeMoteurReglages({ jugeMes: 'off' })).toEqual({ jugeMes: 'off' })
+    expect(sanitizeMoteurReglages({ jugeMes: true })).toEqual({})
+    expect(sanitizeMoteurReglages({ jugeMes: 'toujours' })).toEqual({})
   })
 
   it('accepte la méthode « pose-fusion » et ses réglages (chantier 17/07/2026)', () => {

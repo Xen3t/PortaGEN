@@ -9,8 +9,10 @@ import { construirePlanGris } from '@/lib/decorAutour'
 import { generateImage, type ImageSize } from '@/lib/genai/client'
 import { marquerImageIa } from '@/lib/images/marquage'
 import { appliquerRalify } from '@/lib/images/ralify'
-import { resolveRalifyCible } from '@/lib/ralify'
-import { getMoteurDaReglages, moteurDaPromptName, type MoteurDaKey } from '@/lib/moteursDa'
+import { appliquerRalifyPostMes } from '@/lib/images/ralifyPostMes'
+import { resolveRalifyDecision } from '@/lib/ralify'
+import { getMesDecor, getMesDecorDefaut } from '@/lib/db/mesDecors'
+import { MOTEURS_DA, getMoteurDaReglages, moteurDaPromptName, type MoteurDaKey } from '@/lib/moteursDa'
 import { sasCalculImage } from '@/lib/server/sasImages'
 import type { SizeCm } from '@/lib/geometry'
 
@@ -65,6 +67,12 @@ export interface DecorAutourStepOptions {
    * quincaillerie. Absente = phrase générique (produit tel que dans l'image).
    */
   productDescription?: string
+  /**
+   * DÉCOR choisi (bibliothèque mes_decors, 08/08) — son texte remplit {DECOR},
+   * ses images de référence sont jointes à l'appel Nano. Absent = décor par
+   * défaut de la bibliothèque.
+   */
+  decorId?: number
   /** Job existant (créé par le runner) — sinon la fonction crée le sien (scripts CLI) */
   jobId?: number
 }
@@ -128,11 +136,14 @@ export async function runDecorAutourStep(
     await fsp.mkdir(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
 
-    const ralifyCible = resolveRalifyCible(
+    // Décision RALify : cible + moments d'application PAR RÈGLE (17/08 —
+    // chaque RAL du tableau porte son « avant / après »).
+    const ralifyDecision = resolveRalifyDecision(
       moteur.ralify,
       `${opts.productName ?? ''} ${path.basename(opts.productPath)}`,
       opts.coloris
     )
+    const ralifyCible = ralifyDecision.cible
 
     // Phases 1-2 sous sas (07/08) : avec 20 jobs en vol, RALify + pose sharp
     // simultanés saturaient CPU/RAM du processus web (UI figée). Le sas les fait
@@ -140,8 +151,9 @@ export async function runDecorAutourStep(
     const { plan, planPath, produitBuffer } = await sasCalculImage(async () => {
       // 1. RALify (conservé — décision Mathias 05/08) : la teinte de la matière est
       //    ramenée au RAL cible du moteur AVANT la pose. null = ne pas toucher.
+      //    Depuis le 17/08 le moment est réglable, RAL par RAL (application avant/après).
       let produitPret: Buffer | string = opts.productPath
-      if (ralifyCible) {
+      if (ralifyCible && ralifyDecision.application.avant) {
         const ralify = await appliquerRalify(
           await fsp.readFile(opts.productPath),
           ralifyCible,
@@ -206,13 +218,53 @@ export async function runDecorAutourStep(
     } else if (productDesc) {
       prompt = `${prompt}\n\nTHE PRODUCT, factually (trust this and the input image):\n${productDesc}`
     }
+    // {DECOR} (08/08) : l'ambiance vient de la bibliothèque de décors — celui
+    // demandé par le lancement, sinon le décor par défaut. La règle « maison
+    // toujours vue de face » vit dans le texte FIGÉ du prompt, pas ici. Prompt
+    // antérieur sans {DECOR} (version active pas encore migrée) : son paragraphe
+    // ENVIRONMENT en dur reste tel quel, on n'ajoute rien (non-régression).
+    const decor = (opts.decorId !== undefined ? getMesDecor(opts.decorId) : undefined) ?? getMesDecorDefaut()
+    if (prompt.includes('{DECOR}')) {
+      // Version IA d'abord (réécriture LLM obligatoire, 08/08 soir) — repli sur
+      // le texte humain si la réécriture a échoué à l'enregistrement.
+      prompt = prompt.replaceAll(
+        '{DECOR}',
+        decor?.promptIa?.trim() ||
+          decor?.prompt.trim() ||
+          'A typical French residential suburb: a paved driveway and a tidy garden behind the entrance, a classic French detached house (pavillon) in the background. Wide clear blue sky, bright sunny daylight. Realistic materials, fine detail, photorealistic.'
+      )
+    }
     // COULISSANT (rodage 07/08, après échec des leviers texte sur la lecture
     // « battant ») : le PNG produit est joint en 2ᵉ image de RÉFÉRENCE — le
     // prompt terminus v5 désigne image 1 = plan à éditer, image 2 = le produit
     // exact (UN panneau). Approche « photo jointe » validée 5/5 sur les maisons
     // plausibles. Battant/portillon (recettes validées) : une seule image.
-    const images = [{ source: plan.buffer, mimeType: 'image/png' }]
+    const images: { source: Buffer; mimeType: string }[] = [
+      { source: plan.buffer, mimeType: 'image/png' },
+    ]
     if (moteurKey === 'terminus') images.push({ source: produitBuffer, mimeType: 'image/png' })
+    // Images de RÉFÉRENCE du décor (08/08) : jointes après le plan (et le produit
+    // pour le coulissant) — le prompt figé les cadre comme inspiration d'ambiance,
+    // jamais comme structure à copier. Seulement si le prompt actif connaît le
+    // système de décors ({DECOR}) : un vieux prompt ne saurait pas les cadrer.
+    if (promptRow.content.includes('{DECOR}') && decor) {
+      const MIME_REF: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+      }
+      for (const rel of decor.images) {
+        const full = path.resolve(config.rootDir, rel)
+        const mime = MIME_REF[path.extname(full).toLowerCase()]
+        if (!mime) continue
+        try {
+          images.push({ source: await fsp.readFile(full), mimeType: mime })
+        } catch {
+          // image de référence disparue : la génération part sans elle
+        }
+      }
+    }
     const generated = await generateImage({
       prompt,
       images,
@@ -231,13 +283,75 @@ export async function runDecorAutourStep(
         .jpeg(config.deliveryJpeg)
         .toBuffer()
     )
-    const deliveryPath = path.join(
+    let deliveryPath = path.join(
       dir,
       `3-livraison-${plan.planW}x${plan.planH}-${stamp}.jpg`
     )
     await fsp.writeFile(deliveryPath, delivery)
     // Le réencodage sharp repart de zéro côté métadonnées → on re-marque le livrable.
     await marquerImageIa(deliveryPath)
+
+    // 4 bis. RALify APRÈS génération (validé Mathias 17/08, gamme EIGER) :
+    // harmonisation de l'alu vers le RAL cible SUR la livraison — Nano dérive la
+    // teinte à chaque génération, cette passe réaligne la gamme. Jamais bloquant
+    // (échec détection = la livraison 3- reste le livrable). L'artefact 3- est
+    // conservé tel quel pour le contrôle avant/après.
+    let ralifyApres: {
+      avantHex: string
+      apresHex: string
+      boxPct: [number, number, number, number]
+      model: string
+    } | null = null
+    if (ralifyCible && ralifyDecision.application.apres) {
+      // Phase affichée par le banc (demande Mathias 17/08 : « Harmonisation
+      // RAL » à la place de « Génération » pendant la passe finale). Payload
+      // seulement — l'échec de cette écriture ne doit jamais bloquer le job.
+      try {
+        const row = db.prepare('SELECT payload FROM jobs WHERE id = ?').get(jobId) as
+          | { payload: string | null }
+          | undefined
+        const p = row?.payload ? (JSON.parse(row.payload) as Record<string, unknown>) : {}
+        p.phase = 'harmonisation-ral'
+        db.prepare(`UPDATE jobs SET payload = ?, updated_at = datetime('now') WHERE id = ?`).run(
+          JSON.stringify(p),
+          jobId
+        )
+      } catch {
+        // payload illisible : l'affichage de phase est décoratif, on continue
+      }
+      const def = MOTEURS_DA.find((m) => m.key === moteurKey)!
+      const produitEn =
+        def.lettre === 'C'
+          ? 'the aluminum sliding gate'
+          : def.lettre === 'P'
+            ? 'the aluminum pedestrian gate'
+            : 'the aluminum double swing gate'
+      const post = await appliquerRalifyPostMes({
+        scene: delivery,
+        cibleHex: ralifyCible,
+        intensitePct: moteur.ralify.intensite,
+        produitEn,
+        jobId,
+      })
+      if (post) {
+        const postJpeg = await sasCalculImage(() =>
+          sharp(post.image).jpeg(config.deliveryJpeg).toBuffer()
+        )
+        const postPath = path.join(
+          dir,
+          `4-livraison-ralify-${plan.planW}x${plan.planH}-${stamp}.jpg`
+        )
+        await fsp.writeFile(postPath, postJpeg)
+        await marquerImageIa(postPath)
+        deliveryPath = postPath
+        ralifyApres = {
+          avantHex: post.avantHex,
+          apresHex: post.apresHex,
+          boxPct: post.boxPct,
+          model: post.model,
+        }
+      }
+    }
 
     const result: DecorAutourStepResult = {
       jobId,
@@ -276,7 +390,11 @@ export async function runDecorAutourStep(
         },
         promptVersion: promptRow.version,
         ralifyCible,
+        // Harmonisation post-MES appliquée (17/08) — traçabilité avant/après.
+        ...(ralifyApres ? { ralifyApres } : {}),
         alphaReparePx: plan.alphaReparePx,
+        // Décor appliqué (08/08) — traçabilité dans la vue en grand / versions.
+        ...(decor ? { decorId: decor.id, decorName: decor.name } : {}),
       }),
       jobId
     )

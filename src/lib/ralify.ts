@@ -17,10 +17,29 @@
  * - intensité globale (100 % = teinte exactement au RAL cible).
  */
 
+/**
+ * Moments d'application, PAR RÈGLE (demande Mathias 17/08/2026 : « sur chaque
+ * RAL, pas un réglage général ») :
+ * - avant : correction du PNG produit AVANT l'envoi à Nano (comportement
+ *   historique, seul mode jusqu'au 17/08) ;
+ * - apres : harmonisation de l'aluminium SUR la MES générée (détection du
+ *   produit dans la scène + RALify à masque externe) — validé sur la gamme
+ *   EIGER full anthracite, moteurs décor autour uniquement.
+ */
+export interface RalifyApplication {
+  avant: boolean
+  apres: boolean
+}
+
+/** Avant seul : le comportement historique, défaut de toute règle. */
+export const RALIFY_APPLICATION_DEFAUT: RalifyApplication = { avant: true, apres: false }
+
 export interface RalifyRegle {
   traiter: boolean
   /** Couleur cible '#rrggbb' (null = pas de cible → pas de traitement). */
   cible: string | null
+  /** Quand corriger CE coloris (avant Nano / après sur la MES). */
+  application: RalifyApplication
 }
 
 export interface RalifyException {
@@ -30,6 +49,8 @@ export interface RalifyException {
   coloris: string | null
   traiter: boolean
   cible: string | null
+  /** Quand corriger, comme sur les règles (l'exception porte SA décision). */
+  application: RalifyApplication
 }
 
 export interface RalifyReglages {
@@ -142,13 +163,15 @@ export function ralCodeDepuisHex(hex: string | null): string | null {
 
 export const RALIFY_DEFAUTS: RalifyReglages = {
   // ACTIVÉ par défaut — validation Mathias du 28/07/2026 (démos ARLBERG/EIGER).
+  // Application : avant seul par défaut — l'« après » (post-MES) s'active RAL
+  // par RAL dans l'admin (décision Mathias 17/08).
   actif: true,
   intensite: 100,
   regles: {
-    gris: { traiter: true, cible: '#434a50' }, // RAL 7016
-    noir: { traiter: true, cible: '#0e0e10' }, // RAL 9005
-    blanc: { traiter: true, cible: '#f1f0ea' }, // RAL 9016
-    teck: { traiter: false, cible: null }, // bois : pas de RAL
+    gris: { traiter: true, cible: '#434a50', application: { ...RALIFY_APPLICATION_DEFAUT } }, // RAL 7016
+    noir: { traiter: true, cible: '#0e0e10', application: { ...RALIFY_APPLICATION_DEFAUT } }, // RAL 9005
+    blanc: { traiter: true, cible: '#f1f0ea', application: { ...RALIFY_APPLICATION_DEFAUT } }, // RAL 9016
+    teck: { traiter: false, cible: null, application: { ...RALIFY_APPLICATION_DEFAUT } }, // bois : pas de RAL
   },
   exceptions: [],
 }
@@ -183,6 +206,13 @@ export function sanitizeRalify(input: unknown): RalifyReglages | undefined {
   if (typeof src.intensite === 'number' && Number.isFinite(src.intensite)) {
     out.intensite = Math.min(100, Math.max(0, Math.round(src.intensite)))
   }
+  // Application d'une règle/exception : absent (config d'avant le 17/08) =
+  // avant seul, le comportement historique ; l'après doit être explicite.
+  const application = (raw: unknown): RalifyApplication => {
+    if (typeof raw !== 'object' || raw === null) return { ...RALIFY_APPLICATION_DEFAUT }
+    const a = raw as Record<string, unknown>
+    return { avant: a.avant !== false, apres: a.apres === true }
+  }
   if (typeof src.regles === 'object' && src.regles !== null) {
     for (const [key, val] of Object.entries(src.regles as Record<string, unknown>)) {
       if (Object.keys(out.regles).length >= 50) break
@@ -190,7 +220,11 @@ export function sanitizeRalify(input: unknown): RalifyReglages | undefined {
       if (!k || k.length > 40 || typeof val !== 'object' || val === null) continue
       const r = val as Record<string, unknown>
       const cible = isHexColor(r.cible) ? r.cible.toLowerCase() : null
-      out.regles[k] = { traiter: r.traiter === true && cible !== null, cible }
+      out.regles[k] = {
+        traiter: r.traiter === true && cible !== null,
+        cible,
+        application: application(r.application),
+      }
     }
   }
   if (Array.isArray(src.exceptions)) {
@@ -204,7 +238,13 @@ export function sanitizeRalify(input: unknown): RalifyReglages | undefined {
           ? e.coloris.trim().toLowerCase().slice(0, 40)
           : null
       const cible = isHexColor(e.cible) ? e.cible.toLowerCase() : null
-      out.exceptions.push({ contient, coloris, traiter: e.traiter === true && cible !== null, cible })
+      out.exceptions.push({
+        contient,
+        coloris,
+        traiter: e.traiter === true && cible !== null,
+        cible,
+        application: application(e.application),
+      })
     }
   }
   return out
@@ -215,6 +255,8 @@ export interface RalifyDecision {
   cible: string | null
   /** La règle qui a tranché, en clair (affichée par le testeur de l'encart). */
   raison: string
+  /** Moments d'application de la règle qui a tranché (avant / après). */
+  application: RalifyApplication
 }
 
 /**
@@ -227,21 +269,28 @@ export function resolveRalifyDecision(
   productName: string,
   coloris?: string | null
 ): RalifyDecision {
-  if (!reglages.actif) return { cible: null, raison: 'RALify désactivé' }
+  const aucun = { ...RALIFY_APPLICATION_DEFAUT }
+  if (!reglages.actif) return { cible: null, raison: 'RALify désactivé', application: aucun }
   const key = colorisKeyRalify(coloris)
   const name = productName.toLowerCase()
   for (const ex of reglages.exceptions) {
     if (!name.includes(ex.contient.toLowerCase())) continue
     if (ex.coloris && ex.coloris !== key) continue
     const raison = `Exception « ${ex.contient} »${ex.coloris ? ` · ${ex.coloris}` : ' · tous coloris'}`
-    return ex.traiter && ex.cible ? { cible: ex.cible, raison } : { cible: null, raison }
+    return ex.traiter && ex.cible
+      ? { cible: ex.cible, raison, application: ex.application ?? aucun }
+      : { cible: null, raison, application: aucun }
   }
-  if (!key) return { cible: null, raison: 'Coloris non reconnu' }
+  if (!key) return { cible: null, raison: 'Coloris non reconnu', application: aucun }
   const regle = reglages.regles[key]
   if (regle && regle.traiter && regle.cible) {
-    return { cible: regle.cible, raison: `Règle générale · ${key}` }
+    return {
+      cible: regle.cible,
+      raison: `Règle générale · ${key}`,
+      application: regle.application ?? aucun,
+    }
   }
-  return { cible: null, raison: `Règle générale · ${key} : ne pas toucher` }
+  return { cible: null, raison: `Règle générale · ${key} : ne pas toucher`, application: aucun }
 }
 
 /** Raccourci : la cible seule (pipeline). */

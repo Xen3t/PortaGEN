@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import MesDecorsManager, { type MesDecor } from '@/components/MesDecorsManager'
 import { parseProduitFromFileName, parseSizeFromProductName } from '@/lib/productName'
 import { PictoIllu } from '../../Silhouette'
 
@@ -106,6 +107,9 @@ interface Item {
   /** VERSION épinglée (retour arrière 07/08) — id du job affiché par la case.
    *  Absent = suivre la dernière version prête. Persisté dans le manifeste. */
   chosenJobId?: number
+  /** Phase du job EN COURS (17/08) : 'harmonisation-ral' pendant la passe
+   *  RALify post-MES — la case l'affiche à la place de « Génération ». */
+  phase?: string
 }
 
 interface JobRow {
@@ -113,13 +117,17 @@ interface JobRow {
   type: string
   status: string
   /** payload.productPath raccroche les jobs aux images du lot ; rootJobId
-   *  raccroche les retours « mes-fix » à leur version d'origine. */
-  payload: { productPath?: string; rootJobId?: number; instruction?: string } | null
+   *  raccroche les retours « mes-fix » à leur version d'origine ; phase =
+   *  étape en cours posée par le pipeline ('harmonisation-ral'). */
+  payload: { productPath?: string; rootJobId?: number; instruction?: string; phase?: string } | null
   result: {
     deliveryPath?: string
     planPath?: string
     promptFinal?: string
     instruction?: string
+    /** Verdict du juge vision (17/08) — posé par le runner quand le réglage
+     *  moteur « Juge vision » est activé ; erreur = pas de verdict. */
+    juge?: { acceptee?: boolean; motif?: string; essai?: number; erreur?: string }
   } | null
   error: string | null
 }
@@ -159,12 +167,31 @@ function appliquerVersions(it: Item, jobs: JobRow[]): Item {
   const affichee = choisie ?? (pretes.length ? pretes[pretes.length - 1] : undefined)
   const enCours = versions.some((j) => j.status === 'queued' || j.status === 'running')
   if (enCours) {
+    const active = versions.find((j) => j.status === 'running')
     return {
       ...it,
       jobId,
-      status: versions.some((j) => j.status === 'running') ? 'running' : 'queued',
+      status: active ? 'running' : 'queued',
+      // Phase du job actif (17/08) : « Harmonisation RAL » pendant la passe finale.
+      phase: active?.payload?.phase,
       deliveryPath: affichee?.result?.deliveryPath ?? it.deliveryPath,
       error: undefined,
+    }
+  }
+  // ÉCHEC de la DERNIÈRE version (17/08, reproche Mathias : une regen en 429
+  // laissait la case afficher l'ancien rendu comme si de rien n'était) : la
+  // case passe en erreur VISIBLE — l'ancien rendu reste affiché derrière, les
+  // versions précédentes restent consultables dans la vue en grand.
+  const derniereVersion = versions[versions.length - 1]
+  if (derniereVersion.status === 'error') {
+    return {
+      ...it,
+      jobId,
+      status: 'error',
+      error: derniereVersion.error ?? 'échec',
+      deliveryPath: affichee?.result?.deliveryPath ?? it.deliveryPath,
+      planPath: affichee?.result?.planPath ?? it.planPath,
+      promptFinal: affichee?.result?.promptFinal ?? it.promptFinal,
     }
   }
   if (affichee) {
@@ -182,9 +209,6 @@ function appliquerVersions(it: Item, jobs: JobRow[]): Item {
     }
   }
   const derniere = versions[versions.length - 1]
-  if (derniere.status === 'error') {
-    return { ...it, jobId, status: 'error', error: derniere.error ?? 'échec' }
-  }
   // Génération ANNULÉE en file (08/08) : la case redevient « prêt » — le plan
   // gris est toujours là, relançable quand on veut.
   if (derniere.status === 'cancelled') {
@@ -371,7 +395,7 @@ function RenduDevoile({ src }: { src: string }) {
 }
 
 // —————————————————————————————————————————————— app
-export default function DecorEcrinApp() {
+export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }) {
   const [typo, setTypo] = useState<Typo>('janus')
   const [typoDetected, setTypoDetected] = useState(false)
   const [produit, setProduit] = useState('')
@@ -395,6 +419,35 @@ export default function DecorEcrinApp() {
   const annulees = useRef(new Set<string>())
   /** Ouverture d'une session (?lot=/?session=) en cours — anim visible (08/08). */
   const [ouvertureLot, setOuvertureLot] = useState(false)
+  /** DÉCORS (08/08, maquette decors-mes-contrainte-v2) : bibliothèque partagée,
+   *  décor choisi appliqué aux prochaines générations (regen comprise). */
+  const [decors, setDecors] = useState<MesDecor[]>([])
+  const [decorId, setDecorId] = useState<number | null>(null)
+  const [decorMenu, setDecorMenu] = useState(false)
+  const [gererDecors, setGererDecors] = useState(false)
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const r = await fetch('/api/mes-decors')
+        const d = await r.json().catch(() => null)
+        if (alive && r.ok && Array.isArray(d?.decors)) setDecors(d.decors)
+      } catch {
+        // bibliothèque injoignable : le pipeline retombera sur le décor par défaut
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+  // Sélection suivie : au chargement (ou si le décor choisi disparaît) on se
+  // cale sur le décor par défaut de la bibliothèque.
+  useEffect(() => {
+    if (decors.length === 0) return
+    if (decorId !== null && decors.some((d) => d.id === decorId)) return
+    setDecorId((decors.find((d) => d.isDefault) ?? decors[0]).id)
+  }, [decors, decorId])
+  const decorActif = decors.find((d) => d.id === decorId)
   /** NOM de la session (titre des cartes de l'Accueil) — renommable sur place
    *  (08/08, demande Mathias : partout, Accueil, liste ET dans la session). */
   const [nomSession, setNomSession] = useState('')
@@ -946,6 +999,8 @@ export default function DecorEcrinApp() {
           // Le LOT sert de batchId : au reload, /api/gamme/<lot> retrouve les jobs.
           batchId: lotId ?? batchId,
           produit,
+          // Décor choisi dans l'en-tête (08/08) — absent = défaut bibliothèque.
+          ...(decorId !== null ? { decorId } : {}),
         }),
       })
       const data = await res.json().catch(() => null)
@@ -985,6 +1040,12 @@ export default function DecorEcrinApp() {
           imageSize,
           batchId: lotId,
           produit,
+          // Regen = décor sélectionné AU MOMENT DU CLIC (08/08) : permet de
+          // comparer deux fonds sur la même MES via les versions.
+          ...(decorId !== null ? { decorId } : {}),
+          // Regen MANUELLE = SANS juge (règle Mathias 17/08 : « le juge c'est
+          // une fois au début, pas ensuite ») — l'utilisateur a repris la main.
+          regen: true,
         }),
       })
       const data = await res.json().catch(() => null)
@@ -1379,6 +1440,61 @@ export default function DecorEcrinApp() {
         <div className="flex items-center gap-2.5 flex-wrap mb-1">
           <h1 className="text-xl font-bold tracking-tight">MES Contrainte</h1>
           <div className="flex-1" />
+          {/* DÉCOR (08/08) : le fond peint autour du produit — menu sous le
+              bouton, « Gérer les décors » ouvert à tous les utilisateurs. */}
+          <div className="relative">
+            <button
+              onClick={() => setDecorMenu((v) => !v)}
+              title="Décor peint autour du produit — s'applique aux prochaines générations"
+              className="inline-flex items-center gap-2 border border-border rounded-[8px] bg-white px-3 py-1.5 hover:border-brand-green"
+            >
+              <span className="text-[10px] font-bold uppercase tracking-wide text-text-disabled">
+                Décor
+              </span>
+              <b className="text-[12.5px]">{decorActif?.name ?? '…'}</b>
+              <span className="text-[9px] text-text-disabled">▼</span>
+            </button>
+            {decorMenu && (
+              <>
+                {/* voile invisible : clic n'importe où ailleurs = fermeture */}
+                <div className="fixed inset-0 z-40" onMouseDown={() => setDecorMenu(false)} />
+                <div className="absolute right-0 top-full mt-1.5 w-[280px] bg-white border border-border rounded-[8px] shadow-lg overflow-hidden z-50">
+                  {decors.map((d) => (
+                    <button
+                      key={d.id}
+                      onClick={() => {
+                        setDecorId(d.id)
+                        setDecorMenu(false)
+                      }}
+                      className={`w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-[13px] ${
+                        d.id === decorId
+                          ? 'bg-brand-green-light text-brand-green font-bold'
+                          : 'hover:bg-surface'
+                      }`}
+                    >
+                      <span className="truncate">{d.name}</span>
+                      {d.isDefault && (
+                        <span className="text-[9.5px] font-bold uppercase tracking-wide text-text-disabled">
+                          défaut
+                        </span>
+                      )}
+                      <span className="flex-1" />
+                      {d.id === decorId && <span className="text-[11px] font-bold">✓</span>}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => {
+                      setDecorMenu(false)
+                      setGererDecors(true)
+                    }}
+                    className="w-full border-t border-border px-3.5 py-2 text-left text-[12px] text-text-secondary hover:text-brand-green"
+                  >
+                    Gérer les décors…
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <div className="inline-flex border border-border rounded-[8px] overflow-hidden bg-white">
             {(['2K', '4K'] as const).map((s) => (
               <button
@@ -1765,37 +1881,38 @@ export default function DecorEcrinApp() {
                                 ✕
                               </button>
                             )}
-                            <span
-                              className={`text-[10.5px] font-bold rounded-full px-2 py-0.5 ${
-                                it.status === 'done'
-                                  ? 'bg-brand-green-light text-brand-green'
-                                  : running
+                            {/* Pas de badge sur une case générée (08/08 : le
+                                rendu parle de lui-même). */}
+                            {it.status !== 'done' && (
+                              <span
+                                title={it.status === 'error' ? it.error : undefined}
+                                className={`text-[10.5px] font-bold rounded-full px-2 py-0.5 whitespace-nowrap shrink-0 ${
+                                  running
                                     ? 'bg-[#fef3c7] text-[#b45309]'
                                     : it.status === 'error'
                                       ? 'bg-brand-red-light text-brand-red'
                                       : 'bg-surface text-text-secondary'
-                              }`}
-                            >
-                              {it.status === 'done' ? (
-                                '✓ Généré'
-                              ) : it.status === 'running' ? (
-                                <>
-                                  Génération
-                                  <Dots />
-                                </>
-                              ) : it.status === 'queued' ? (
-                                'En attente'
-                              ) : it.status === 'error' ? (
-                                '⚠ Échec'
-                              ) : enPrepa(it.status) ? (
-                                <>
-                                  {PREP_LABEL[it.status]}
-                                  <Dots />
-                                </>
-                              ) : (
-                                'Prêt'
-                              )}
-                            </span>
+                                }`}
+                              >
+                                {it.status === 'running' ? (
+                                  <>
+                                    {it.phase === 'harmonisation-ral' ? 'Harmonisation RAL' : 'Génération'}
+                                    <Dots />
+                                  </>
+                                ) : it.status === 'queued' ? (
+                                  'En attente'
+                                ) : it.status === 'error' ? (
+                                  '⚠ Échec'
+                                ) : enPrepa(it.status) ? (
+                                  <>
+                                    {PREP_LABEL[it.status]}
+                                    <Dots />
+                                  </>
+                                ) : (
+                                  'Prêt'
+                                )}
+                              </span>
+                            )}
                           </div>
                         </div>
                       )
@@ -1842,6 +1959,32 @@ export default function DecorEcrinApp() {
           </>
         )}
       </div>
+
+      {/* GÉRER LES DÉCORS (08/08) : modale ouverte à TOUS les utilisateurs —
+          création/édition collectives ; défaut et suppression admin (boutons
+          masqués sinon, l'API vérifie aussi). */}
+      {gererDecors && (
+        <div
+          className="fixed inset-0 bg-[rgba(31,41,55,0.45)] z-50 flex items-center justify-center p-6"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setGererDecors(false)
+          }}
+        >
+          <div className="bg-white rounded-[12px] shadow-lg w-[860px] max-w-full max-h-[85vh] overflow-y-auto p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <h2 className="text-[17px] font-bold">Gérer les décors</h2>
+              <div className="flex-1" />
+              <button
+                onClick={() => setGererDecors(false)}
+                className="text-[13px] text-text-disabled hover:text-text-primary font-semibold"
+              >
+                ✕ Fermer
+              </button>
+            </div>
+            <MesDecorsManager isAdmin={isAdmin} onDecorsChange={setDecors} />
+          </div>
+        </div>
+      )}
 
       {/* vue en grand — identique à MES Écrin : poignée à gauche, liens, Échap */}
       {lightbox &&
@@ -2042,6 +2185,22 @@ export default function DecorEcrinApp() {
                           <span className="absolute bottom-1 left-1 text-[10px] font-bold text-white bg-black/50 rounded-full px-1.5">
                             V{n}
                           </span>
+                          {/* Verdict du juge vision (17/08) : ✓ verte / ✗ rouge,
+                              motif au survol — rien quand pas de verdict. */}
+                          {typeof j.result?.juge?.acceptee === 'boolean' && (
+                            <span
+                              title={
+                                j.result.juge.acceptee
+                                  ? 'Validée par le juge vision'
+                                  : `Refusée par le juge vision : ${j.result.juge.motif || 'motif non précisé'}`
+                              }
+                              className={`absolute bottom-1 right-1 text-[10px] font-bold text-white rounded-full px-1.5 cursor-help ${
+                                j.result.juge.acceptee ? 'bg-brand-green' : 'bg-brand-red'
+                              }`}
+                            >
+                              {j.result.juge.acceptee ? 'Juge ✓' : 'Juge ✗'}
+                            </span>
+                          )}
                           {/* Version choisie = COCHE verte (08/08, à la place du texte). */}
                           {retenue && (
                             <span
@@ -2081,6 +2240,38 @@ export default function DecorEcrinApp() {
                     loupe ? 'opacity-30 grayscale pointer-events-none select-none' : ''
                   }`}
                 >
+                  {/* AVIS DU JUGE VISION (17/08) sur la version regardée :
+                      accepté / refusé + motif — l'erreur du juge est dite
+                      aussi (pas de verdict, l'utilisateur garde la main). */}
+                  {regardee?.result?.juge && (
+                    <div
+                      className={`rounded-[8px] px-3 py-2.5 text-[12.5px] ${
+                        regardee.result.juge.acceptee === true
+                          ? 'bg-brand-green/20 text-white'
+                          : regardee.result.juge.acceptee === false
+                            ? 'bg-brand-red/25 text-white'
+                            : 'bg-white/10 text-white/85'
+                      }`}
+                    >
+                      <p className="font-bold mb-0.5">
+                        {regardee.result.juge.acceptee === true
+                          ? 'Juge vision : validée'
+                          : regardee.result.juge.acceptee === false
+                            ? 'Juge vision : refusée'
+                            : 'Juge vision : pas de verdict'}
+                        {regardee.result.juge.essai ? ` (essai ${regardee.result.juge.essai}/3)` : ''}
+                      </p>
+                      {regardee.result.juge.acceptee === false && (
+                        <p>{regardee.result.juge.motif || 'Motif non précisé.'}</p>
+                      )}
+                      {regardee.result.juge.erreur && (
+                        <p className="text-white/70">
+                          Le juge n’a pas pu se prononcer — rendu laissé tel quel.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* RETOUR par prompt (07/08, mécanique du studio MES) : une
                       consigne → Nano retouche la version regardée → nouvelle
                       version dans la galerie. */}

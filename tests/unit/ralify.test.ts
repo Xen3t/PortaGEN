@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import sharp from 'sharp'
 import {
+  RALIFY_APPLICATION_DEFAUT,
   RALIFY_DEFAUTS,
   colorisKeyRalify,
   ralCibleLabel,
   resolveRalifyCible,
+  resolveRalifyDecision,
   sanitizeRalify,
   type RalifyReglages,
 } from '@/lib/ralify'
@@ -53,8 +55,8 @@ describe('RALify — résolution de la cible', () => {
   it("l'exception prime : autre RAL pour un produit, ou désactivation", () => {
     const r = actives({
       exceptions: [
-        { contient: 'vogel', coloris: 'gris', traiter: true, cible: '#2e3238' },
-        { contient: 'ATHOS', coloris: null, traiter: false, cible: null },
+        { contient: 'vogel', coloris: 'gris', traiter: true, cible: '#2e3238', application: { ...RALIFY_APPLICATION_DEFAUT } },
+        { contient: 'ATHOS', coloris: null, traiter: false, cible: null, application: { ...RALIFY_APPLICATION_DEFAUT } },
       ],
     })
     // VOGEL gris → RAL 7021 (exception), VOGEL noir → règle générale.
@@ -86,12 +88,56 @@ describe('RALify — validation de la config', () => {
     })!
     expect(r.actif).toBe(true)
     expect(r.intensite).toBe(100)
-    expect(r.regles.gris).toEqual({ traiter: true, cible: '#434a50' })
+    expect(r.regles.gris).toEqual({
+      traiter: true,
+      cible: '#434a50',
+      application: { avant: true, apres: false },
+    })
     // Cible invalide → la règle ne peut pas traiter.
-    expect(r.regles.mauvais).toEqual({ traiter: false, cible: null })
+    expect(r.regles.mauvais).toEqual({
+      traiter: false,
+      cible: null,
+      application: { avant: true, apres: false },
+    })
     expect(r.exceptions).toEqual([
-      { contient: 'VOGEL', coloris: 'gris', traiter: true, cible: '#2e3238' },
+      {
+        contient: 'VOGEL',
+        coloris: 'gris',
+        traiter: true,
+        cible: '#2e3238',
+        application: { avant: true, apres: false },
+      },
     ])
+  })
+
+  it("application avant/après PAR RÈGLE (17/08) : absent = avant seul, l'après doit être explicite", () => {
+    const regle = (application?: unknown) =>
+      sanitizeRalify({
+        actif: true,
+        regles: { gris: { traiter: true, cible: '#434a50', application } },
+      })!.regles.gris.application
+    // Config d'avant le 17/08 (sans le champ) → comportement historique.
+    expect(regle()).toEqual({ avant: true, apres: false })
+    expect(regle({ apres: true })).toEqual({ avant: true, apres: true })
+    expect(regle({ avant: false, apres: true })).toEqual({ avant: false, apres: true })
+    // Valeurs non booléennes → défauts sûrs.
+    expect(regle({ avant: 'oui', apres: 'oui' })).toEqual({ avant: true, apres: false })
+    // La décision porte l'application de la règle qui a tranché.
+    const cfg = sanitizeRalify({
+      actif: true,
+      regles: { gris: { traiter: true, cible: '#434a50', application: { avant: false, apres: true } } },
+      exceptions: [
+        { contient: 'VALIER', traiter: true, cible: '#2e3238', application: { avant: true, apres: true } },
+      ],
+    })!
+    expect(resolveRalifyDecision(cfg, 'EIGER', 'gris').application).toEqual({
+      avant: false,
+      apres: true,
+    })
+    expect(resolveRalifyDecision(cfg, 'VALIER 300B140', 'gris').application).toEqual({
+      avant: true,
+      apres: true,
+    })
   })
 
   it('fait partie des réglages moteur (sanitize + défauts)', () => {

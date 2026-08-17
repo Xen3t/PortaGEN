@@ -163,6 +163,16 @@ export interface MoteurReglages {
    * Les essais du Labo moteur restent toujours à 1 (une image par essai).
    */
   generationsParTaille: number
+  /**
+   * JUGE VISION des MES (17/08/2026, demande Mathias : « déléguer la boucle de
+   * regénération ») : après chaque génération décor autour, un modèle vision
+   * (gemini-3.5-flash, prompt `juge-mes` en base) compare le rendu au produit
+   * détouré et accepte ou refuse. Refus = relance automatique d'une nouvelle
+   * VERSION (2 relances maximum, donc 3 générations au plus par image) ; tout
+   * refusé = rien de retenu, l'utilisateur tranche avec les motifs affichés.
+   * Jamais consulté par les moteurs legacy ni par les MES Libres.
+   */
+  jugeMes: 'on' | 'off'
   /** Modèle de nom du livrable final. */
   livraisonName: string
   /**
@@ -201,6 +211,9 @@ export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
   marketplace: 'choix',
   // Défaut 3 (29/07/2026) : « tripler les générations par taille ».
   generationsParTaille: 3,
+  // Juge vision désactivé par défaut (17/08/2026) : à activer moteur par moteur
+  // dans Admin → Réglages, une fois les critères du prompt `juge-mes` validés.
+  jugeMes: 'off',
   livraisonName: '{MARQUE}-{TAILLE}_{COLORIS}_{FORMAT}',
   ralify: RALIFY_DEFAUTS,
 }
@@ -282,6 +295,9 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
   // 1 à 6 générations par taille (garde-fou coût : jamais plus de 6).
   const generationsParTaille = num(src.generationsParTaille, 1, 6)
   if (generationsParTaille !== undefined) out.generationsParTaille = generationsParTaille
+  // Juge vision des MES décor autour (17/08).
+  const jugeMes = pick(src.jugeMes, ['on', 'off'] as const)
+  if (jugeMes) out.jugeMes = jugeMes
   if (src.ralify !== undefined) {
     const ralify = sanitizeRalify(src.ralify)
     if (ralify) out.ralify = ralify

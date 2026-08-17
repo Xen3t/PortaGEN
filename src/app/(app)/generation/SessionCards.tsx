@@ -225,7 +225,8 @@ export default function SessionCards({
   const visibles = AFFICHER_SESSIONS_LEGACY
     ? sessions
     : sessions.filter((s) => s.source === 'decor-autour' || s.source === 'libre')
-  if (visibles.length === 0 && hideWhenEmpty) return null
+  // Plus de bloc masqué quand c'est vide (08/08, demande Mathias : « autant le
+  // dire ») — le message « Aucune session… » s'affiche à la place.
 
   // Les filtres s'ADDITIONNENT (Produit ET Type de MES ET période — 07/08).
   const shown = showFilters
@@ -349,17 +350,7 @@ export default function SessionCards({
         </h2>
       )}
       {visibles.length === 0 ? (
-        <p className="text-sm text-text-secondary">
-          Aucune session pour l&apos;instant — lance une{' '}
-          <Link href="/generation" className="text-brand-green font-semibold hover:underline">
-            Génération
-          </Link>{' '}
-          ou une gamme depuis le{' '}
-          <Link href="/catalogue" className="text-brand-green font-semibold hover:underline">
-            Catalogue
-          </Link>
-          , elle apparaîtra ici.
-        </p>
+        <p className="text-sm text-text-secondary">Aucune session pour l&apos;instant.</p>
       ) : shown.length === 0 ? (
         <p className="text-sm text-text-secondary">
           Aucune session ne correspond à ces filtres —{' '}

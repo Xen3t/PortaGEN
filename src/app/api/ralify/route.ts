@@ -119,7 +119,9 @@ export async function GET(req: NextRequest) {
       }
     }
   }
-  return NextResponse.json({ produits, serveurOk })
+  // Modèle de détection du RALify « après génération » (affiché par l'encart,
+  // demande Mathias 17/08) : celui des appels texte de l'app.
+  return NextResponse.json({ produits, serveurOk, modeleDetection: config.textModel })
 }
 
 // Aperçu large : la zone de contrôle de l'encart est un comparateur plein cadre

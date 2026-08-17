@@ -13,11 +13,14 @@ import { getDb } from '@/lib/db'
  * (app_settings), palette de coloris, feedback, bibliothèque d'images produit
  * (data/products, déposée par l'équipe, pas produite par l'app).
  *
- * Le catalogue scanné (catalog_products) et la détection des images
- * (detection_images, detection_examples) sont CONSERVÉS (demande Mathias
- * 28/07/2026) : l'apprentissage de la détection est accroché aux produits par
+ * Le catalogue scanné (catalog_products), la détection des images
+ * (detection_images, detection_examples) et les descriptions produit
+ * (produit_descriptions) sont CONSERVÉS (demandes Mathias 28/07 et
+ * 08/08/2026) : l'apprentissage de la détection est accroché aux produits par
  * product_id — vider le catalogue changerait les ids au re-scan et perdrait
- * ou mélangerait les exemples appris.
+ * ou mélangerait les exemples appris — et les descriptions sont une
+ * bibliothèque constituée, pas une production de l'app. NE JAMAIS ajouter ces
+ * tables à CLEARED_TABLES.
  *
  * Une sauvegarde complète (base + images) est créée AVANT toute suppression
  * dans data/sauvegardes/<date>/ (choix Mathias 15/07/2026 : base + images

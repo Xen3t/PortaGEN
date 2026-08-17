@@ -259,7 +259,15 @@ async function processJob(id: number): Promise<void> {
       // UN job = une MES complète (pipeline collapsé : ni décor Canny ni piliers).
       const { runDecorAutourStep } = await import('@/lib/pipeline/decorAutour')
       await runDecorAutourStep({ ...payload, jobId: id })
-      maybeEnqueueAutoMp(id, payload)
+      // Juge vision (17/08/2026) : payload.juge posé au lancement quand le
+      // réglage moteur `jugeMes` est activé. Refus = relance d'une version
+      // (2 max) et PAS de déclinaison MP automatique pour cette version.
+      let jugeOk = true
+      if (payload.juge === true) {
+        const { appliquerJugeMes } = await import('@/lib/server/jugeMesBoucle')
+        jugeOk = (await appliquerJugeMes(id)).acceptee
+      }
+      if (jugeOk) maybeEnqueueAutoMp(id, payload)
     } else if (job.type === 'marketplace') {
       const { runMarketplaceStep } = await import('@/lib/pipeline/marketplace')
       await runMarketplaceStep({ ...payload, jobId: id })

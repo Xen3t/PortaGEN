@@ -10,8 +10,9 @@ import { useEffect, useRef, useState } from 'react'
  * est porté par l'en-tête du panneau).
  * Efface tout ce que l'app a produit (MES, décors, détourages, historique)
  * après une sauvegarde complète base + images dans data/sauvegardes/.
- * L'installation (comptes, prompts, gabarits, réglages), le catalogue scanné
- * et l'apprentissage de la détection des images ne sont pas touchés.
+ * L'installation (comptes, prompts, gabarits, réglages), le catalogue scanné,
+ * l'apprentissage de la détection des images et les descriptions produit ne
+ * sont pas touchés.
  */
 
 /** Poids lisible en français (« 1,5 Go », « 320 Mo »). */
@@ -161,6 +162,7 @@ export default function ResetApp() {
                     ['La palette de coloris', null],
                     ['Les retours utilisateurs (Feedback)', null],
                     ['Le catalogue scanné et la détection des images', '· apprentissage conservé'],
+                    ['Les descriptions produit', null],
                   ].map(([label, small]) => (
                     <li key={label as string} className="relative pl-5">
                       <span className="absolute left-0 top-px text-brand-green font-bold text-xs">✓</span>
@@ -217,8 +219,8 @@ export default function ResetApp() {
                     Toutes les MES, tous les décors et tous les détourages
                   </b>{' '}
                   vont être effacés, ainsi que tout l&apos;historique de génération. Les comptes,
-                  prompts, gabarits, réglages, le catalogue et l&apos;apprentissage de la détection
-                  des images sont conservés.
+                  prompts, gabarits, réglages, le catalogue, l&apos;apprentissage de la détection
+                  des images et les descriptions produit sont conservés.
                 </p>
                 <p className="text-[13.5px] text-text-secondary">
                   Une sauvegarde complète (base{poids ? ` + ${poids} d’images` : ' + images'}) sera

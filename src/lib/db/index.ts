@@ -326,7 +326,39 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
       model TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- DÉCORS des MES Contrainte (08/08/2026, maquette decors-mes-contrainte-v2) :
+    -- bibliothèque PARTAGÉE par les 3 moteurs décor autour. Chaque décor = un nom,
+    -- un texte de prompt LIBRE (injecté à la place de {DECOR}) et des images de
+    -- référence optionnelles (fichiers sous data/mes-decors/<id>/, chemins
+    -- relatifs projet en JSON dans images) jointes à l'appel Nano comme
+    -- inspiration d'ambiance. Création/édition par TOUS les utilisateurs ;
+    -- décor par défaut et suppression réservés à l'admin. Comme la détection :
+    -- table hors CLEARED_TABLES — la remise à zéro ne touche PAS les décors.
+    CREATE TABLE IF NOT EXISTS mes_decors (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      prompt TEXT NOT NULL DEFAULT '',
+      prompt_ia TEXT,
+      images TEXT NOT NULL DEFAULT '[]',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
+
+  // Réécriture LLM obligatoire du texte de décor (08/08 soir) : bases créées
+  // quelques heures avant l'ajout de la colonne — migration douce, et les
+  // textes existants (écrits avant le LLM) deviennent leur propre version IA
+  // (comportement inchangé tant qu'on ne réédite pas).
+  const decorCols = (db.prepare(`PRAGMA table_info(mes_decors)`).all() as { name: string }[]).map(
+    (c) => c.name
+  )
+  if (decorCols.length > 0 && !decorCols.includes('prompt_ia')) {
+    db.exec(`ALTER TABLE mes_decors ADD COLUMN prompt_ia TEXT`)
+  }
+  db.exec(`UPDATE mes_decors SET prompt_ia = prompt WHERE prompt_ia IS NULL AND prompt != ''`)
 
   // Bibliothèque de descriptions créée quelques minutes avant l'ajout du
   // coloris dans la clé (07/08/2026, rechargement DEV entre les deux) :
@@ -501,7 +533,63 @@ export function migrate(db: Database.Database, opts: MigrateOptions = { ephemera
 
   seedSizes(db)
   seedPrompts(db)
+  seedMesDecors(db)
+  seedDecorPlaceholder(db)
   seedAdmin(db, opts.ephemeral)
+}
+
+/**
+ * Décor de départ « Pavillon français » (08/08/2026) : l'ambiance qui vivait EN
+ * DUR dans le paragraphe ENVIRONMENT des prompts décor autour, extraite telle
+ * quelle — tant que Mathias n'y touche pas, les rendus ne changent pas. Seedé
+ * UNIQUEMENT si la bibliothèque est vide (comme les prompts : jamais réécrit).
+ */
+function seedMesDecors(db: Database.Database): void {
+  const n = (db.prepare('SELECT COUNT(*) AS n FROM mes_decors').get() as { n: number }).n
+  if (n > 0) return
+  const texte =
+    'A typical French residential suburb: a paved driveway and a tidy garden behind the entrance, ' +
+    'a classic French detached house (pavillon) in the background. Wide clear blue sky, bright ' +
+    'sunny daylight. Realistic materials, fine detail, photorealistic.'
+  // prompt_ia = le même texte : il est déjà au format final, pas besoin du LLM.
+  db.prepare(
+    `INSERT INTO mes_decors (name, prompt, prompt_ia, is_default, created_by) VALUES (?, ?, ?, 1, 'seed')`
+  ).run('Pavillon français', texte, texte)
+}
+
+/**
+ * Externalisation du décor (08/08/2026) : le paragraphe ENVIRONMENT des prompts
+ * décor autour devient un emplacement {DECOR} (rempli par le pipeline avec le
+ * décor choisi), et la règle « maison toujours vue de face » passe dans le texte
+ * FIGÉ, hors d'atteinte des décors custom. Les fichiers Prompt System/ portent
+ * la nouvelle ossature ; ici on la publie en NOUVELLE VERSION de chaque prompt
+ * (jamais d'écrasement — l'historique du Prompt System reste intact). Garde
+ * anti hot-reload (règle du 28/07 : le DEV peut seeder avant les fichiers) :
+ * on ne publie que si le FICHIER contient bien {DECOR}.
+ */
+function seedDecorPlaceholder(db: Database.Database): void {
+  const noms = ['janus-decor-autour', 'terminus-decor-autour', 'forculus-decor-autour']
+  for (const name of noms) {
+    const actif = db
+      .prepare('SELECT version, content FROM prompts WHERE name = ? ORDER BY version DESC LIMIT 1')
+      .get(name) as { version: number; content: string } | undefined
+    if (!actif || actif.content.includes('{DECOR}')) continue
+    const file = PROMPT_FILES[name]
+    if (!file) continue
+    const filePath = path.join(config.promptSystemDir, file)
+    if (!fs.existsSync(filePath)) continue
+    const contenu = fs.readFileSync(filePath, 'utf8')
+    if (!contenu.includes('{DECOR}')) continue
+    db.prepare(
+      'INSERT INTO prompts (name, version, content, comment, created_by) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      name,
+      actif.version + 1,
+      contenu,
+      'Décor externalisé ({DECOR}) + maison de face verrouillée hors décor (08/08/2026)',
+      'seed'
+    )
+  }
 }
 
 /**
@@ -657,6 +745,12 @@ export const PROMPT_FILES: Record<string, string> = {
   'janus-decor-autour': 'Prompt Decor Autour JANUS.txt',
   'terminus-decor-autour': 'Prompt Decor Autour Coulissant.txt',
   'forculus-decor-autour': 'Prompt Decor Autour Portillon.txt',
+  // Juge vision des MES décor autour (17/08/2026) : appel produit/scène (défauts
+  // flagrants, dans le doute il accepte) + appel GABARIT (superposition magenta
+  // du plan sur le rendu, méthode Mathias, pas de bénéfice du doute) — un refus
+  // relance une version, 2 relances max (src/lib/server/jugeMesBoucle.ts).
+  'juge-mes': 'Prompt Juge MES.txt',
+  'juge-mes-gabarit': 'Prompt Juge MES Gabarit.txt',
 }
 
 /**
