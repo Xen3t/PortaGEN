@@ -8,6 +8,8 @@ import {
   deleteSession,
   createUser,
   resetPassword,
+  deleteUser,
+  listUsers,
 } from '@/lib/auth/store'
 import { getActivePrompt, savePromptVersion, listPromptVersions, listPromptNames } from '@/lib/db/prompts'
 
@@ -55,6 +57,25 @@ describe('comptes et sessions', () => {
     resetPassword(user.id, 'nouveau-mdp-1', db)
     expect(getUserBySession(token, db)).toBeNull() // déconnecté partout
     expect(authenticate('theo', 'nouveau-mdp-1', db)).not.toBeNull()
+  })
+
+  it('supprime un compte (sessions fermées), jamais le dernier admin (21/08)', () => {
+    const db = getDb(':memory:')
+    const user = createUser('paul', 'motdepasse-1', 'user', db)
+    const { token } = createSession(user.id, db)
+    deleteUser(user.id, db)
+    expect(listUsers(db).some((u) => u.username === 'paul')).toBe(false)
+    expect(getUserBySession(token, db)).toBeNull() // sessions fermées avec le compte
+    // Le seed ne contient qu'UN admin : sa suppression est refusée.
+    const admin = listUsers(db).find((u) => u.role === 'admin')!
+    expect(() => deleteUser(admin.id, db)).toThrow(/dernier compte admin/)
+    // Un second admin lève le verrou : le premier devient supprimable.
+    const admin2 = createUser('admin2', 'motdepasse-2', 'admin', db)
+    deleteUser(admin.id, db)
+    expect(listUsers(db).filter((u) => u.role === 'admin')).toHaveLength(1)
+    expect(() => deleteUser(admin2.id, db)).toThrow(/dernier compte admin/)
+    // Compte inexistant : erreur claire, jamais silencieux.
+    expect(() => deleteUser(9999, db)).toThrow(/introuvable/)
   })
 })
 

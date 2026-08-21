@@ -964,7 +964,14 @@ export default function GenerationPage() {
               on n'écrase jamais l'ancien. Ordre (demande Mathias 05/08) : la
               nouvelle méthode « Décor Écrin » d'abord, les legacy regroupés
               côte à côte en fin de ligne. */}
-          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-[18px]">
+          {/* Grille ADAPTÉE au nombre de cartes visibles (21/08, demande Mathias :
+              cartes trop petites) : legacy masquées → 2 grandes cartes côte à
+              côte ; legacy réaffichées → la ligne de 4 historique. */}
+          <div
+            className={`grid gap-6 ${
+              AFFICHER_LEGACY ? 'md:grid-cols-2 xl:grid-cols-4' : 'md:grid-cols-2 max-w-5xl'
+            }`}
+          >
             {/* MES Contrainte (NOUVEAU) — méthode « décor autour » : flux in-app
                 complet (dépôt → jobs → avant/après → MP → téléchargements). Le
                 labo /decor-autour reste accessible à part pour les essais. La PAGE
@@ -972,20 +979,20 @@ export default function GenerationPage() {
                 la carte a été annulé par Mathias (« retour en arrière » 05/08). */}
             <Link
               href="/generation/decor-autour"
-              className="group relative text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
+              className="group relative text-left bg-white rounded-[12px] border border-border shadow-sm pb-8 overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
             >
-              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+              <div className="border-b border-border px-8 pt-6 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
                 <SilhouetteMode mode="decor-autour" />
               </div>
-              <div className="px-5 pt-4">
-                <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.06em] text-brand-green mb-2.5 whitespace-nowrap">
+              <div className="px-7 pt-5">
+                <span className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[.06em] text-brand-green mb-3 whitespace-nowrap">
                   <span className="w-[7px] h-[7px] rounded-full bg-current" />
                   vraie échelle
                 </span>
-                <h3 className="text-[20px] leading-[1.15] font-bold tracking-tight mb-1.5 whitespace-nowrap">
+                <h3 className="text-[24px] leading-[1.15] font-bold tracking-tight mb-2 whitespace-nowrap">
                   MES Contrainte
                 </h3>
-                <p className="text-sm text-text-secondary">
+                <p className="text-[15px] text-text-secondary">
                   Le produit est posé à sa vraie échelle, Nano peint tout le décor autour.
                   Nouvelle méthode — <b className="text-text-primary">bascule en cours</b>.
                 </p>
@@ -994,18 +1001,18 @@ export default function GenerationPage() {
 
             <button
               onClick={() => pickMode('lib')}
-              className="group flex flex-col text-left bg-white rounded-[12px] border border-border shadow-sm pb-[26px] overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
+              className="group flex flex-col text-left bg-white rounded-[12px] border border-border shadow-sm pb-8 overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5"
             >
-              <div className="border-b border-border px-6 pt-5 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
+              <div className="border-b border-border px-8 pt-6 bg-gradient-to-b from-[#fbfdf8] to-brand-green-light">
                 <SilhouetteMode mode="libre" />
               </div>
-              <div className="px-5 pt-4">
-                <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.06em] text-brand-green mb-2.5 whitespace-nowrap">
+              <div className="px-7 pt-5">
+                <span className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-[.06em] text-brand-green mb-3 whitespace-nowrap">
                   <span className="w-[7px] h-[7px] rounded-full bg-current" />
                   Scène décrite · formulaire
                 </span>
-                <h3 className="text-[20px] leading-[1.15] font-bold tracking-tight mb-1.5 whitespace-nowrap">MES Libre</h3>
-                <p className="text-sm text-text-secondary">
+                <h3 className="text-[24px] leading-[1.15] font-bold tracking-tight mb-2 whitespace-nowrap">MES Libre</h3>
+                <p className="text-[15px] text-text-secondary">
                   Ambiance, angle, lumière — peu de règles, plusieurs variantes générées,{' '}
                   <b className="text-text-primary">tu choisis</b>. Le produit reste verrouillé.
                 </p>

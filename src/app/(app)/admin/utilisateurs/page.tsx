@@ -55,6 +55,26 @@ export default function UsersPage() {
     setNotice(res.ok ? `Mot de passe de « ${user.username} » réinitialisé.` : `Erreur : ${data?.error}`)
   }
 
+  /** Suppression (21/08) : garde-fous côté serveur — jamais son propre compte,
+   *  jamais le dernier admin. Les générations du compte sont conservées. */
+  async function remove(user: User) {
+    if (
+      !window.confirm(
+        `Supprimer le compte « ${user.username} » (${user.role}) ?\nSes générations et sessions sont conservées.`
+      )
+    ) {
+      return
+    }
+    const res = await fetch(`/api/users/${user.id}`, { method: 'DELETE' })
+    const data = await res.json().catch(() => null)
+    if (res.ok) {
+      setNotice(`Compte « ${user.username} » supprimé.`)
+      load()
+    } else {
+      setNotice(`Erreur : ${data?.error ?? res.status}`)
+    }
+  }
+
   return (
     <div>
       <h1 className="text-xl font-semibold mb-6">Utilisateurs</h1>
@@ -82,9 +102,16 @@ export default function UsersPage() {
                       {u.role}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
                     <button onClick={() => reset(u)} className="text-xs text-brand-teal hover:underline">
                       Réinitialiser le mot de passe
+                    </button>
+                    <button
+                      onClick={() => remove(u)}
+                      title="Supprimer le compte (ses générations sont conservées)"
+                      className="ml-3 text-xs text-brand-red hover:underline"
+                    >
+                      Supprimer
                     </button>
                   </td>
                 </tr>

@@ -93,3 +93,25 @@ export function resetPassword(userId: number, password: string, db: Database.Dat
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), userId)
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId) // déconnecte partout
 }
+
+/**
+ * Suppression d'un compte (21/08/2026, demande Mathias) : refuse le DERNIER
+ * admin — l'application deviendrait inadministrable. Le refus de supprimer SON
+ * PROPRE compte est vérifié par la route (elle seule connaît l'appelant). Les
+ * sessions du compte sont fermées ; ses générations et sessions de travail
+ * sont conservées (created_by ne porte que le nom, pas de lien cassé).
+ */
+export function deleteUser(userId: number, db: Database.Database = getDb()): void {
+  const row = db.prepare('SELECT id, role FROM users WHERE id = ?').get(userId) as
+    | { id: number; role: 'admin' | 'user' }
+    | undefined
+  if (!row) throw new Error('Compte introuvable')
+  if (row.role === 'admin') {
+    const admins = (
+      db.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin'`).get() as { n: number }
+    ).n
+    if (admins <= 1) throw new Error('Impossible de supprimer le dernier compte admin')
+  }
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
+  db.prepare('DELETE FROM users WHERE id = ?').run(userId)
+}
