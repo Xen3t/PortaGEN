@@ -3,7 +3,7 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { isPng } from '@/lib/catalogue/parse'
 import { config } from '@/lib/config'
-import { computeLayout, projection, projectRect, type GabaritParams } from '@/lib/geometry'
+import { computeLayout, projection, projectRect, DEFAULT_PARAMS, type GabaritParams } from '@/lib/geometry'
 import {
   cadrageDaEffectif,
   COULEURS_PLAN_DEFAUT,
@@ -240,6 +240,37 @@ export function bancCadrage(
   pilierDroitDevant?: boolean
 } {
   const c = cadrage ?? cadrageDaEffectif(moteur)
+  // RÈGLE RATIO (20/08/2026, tableau croisé du directeur — validée sur 26
+  // générations EIGER, planches gabarit-ratio-*) : le produit est posé à sa
+  // VRAIE largeur (pas de refWidth, donc pas d'étirement) et la fenêtre de
+  // scène est PROPORTIONNELLE à cette largeur — même fraction d'image occupée
+  // par le portail partout, hauteur au vrai ratio H/L, piliers/muret à la
+  // même échelle. UNE référence par famille (refWidthCm + ratioSceneH/GroundY,
+  // réglée à la main dans Admin) couvre toute la gamme : la bascule XL du
+  // coulissant ne sert plus tant que la règle est active. Les décalages X/Y
+  // suivent l'échelle (un décalage réglé sur la référence garde le même effet
+  // visuel sur toutes les tailles).
+  if (c.ratioActif && c.refWidthCm !== null) {
+    const f = w / c.refWidthCm
+    // Les réglages sont exprimés en % d'IMAGE (lisibles : « portail 74 % de la
+    // largeur », « sol 21 % de la hauteur » — demande Mathias 20/08, les cm de
+    // scène ne parlaient à personne) ; la fenêtre de scène en cm s'en déduit :
+    // largeur de scène = largeur du portail ÷ fraction, hauteur via le format.
+    const sceneHRef = (c.refWidthCm * 100) / c.ratioPortailPct / DEFAULT_PARAMS.mesAspect
+    const gabRatio: Partial<GabaritParams> = {
+      sceneH: sceneHRef * f,
+      groundY: sceneHRef * (c.ratioSolPct / 100) * f,
+    }
+    // PAS de zoom en règle ratio (doublon du % — remarque Mathias 20/08) : le
+    // réglage « Portail dans l'image (%) » est la seule vérité du cadrage.
+    if (c.offsetX !== 0) gabRatio.offsetX = c.offsetX * f
+    if (c.offsetY !== 0) gabRatio.offsetY = c.offsetY * f
+    if (c.pillarHMax !== null) gabRatio.pillarHMax = c.pillarHMax
+    return {
+      gabarit: gabRatio,
+      ...(moteur === 'terminus' ? { pilierDroitDevant: true } : {}),
+    }
+  }
   const gab: Partial<GabaritParams> = {}
   if (c.zoom !== 100) gab.zoom = c.zoom
   if (c.offsetX !== 0) gab.offsetX = c.offsetX
@@ -262,6 +293,37 @@ export function bancCadrage(
     ...(gabarit ? { gabarit } : {}),
     ...(moteur === 'terminus' ? { pilierDroitDevant: true } : {}),
   }
+}
+
+/**
+ * GARDE-FOU du lancement (20/08/2026, décision Mathias : les tailles sont
+ * choisies à la main, une taille extrême ne doit JAMAIS être tronquée en
+ * silence ni élargir le cadrage toute seule). Rejoue la géométrie de la pose
+ * (échelle produit comprise) et signale un débordement du cadre — le lancement
+ * refuse alors la taille avec ce message, décision humaine ensuite (élargir la
+ * scène de référence dans Admin, ou ne pas offrir la taille en MES).
+ * Ne s'applique QU'À la règle ratio : les recettes historiques (XL, portillon
+ * zoomé) tolèrent des débordements assumés — non-régression.
+ */
+export function controleCadrageRatio(
+  moteur: MoteurDaKey,
+  size: { w: number; h: number },
+  cadrage?: CadrageDaReglages
+): string | null {
+  const c = cadrage ?? cadrageDaEffectif(moteur)
+  if (!c.ratioActif || c.refWidthCm === null) return null
+  const bc = bancCadrage(moteur, size.w, c)
+  const sizeEff = {
+    w: Math.max(1, Math.round((size.w * c.produitLargeurPct) / 100)),
+    h: Math.max(1, Math.round((size.h * c.produitHauteurPct) / 100)),
+  }
+  const layout = computeLayout(sizeEff, bc.gabarit ?? {})
+  if (!layout.isClamped) return null
+  return (
+    `La taille ${size.w}×${size.h} déborde du cadre avec la règle ratio ` +
+    `(portail ${c.ratioPortailPct} % de l'image) : baisser « Portail dans l'image (%) » dans ` +
+    `Admin → Réglages → Cadrage, ou retirer cette taille du lot.`
+  )
 }
 
 /**
@@ -344,7 +406,7 @@ export async function construirePlanGris(
     const engagement = Math.min(planW, prPx.x + Math.min(prPx.w, engPx))
     // Part de LAME PLEINE du PNG : dernière colonne couverte au-delà du seuil
     // (une colonne de lame est quasi pleine ; un bras de queue couvre ~10-20 %).
-    const nettoye = await nettoyerProduit(produit, opts.seuilAlpha, false, false)
+    const nettoye = await nettoyerProduit(produit, opts.seuilAlpha, false, false, true)
     const prof = await sharp(nettoye.image)
       .ensureAlpha()
       .raw()
@@ -528,7 +590,9 @@ export async function construirePlanGris(
     }
   }
 
-  const pose = await poserProduitSurCible(gris, produit, cible, opts.seuilAlpha, false, false)
+  // Anti-poussière ACTIF (21/08) : la boîte du produit ignore les pixels de
+  // détourage isolés — voir nettoyerProduit (bug ARLBERG 300B180).
+  const pose = await poserProduitSurCible(gris, produit, cible, opts.seuilAlpha, false, false, true)
   let buffer = pose.image
   if (apresSvg) {
     buffer = await sharp(buffer)

@@ -39,6 +39,29 @@ export interface CadrageDaReglages {
   bandesSol: boolean
   /** Largeur étalon du resizing (cm) — null = vraie largeur. FIGÉE (pas d'UI). */
   refWidthCm: number | null
+  /**
+   * RÈGLE RATIO (20/08/2026, tableau croisé du directeur — validée sur 26
+   * générations EIGER) : le produit est posé à sa VRAIE largeur et la fenêtre
+   * de scène est PROPORTIONNELLE à cette largeur (scène de référence ×
+   * largeur ÷ largeur étalon). Résultat : le portail occupe toujours la même
+   * largeur d'image, sa hauteur suit son vrai ratio H/L, piliers et muret
+   * sont vus à la même échelle (caméra plus proche pour les petits). Quand
+   * elle est active, l'étalonnage refWidthCm ET la bascule XL ne servent plus
+   * — refWidthCm ne joue que le rôle de largeur de référence. Désactivée =
+   * ancienne règle telle quelle (rollback).
+   */
+  ratioActif: boolean
+  /**
+   * RATIO : part de la LARGEUR d'image occupée par le portail (%), identique
+   * pour toutes les tailles — c'est la constante de la règle, et la SEULE
+   * vérité du cadrage : le zoom caméra ne s'applique PAS en règle ratio (il en
+   * faisait doublon — remarque Mathias 20/08 ; les recettes zoomées sont
+   * re-exprimées en % : coulissant 92 % de zoom → portail 68 %). La fenêtre de
+   * scène en cm s'en déduit en interne.
+   */
+  ratioPortailPct: number
+  /** RATIO : part de la HAUTEUR d'image occupée par le sol sous le portail (%). */
+  ratioSolPct: number
   /** Zoom caméra (%, 100 = neutre). */
   zoom: number
   /** Décalage horizontal du portail (cm, + = vers la droite) — « axe X ». */
@@ -86,6 +109,11 @@ export const CADRAGE_DA_DEFAUTS: Record<MoteurDaCle, CadrageDaReglages> = {
   janus: {
     bandesSol: true,
     refWidthCm: 400,
+    // Règle ratio ACTIVE par défaut (20/08) — portail 74 % / sol 21 % : toutes
+    // les tailles du catalogue 2027 tiennent (pire cas 350×195).
+    ratioActif: true,
+    ratioPortailPct: 74,
+    ratioSolPct: 21,
     zoom: 100,
     offsetX: 0,
     offsetY: 0,
@@ -105,6 +133,13 @@ export const CADRAGE_DA_DEFAUTS: Record<MoteurDaCle, CadrageDaReglages> = {
   terminus: {
     bandesSol: true,
     refWidthCm: 400,
+    // Règle ratio ACTIVE par défaut (20/08) : couvre 300 → 600 avec UN gabarit,
+    // la bascule XL ne sert plus tant qu'elle est active. 68 % (et pas 74) =
+    // la recette « dézoom 92 » du coulissant re-exprimée en % d'image : l'air
+    // dégagé pour le refoulement à droite est conservé.
+    ratioActif: true,
+    ratioPortailPct: 68,
+    ratioSolPct: 21,
     // Dézoom du coulissant standard : dégage l'espace de refoulement à droite.
     zoom: 92,
     offsetX: 0,
@@ -126,7 +161,11 @@ export const CADRAGE_DA_DEFAUTS: Record<MoteurDaCle, CadrageDaReglages> = {
     bandesSol: true,
     // Portillon : VRAIE largeur (pas d'étalon), recette zoom/décalage figée
     // extraite des réglages Mathias du 07/08 (validée sur les 4 tailles ARLBERG).
+    // Règle ratio SANS OBJET (largeur unique 100) : désactivée, recette gardée.
     refWidthCm: null,
+    ratioActif: false,
+    ratioPortailPct: 74,
+    ratioSolPct: 21,
     zoom: 134,
     offsetX: 0,
     offsetY: 20,
@@ -176,6 +215,11 @@ export function sanitizeCadrageDa(input: unknown): Partial<CadrageDaReglages> | 
   if (typeof src.bandesSol === 'boolean') out.bandesSol = src.bandesSol
   const refWidthCm = numOuNull(src.refWidthCm, 50, 1000)
   if (refWidthCm !== undefined) out.refWidthCm = refWidthCm
+  if (typeof src.ratioActif === 'boolean') out.ratioActif = src.ratioActif
+  const ratioPortailPct = num(src.ratioPortailPct, 30, 95)
+  if (ratioPortailPct !== undefined) out.ratioPortailPct = ratioPortailPct
+  const ratioSolPct = num(src.ratioSolPct, 0, 60)
+  if (ratioSolPct !== undefined) out.ratioSolPct = ratioSolPct
   const zoom = num(src.zoom, 25, 400)
   if (zoom !== undefined) out.zoom = zoom
   const offsetX = num(src.offsetX, -200, 200)

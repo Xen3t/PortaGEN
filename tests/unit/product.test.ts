@@ -40,6 +40,9 @@ describe('prepareProduct', () => {
       w: 200,
       h: 90,
     })
+    // Coulissants 2027 jusqu'à 600 de large (21/08 — le plafond historique de
+    // 500 affichait « taille ? » au dépôt d'un 600C).
+    expect(parseSizeFromProductName('EIGER 600C140.png')).toEqual({ w: 600, h: 140 })
     expect(parseSizeFromProductName('portail-moderne.png')).toBeNull()
     expect(parseSizeFromProductName('X-999Z999.png')).toBeNull() // hors bornes plausibles
   })

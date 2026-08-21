@@ -67,6 +67,20 @@ describe('RALify — résolution de la cible', () => {
     // Nom passé « nom produit + fichier » (pipeline) : le fragment matche aussi.
     expect(resolveRalifyCible(r, 'VOGEL gris_300x140.png', 'gris')).toBe('#2e3238')
   })
+
+  it('« Aucun RAL » (choix manuel 18/08) : jamais de traitement, exceptions comprises', () => {
+    const r = actives({
+      exceptions: [
+        // Exception qui forcerait un RAL sur TOUS les coloris du produit :
+        // le choix « Aucun RAL » doit quand même primer.
+        { contient: 'VOGEL', coloris: null, traiter: true, cible: '#2e3238', application: { ...RALIFY_APPLICATION_DEFAUT } },
+      ],
+    })
+    expect(resolveRalifyCible(r, 'VOGEL 300B140.png', 'Aucun RAL')).toBeNull()
+    const d = resolveRalifyDecision(r, 'VOGEL 300B140.png', 'Aucun RAL')
+    expect(d.raison).toContain('Aucun RAL')
+    expect(d.application).toEqual({ avant: true, apres: false })
+  })
 })
 
 describe('RALify — validation de la config', () => {

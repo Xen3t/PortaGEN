@@ -4,6 +4,7 @@ import { getSetting, setSetting } from '@/lib/db/settings'
 import type { GabaritSetKey } from '@/lib/gabaritSets'
 import { RALIFY_DEFAUTS, sanitizeRalify, type RalifyReglages } from '@/lib/ralify'
 import { sanitizeCadrageDa, type CadrageDaReglages } from '@/lib/cadrageDa'
+import { sanitizeTaillesMes, type TailleMes } from '@/lib/taillesMes'
 
 /**
  * Registre des MOTEURS (cadrage docs/CADRAGE-MOTEURS-2026-07-12.md, maquette
@@ -188,6 +189,13 @@ export interface MoteurReglages {
    * Jamais consulté par les moteurs legacy.
    */
   cadrageDa?: Partial<CadrageDaReglages>
+  /**
+   * TABLEAU DES TAILLES proposées en MES (20/08/2026) — moteurs décor autour
+   * seulement (Admin → Réglages → fiche moteur → Tailles). Absent = les tailles
+   * du catalogue 2027 (src/lib/taillesMes.ts). Une taille hors tableau est
+   * refusée au lancement. Jamais consulté par les moteurs legacy.
+   */
+  taillesMes?: TailleMes[]
 }
 
 export const MOTEUR_REGLAGES_DEFAUTS: MoteurReglages = {
@@ -309,6 +317,14 @@ export function sanitizeMoteurReglages(input: unknown): Partial<MoteurReglages> 
   } else if (src.cadrageDa !== undefined) {
     const cadrageDa = sanitizeCadrageDa(src.cadrageDa)
     if (cadrageDa) out.cadrageDa = cadrageDa
+  }
+  // Tableau des tailles MES (20/08) : même mécanique de delta que cadrageDa —
+  // `null` explicite = retour aux tailles du catalogue.
+  if (src.taillesMes === null) {
+    out.taillesMes = undefined
+  } else if (src.taillesMes !== undefined) {
+    const taillesMes = sanitizeTaillesMes(src.taillesMes)
+    if (taillesMes) out.taillesMes = taillesMes
   }
   if (typeof src.livraisonName === 'string') {
     // Modèle de NOM DE FICHIER : on refuse dès maintenant les caractères invalides

@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireApiUser } from '@/lib/auth/session'
 import { config } from '@/lib/config'
 import { cadrageDaEffectif } from '@/lib/cadrageDa'
-import { bancCadrage } from '@/lib/decorAutour'
+import { bancCadrage, controleCadrageRatio } from '@/lib/decorAutour'
+import { estTailleOfferte, taillesMesEffectives } from '@/lib/taillesMes'
 import { getMesDecor } from '@/lib/db/mesDecors'
 import { getProduitDescription } from '@/lib/db/produitDescriptions'
 import {
@@ -12,7 +13,7 @@ import {
   getGenerationSession,
 } from '@/lib/db/generationSessions'
 import { launchDecorAutourJobs, type DecorAutourLaunchItem } from '@/lib/server/launchDecorAutour'
-import { getMoteurDaReglages, moteurDaDef } from '@/lib/moteursDa'
+import { getMoteurDaReglages, moteurDaDef, patchMoteurDaReglages } from '@/lib/moteursDa'
 import { parseProduitFromFileName } from '@/lib/productName'
 import type { ImageSize } from '@/lib/genai/client'
 
@@ -57,6 +58,12 @@ export async function POST(req: NextRequest) {
     decorId?: number
     /** true = regénération manuelle (↻) : jamais de juge (règle 17/08). */
     regen?: boolean
+    /** true = l'utilisateur a confirmé l'ENREGISTREMENT des tailles hors
+     *  tableau (21/08) : elles rejoignent le tableau du moteur puis on lance. */
+    ajouterTailles?: boolean
+    /** true = générer SANS enregistrer (21/08, demande Mathias) : gabarit
+     *  calculé pour ces tailles, ponctuel — le tableau officiel ne bouge pas. */
+    tolererTailles?: boolean
   }
   try {
     body = await req.json()
@@ -90,6 +97,8 @@ export async function POST(req: NextRequest) {
   // l'upload du banc (sous data/generation/banc-…) — anti-évasion de chemin.
   const genRoot = path.join(config.dataDir, 'generation')
   const items: DecorAutourLaunchItem[] = []
+  /** Tailles du lot absentes du tableau du moteur (21/08) — voir plus bas. */
+  const taillesInconnues: { w: number; h: number }[] = []
   /** Nom du 1ᵉʳ produit du lot — titre de la session si le champ Produit est vide. */
   let premierProduit = ''
   // Réglages « Cadrage & scène » du moteur (07/08 soir) : pilotent bancCadrage
@@ -109,6 +118,23 @@ export async function POST(req: NextRequest) {
     if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
       return NextResponse.json({ error: 'Taille manquante ou invalide.' }, { status: 400 })
     }
+    // Garde-fou règle ratio (20/08) : une taille qui déborde du gabarit de
+    // référence bloque le lancement avec un message clair — jamais de chapeau
+    // coupé en silence, jamais d'élargissement automatique.
+    const debordement = controleCadrageRatio(moteur.key, { w, h }, cadrage)
+    if (debordement) {
+      return NextResponse.json({ error: debordement }, { status: 400 })
+    }
+    // Tableau des tailles (20/08, adouci 21/08 — demande Mathias : le tableau
+    // est un RÉFÉRENTIEL, pas un mur) : une taille hors tableau est signalée
+    // au client (409 + liste), qui demande à l'utilisateur s'il veut
+    // l'ENREGISTRER comme taille officielle ; confirmé (ajouterTailles), elle
+    // rejoint le tableau du moteur puis la génération part normalement.
+    if (!estTailleOfferte(taillesMesEffectives(moteur.key, reglagesMoteur.taillesMes), w, h)) {
+      if (!taillesInconnues.some((t) => t.w === w && t.h === h)) {
+        taillesInconnues.push({ w, h })
+      }
+    }
     // Description produit (bibliothèque vision, clé produit+coloris+moteur) :
     // cherchée PAR ITEM côté serveur — survit au reload, jamais envoyée par le
     // client. Absente = le step retombe sur la phrase générique.
@@ -126,6 +152,33 @@ export async function POST(req: NextRequest) {
         // largeur — un lot peut mélanger standard et XL.
         ...bancCadrage(moteur.key, w, cadrage),
       },
+    })
+  }
+
+  // Tailles hors tableau (21/08) : sans confirmation → 409 avec la liste, le
+  // client demande à l'utilisateur. Trois issues :
+  //  - ajouterTailles → elles deviennent des tailles OFFICIELLES du moteur
+  //    (visibles dans Admin → Réglages → Tailles) puis le lancement continue ;
+  //  - tolererTailles → génération PONCTUELLE : le gabarit ratio est calculé
+  //    pour ces tailles comme pour n'importe quelle autre, mais le tableau
+  //    officiel ne bouge pas (demande Mathias : jamais d'inscription forcée) ;
+  //  - ni l'un ni l'autre → rien ne part.
+  if (taillesInconnues.length > 0 && body.tolererTailles !== true) {
+    if (body.ajouterTailles !== true) {
+      const liste = taillesInconnues.map((t) => `${t.w}×${t.h}`).join(', ')
+      return NextResponse.json(
+        {
+          error: `${liste} : taille${taillesInconnues.length > 1 ? 's' : ''} hors du tableau des tailles du moteur.`,
+          taillesInconnues,
+        },
+        { status: 409 }
+      )
+    }
+    patchMoteurDaReglages(moteur.key, {
+      taillesMes: [
+        ...taillesMesEffectives(moteur.key, reglagesMoteur.taillesMes),
+        ...taillesInconnues,
+      ],
     })
   }
 

@@ -8,7 +8,11 @@ export function parseSizeFromProductName(fileName: string): { w: number; h: numb
   if (!match) return null
   const w = Number(match[1])
   const h = Number(match[2])
-  if (w < 80 || w > 500 || h < 60 || h > 250) return null
+  // Bornes alignées sur le catalogue 2027 (21/08 : le plafond historique de
+  // 500 rejetait les coulissants 600C — « taille ? » au dépôt) et sur les
+  // bornes du tableau des tailles (sanitizeTaillesMes : largeur ≤ 1000,
+  // hauteur ≤ 400). La largeur reste de fait ≤ 999 (3 chiffres).
+  if (w < 80 || h < 60 || h > 400) return null
   return { w, h }
 }
 

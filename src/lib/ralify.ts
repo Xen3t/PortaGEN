@@ -75,6 +75,19 @@ export const RAL_CIBLES: ReadonlyArray<{ ral: string; label: string; hex: string
   { ral: 'RAL 9010', label: 'blanc pur', hex: '#f1ece1' },
 ]
 
+/**
+ * Coloris SPÉCIAL « Aucun RAL » (18/08, demande Mathias) : proposé dans le
+ * sélecteur de coloris des cases MES Contrainte. Le choisir coupe TOUT
+ * traitement RALify pour cette image — avant comme après la MES, exceptions
+ * produit comprises — et le prompt garde « la couleur visible sur le produit ».
+ */
+export const COLORIS_AUCUN_RAL = 'Aucun RAL'
+
+/** Vrai si le coloris est le choix « Aucun RAL » (tolérant à la casse). */
+export function isColorisAucunRal(coloris?: string | null): boolean {
+  return (coloris ?? '').trim().toUpperCase().includes('AUCUN')
+}
+
 /** Libellé d'une cible ('RAL 7016 · gris anthracite', ou l'hex si hors palette). */
 export function ralCibleLabel(hex: string | null): string {
   if (!hex) return 'Ne pas toucher'
@@ -271,6 +284,11 @@ export function resolveRalifyDecision(
 ): RalifyDecision {
   const aucun = { ...RALIFY_APPLICATION_DEFAUT }
   if (!reglages.actif) return { cible: null, raison: 'RALify désactivé', application: aucun }
+  // « Aucun RAL » choisi à la main (18/08) : le choix utilisateur prime sur
+  // TOUT, exceptions produit comprises — jamais de traitement.
+  if (isColorisAucunRal(coloris)) {
+    return { cible: null, raison: 'Coloris « Aucun RAL » : jamais de traitement', application: aucun }
+  }
   const key = colorisKeyRalify(coloris)
   const name = productName.toLowerCase()
   for (const ex of reglages.exceptions) {

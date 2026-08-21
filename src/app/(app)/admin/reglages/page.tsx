@@ -12,7 +12,8 @@ import {
   type CadrageDaReglages,
   type CouleursPlan,
 } from '@/lib/cadrageDa'
-import { computeLayout, projection } from '@/lib/geometry'
+import { computeLayout, projection, DEFAULT_PARAMS } from '@/lib/geometry'
+import { taillesMesEffectives, type TailleMes } from '@/lib/taillesMes'
 import { ralCodeDepuisHex, ralHexDepuisCode } from '@/lib/ralify'
 
 /**
@@ -148,6 +149,7 @@ type MoteurRubrique =
   | 'detection'
   | 'ralify'
   | 'cadrage'
+  | 'tailles'
   | 'gabarits'
   | 'gabarits-xl'
   | 'canny'
@@ -173,6 +175,8 @@ const MOTEUR_RUBRIQUES: { rub: MoteurRubrique; label: string; xl?: boolean }[] =
   { rub: 'ralify', label: 'RALify' },
   // Fiche décor autour seulement (07/08 soir) : le resizing/la scène sous UI.
   { rub: 'cadrage', label: 'Cadrage' },
+  // Fiche décor autour seulement (20/08) : le tableau croisé des tailles.
+  { rub: 'tailles', label: 'Tailles' },
   { rub: 'gabarits', label: 'Gabarits' },
   { rub: 'gabarits-xl', label: 'Gabarits XL', xl: true },
   { rub: 'canny', label: 'Canny' },
@@ -201,9 +205,24 @@ function apercuLayout(
   taille: { w: number; h: number }
 ) {
   const terminus = moteur === 'terminus'
-  const xl = terminus && taille.w >= cadrage.xlMinW
+  // Règle RATIO (20/08) : vraie largeur + fenêtre de scène ∝ largeur — même
+  // logique que bancCadrage. La bascule XL ne joue plus quand elle est active.
+  const ratio = cadrage.ratioActif && cadrage.refWidthCm !== null
+  const xl = terminus && !ratio && taille.w >= cadrage.xlMinW
   const gab: Record<string, number> = {}
-  if (xl) {
+  if (ratio) {
+    const f = taille.w / (cadrage.refWidthCm as number)
+    // % d'image → fenêtre de scène en cm (même conversion que bancCadrage).
+    const sceneHRef =
+      ((cadrage.refWidthCm as number) * 100) / cadrage.ratioPortailPct / DEFAULT_PARAMS.mesAspect
+    gab.sceneH = sceneHRef * f
+    gab.groundY = sceneHRef * (cadrage.ratioSolPct / 100) * f
+    // Pas de zoom en règle ratio : « Portail dans l'image (%) » est la seule
+    // vérité du cadrage (le zoom en faisait doublon).
+    if (cadrage.offsetX !== 0) gab.offsetX = cadrage.offsetX * f
+    if (cadrage.offsetY !== 0) gab.offsetY = cadrage.offsetY * f
+    if (cadrage.pillarHMax !== null) gab.pillarHMax = cadrage.pillarHMax
+  } else if (xl) {
     gab.sceneH = cadrage.xlSceneH
     gab.groundY = cadrage.xlGroundY
     if (cadrage.xlZoom !== 100) gab.zoom = cadrage.xlZoom
@@ -219,7 +238,7 @@ function apercuLayout(
     w: Math.max(1, Math.round(taille.w * echL)),
     h: Math.max(1, Math.round(taille.h * echH)),
   }
-  const refWidth = xl ? cadrage.xlRefWidthCm : cadrage.refWidthCm
+  const refWidth = ratio ? null : xl ? cadrage.xlRefWidthCm : cadrage.refWidthCm
   const refWidthEff = refWidth !== null ? Math.max(1, Math.round(refWidth * echL)) : null
   const layout = computeLayout(tailleEff, {
     ...gab,
@@ -237,8 +256,21 @@ function alertesCadrage(
   moteur: 'janus' | 'terminus' | 'forculus',
   cadrage: CadrageDaReglages
 ): { pilier: string[]; portail: string[] } {
-  const largeurs =
-    moteur === 'terminus'
+  // Règle ratio : le cadrage dépend de la largeur — on scanne les deux bornes
+  // de la famille (le 300 est le plus serré, la plus grande largeur la plus
+  // dézoomée). Ancienne règle : largeurs représentatives historiques.
+  const ratio = cadrage.ratioActif && cadrage.refWidthCm !== null
+  const largeurs = ratio
+    ? moteur === 'terminus'
+      ? [
+          { w: 300, tag: ' (L300)' },
+          { w: 600, tag: ' (L600)' },
+        ]
+      : [
+          { w: 300, tag: ' (L300)' },
+          { w: 400, tag: ' (L400)' },
+        ]
+    : moteur === 'terminus'
       ? [
           { w: 350, tag: '' },
           { w: 500, tag: ' XL' },
@@ -526,19 +558,48 @@ function ApercuCadrage({
   moteur,
   cadrage,
   vueXl = false,
+  hauteurs,
+  largeurs,
   onCouleur,
 }: {
   moteur: 'janus' | 'terminus' | 'forculus'
   cadrage: CadrageDaReglages
   /** COULISSANT : true = la vue XL est affichée (commutateur de la carte). */
   vueXl?: boolean
+  /** Hauteurs proposées au sélecteur (21/08) : celles du TABLEAU DES TAILLES
+   *  du moteur — plus de liste figée H100-H200 quand la liste existe. */
+  hauteurs?: number[]
+  /** Largeurs proposées au sélecteur (21/08, demande Mathias) : celles du
+   *  tableau des tailles — absentes = largeur représentative historique. */
+  largeurs?: number[]
   /** Édition d'une couleur au clic sur l'aperçu (07/08 soir). */
   onCouleur?: (part: keyof CouleursPlan, hex: string) => void
 }) {
+  const choixHauteurs = hauteurs && hauteurs.length > 0 ? hauteurs : APERCU_HAUTEURS
+  const cleHauteurs = choixHauteurs.join('-')
   const [h, setH] = useState(160)
   useEffect(() => {
-    setH(moteur === 'forculus' ? 140 : 160)
-  }, [moteur])
+    const defaut = moteur === 'forculus' ? 140 : 160
+    setH(
+      choixHauteurs.includes(defaut)
+        ? defaut
+        : choixHauteurs[Math.floor(choixHauteurs.length / 2)]
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moteur, cleHauteurs])
+  const choixLargeurs = largeurs && largeurs.length > 0 ? largeurs : null
+  const cleLargeurs = (choixLargeurs ?? []).join('-')
+  const [w, setW] = useState(350)
+  useEffect(() => {
+    if (!choixLargeurs) return
+    const defaut = moteur === 'forculus' ? 100 : 350
+    setW(
+      choixLargeurs.includes(defaut)
+        ? defaut
+        : choixLargeurs[Math.floor(choixLargeurs.length / 2)]
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moteur, cleLargeurs])
 
   // Menu couleur : ouvert au clic sur une partie, positionné près du clic
   // (coordonnées relatives au conteneur de l'aperçu).
@@ -582,25 +643,51 @@ function ApercuCadrage({
     </div>
   )
 
+  const classeSelecteur =
+    'bg-white/55 border border-border/50 rounded-[6px] px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary/70 cursor-pointer opacity-60 hover:opacity-100 hover:bg-white/90 transition-opacity focus:outline-none focus:border-brand-green'
+  // Largeur ET hauteur de l'aperçu (21/08, demande Mathias) : les deux listes
+  // viennent du tableau des tailles du moteur, côte à côte en bas à droite.
   const selecteur = (
-    <select
-      value={h}
-      onChange={(e) => setH(Number(e.target.value))}
-      title="Hauteur de l'aperçu (cm)"
-      className="absolute bottom-1.5 right-1.5 bg-white/55 border border-border/50 rounded-[6px] px-1.5 py-0.5 text-[11px] font-semibold text-text-secondary/70 cursor-pointer opacity-60 hover:opacity-100 hover:bg-white/90 transition-opacity focus:outline-none focus:border-brand-green"
-    >
-      {APERCU_HAUTEURS.map((v) => (
-        <option key={v} value={v}>
-          H {v}
-        </option>
-      ))}
-    </select>
+    <div className="absolute bottom-1.5 right-1.5 flex gap-1">
+      {choixLargeurs && !vueXl && (
+        <select
+          value={w}
+          onChange={(e) => setW(Number(e.target.value))}
+          title="Largeur de l'aperçu (cm)"
+          className={classeSelecteur}
+        >
+          {choixLargeurs.map((v) => (
+            <option key={v} value={v}>
+              L {v}
+            </option>
+          ))}
+        </select>
+      )}
+      <select
+        value={h}
+        onChange={(e) => setH(Number(e.target.value))}
+        title="Hauteur de l'aperçu (cm)"
+        className={classeSelecteur}
+      >
+        {choixHauteurs.map((v) => (
+          <option key={v} value={v}>
+            H {v}
+          </option>
+        ))}
+      </select>
+    </div>
   )
 
-  // Coulissant : UNE scène à la fois, choisie par le commutateur Standard/XL
-  // de la carte (demande Mathias 07/08 soir — fini le côte à côte).
-  const largeurApercu =
-    moteur === 'terminus' ? (vueXl ? 500 : 350) : moteur === 'forculus' ? 100 : 350
+  // Coulissant en ANCIENNE règle : la vue XL force sa largeur représentative
+  // (commutateur Standard/XL). Sinon : largeur choisie dans la liste des
+  // tailles quand elle existe, largeur représentative historique en repli.
+  const largeurApercu = vueXl
+    ? 500
+    : choixLargeurs
+      ? w
+      : moteur === 'forculus'
+        ? 100
+        : 350
   return (
     <div className="max-w-[640px]">
       <div ref={boxRef} className="relative">
@@ -614,6 +701,236 @@ function ApercuCadrage({
         {menu}
       </div>
       {blocAlertes}
+    </div>
+  )
+}
+
+/** Une taille sort-elle du cadre avec le cadrage courant ? (règle ratio
+ *  seulement : avec l'ancienne règle le gabarit est unique, rien à contrôler). */
+function tailleDeborde(
+  moteur: 'janus' | 'terminus' | 'forculus',
+  cadrage: CadrageDaReglages,
+  t: TailleMes
+): boolean {
+  return (
+    cadrage.ratioActif &&
+    cadrage.refWidthCm !== null &&
+    apercuLayout(moteur, cadrage, t).layout.isClamped
+  )
+}
+
+/**
+ * LISTE des tailles proposées en MES (20/08 soir, retour Mathias : « je veux
+ * une liste de tailles, dedans j'ajoute/retire ; un tableau croisé en dessous
+ * sur lequel on n'a pas d'impact ») : chips triées, retrait au ✕, ajout par
+ * largeur + hauteur. Une chip passe en rouge si la taille sort du cadre avec
+ * le cadrage actuel du moteur.
+ */
+function ListeTailles({
+  moteur,
+  cadrage,
+  tailles,
+  onChange,
+}: {
+  moteur: 'janus' | 'terminus' | 'forculus'
+  cadrage: CadrageDaReglages
+  tailles: TailleMes[]
+  onChange: (tailles: TailleMes[]) => void
+}) {
+  const [saisieW, setSaisieW] = useState('')
+  const [saisieH, setSaisieH] = useState('')
+  useEffect(() => {
+    setSaisieW('')
+    setSaisieH('')
+  }, [moteur])
+
+  // Mêmes bornes que la validation serveur (sanitizeTaillesMes).
+  const ajouter = () => {
+    const w = Math.round(Number(saisieW))
+    const h = Math.round(Number(saisieH))
+    if (!Number.isFinite(w) || w < 50 || w > 1000) return
+    if (!Number.isFinite(h) || h < 50 || h > 400) return
+    if (tailles.some((t) => t.w === w && t.h === h)) return
+    onChange([...tailles, { w, h }].sort((a, b) => a.w - b.w || a.h - b.h))
+    setSaisieW('')
+    setSaisieH('')
+  }
+  const retirer = (w: number, h: number) =>
+    onChange(tailles.filter((t) => !(t.w === w && t.h === h)))
+
+  const champ =
+    'w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors'
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {tailles.map((t) => {
+          const ko = tailleDeborde(moteur, cadrage, t)
+          return (
+            <span
+              key={`${t.w}x${t.h}`}
+              title={ko ? `${t.w}×${t.h} sort du cadre avec le cadrage actuel` : undefined}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[13px] font-semibold ${
+                ko
+                  ? 'bg-brand-red-light border-brand-red text-brand-red'
+                  : 'bg-brand-green-light border-brand-green text-brand-green'
+              }`}
+            >
+              {t.w}×{t.h}
+              <button
+                type="button"
+                onClick={() => retirer(t.w, t.h)}
+                title={`Retirer la taille ${t.w}×${t.h}`}
+                className="hover:opacity-60 font-bold"
+              >
+                ✕
+              </button>
+            </span>
+          )
+        })}
+        {tailles.length === 0 && (
+          <span className="text-sm text-text-disabled">
+            Aucune taille — tout lancement sera refusé pour ce moteur.
+          </span>
+        )}
+      </div>
+      <div className="flex items-end gap-2 flex-wrap">
+        <div>
+          <FieldLabel>Largeur (cm)</FieldLabel>
+          <input
+            type="number"
+            min={50}
+            max={1000}
+            value={saisieW}
+            onChange={(e) => setSaisieW(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') ajouter()
+            }}
+            className={champ}
+          />
+        </div>
+        <div>
+          <FieldLabel>Hauteur (cm)</FieldLabel>
+          <input
+            type="number"
+            min={50}
+            max={400}
+            value={saisieH}
+            onChange={(e) => setSaisieH(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') ajouter()
+            }}
+            className={champ}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={ajouter}
+          disabled={!saisieW || !saisieH}
+          className="bg-brand-green text-white text-sm font-bold rounded-[8px] px-4 py-2 hover:bg-brand-green-hover transition-colors disabled:opacity-50"
+        >
+          Ajouter
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * TABLEAU CROISÉ dérivé de la liste — PUREMENT VISUEL, aucun clic (retour
+ * Mathias 20/08 soir, précisé « un vrai tableau avec les ratios calculés ») :
+ * le tableau du directeur, calculé. Chaque case = le RATIO hauteur ÷ largeur
+ * (la forme du portail dans l'image) ; en règle ratio chaque ligne affiche
+ * aussi son échelle (1 cm = X px sur la livraison 2000 px). Rouge = la taille
+ * sort du cadre avec le cadrage actuel.
+ */
+function TableauCroiseTailles({
+  moteur,
+  cadrage,
+  tailles,
+}: {
+  moteur: 'janus' | 'terminus' | 'forculus'
+  cadrage: CadrageDaReglages
+  tailles: TailleMes[]
+}) {
+  if (tailles.length === 0) return null
+  const largeurs = [...new Set(tailles.map((t) => t.w))].sort((a, b) => a - b)
+  const hauteurs = [...new Set(tailles.map((t) => t.h))].sort((a, b) => a - b)
+  const offerte = (w: number, h: number) => tailles.some((t) => t.w === w && t.h === h)
+  const enDebord = tailles.filter((t) => tailleDeborde(moteur, cadrage, t))
+  const ratioActif = cadrage.ratioActif && cadrage.refWidthCm !== null
+  // Règle ratio : le portail occupe ratioPortailPct % des 2000 px de la
+  // livraison, quelle que soit sa largeur → l'échelle px/cm ne dépend que de
+  // la largeur (caméra plus proche pour les petits).
+  const pxParCm = (w: number) => (2000 * (cadrage.ratioPortailPct / 100)) / w
+  const fr = (n: number) => n.toFixed(2).replace('.', ',')
+  const cellule = 'border border-border px-3 py-1.5 text-center'
+  return (
+    <div className="overflow-x-auto">
+      <table className="border-collapse text-sm">
+        <thead>
+          <tr>
+            <th className="border border-border bg-surface px-3 py-1.5 text-left text-xs font-bold text-text-secondary">
+              L × H
+            </th>
+            {hauteurs.map((h) => (
+              <th
+                key={h}
+                className="border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary"
+              >
+                H {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {largeurs.map((w) => (
+            <tr key={w}>
+              <th className="border border-border bg-surface px-3 py-1.5 text-left whitespace-nowrap">
+                <span className="text-[13px] font-bold">{w} cm</span>
+                {ratioActif && (
+                  <span className="block text-[10.5px] font-normal text-text-secondary">
+                    1 cm = {fr(pxParCm(w))} px
+                  </span>
+                )}
+              </th>
+              {hauteurs.map((h) => {
+                const on = offerte(w, h)
+                const ko = on && tailleDeborde(moteur, cadrage, { w, h })
+                return (
+                  <td
+                    key={h}
+                    title={
+                      on
+                        ? `${w}×${h} — ratio ${fr(h / w)}${ko ? ' — sort du cadre' : ''}`
+                        : undefined
+                    }
+                    className={`${cellule} ${
+                      ko
+                        ? 'bg-brand-red-light text-brand-red font-bold'
+                        : on
+                          ? 'font-semibold'
+                          : 'bg-surface/60 text-text-disabled'
+                    }`}
+                  >
+                    {on ? fr(h / w) : '—'}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-1.5 text-[11.5px] text-text-secondary">
+        Valeur = ratio hauteur ÷ largeur : la forme du portail dans l&apos;image (0,35 = écrasé,
+        0,60 = presque carré). Même largeur d&apos;image pour tous, la hauteur suit ce ratio.
+      </p>
+      {enDebord.length > 0 && (
+        <div className="mt-2 bg-brand-red-light text-brand-red text-xs font-bold rounded-[8px] px-3 py-2">
+          ⚠ Sortent du cadre avec le cadrage actuel :{' '}
+          {enDebord.map((t) => `${t.w}×${t.h}`).join(', ')} — baisser « Portail dans l&apos;image
+          (%) » dans Cadrage, ou les retirer de la liste.
+        </div>
+      )}
     </div>
   )
 }
@@ -934,9 +1251,17 @@ export default function MoteursPage() {
   /** COULISSANT : vue affichée dans la carte Cadrage — Standard ou XL, l'aperçu
    *  ET les options suivent (demande Mathias 07/08 soir). */
   const [vueXl, setVueXl] = useState(false)
+  /** Carte Cadrage : bascule aperçu simple ↔ VUE GLOBALE (20/08 soir, demande
+   *  Mathias « comme la planche ») — toutes les tailles de la liste du moteur,
+   *  rendues avec le cadrage courant. */
+  const [vueGlobale, setVueGlobale] = useState(false)
   useEffect(() => {
     setVueXl(false)
+    setVueGlobale(false)
   }, [selected])
+  // Règle ratio active (20/08) : la bascule XL ne joue plus — la vue Xl et ses
+  // champs disparaissent de la carte, quel que soit l'état du commutateur.
+  const vueXlEff = vueXl && selected === 'terminus' && cadEff !== null && !cadEff.ratioActif
 
   /** Réglages du jeu Canny XL (alignement, corridor) — fiche TERMINUS. */
   function setFieldXl<K extends keyof MoteurReglages>(key: K, value: MoteurReglages[K]) {
@@ -978,6 +1303,9 @@ export default function MoteursPage() {
     } else {
       delete body.poseSeuilAlpha
     }
+    // Tableau des tailles (20/08) : delta envoyé tel quel ; null explicite =
+    // retour aux tailles du catalogue (même mécanique que cadrageDa dessous).
+    body.taillesMes = reglages.taillesMes ?? null
     // Cadrage & scène décor autour (07/08 soir) : delta envoyé tel quel ; null
     // EXPLICITE = « revenir à la recette d'usine » (le serveur efface le delta).
     body.cadrageDa = reglages.cadrageDa ?? null
@@ -1201,7 +1529,7 @@ export default function MoteursPage() {
     )
   // Rubriques d'une fiche décor autour : RALify, Cadrage & scène, Prompt
   // System, Export.
-  const DA_RUBRIQUES: MoteurRubrique[] = ['ralify', 'cadrage', 'prompts', 'export']
+  const DA_RUBRIQUES: MoteurRubrique[] = ['ralify', 'cadrage', 'tailles', 'prompts', 'export']
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -1429,38 +1757,118 @@ export default function MoteursPage() {
                     {/* Au-dessus de la preview : commutateur Standard/XL du
                         coulissant à gauche, « Réglages par défaut » à droite
                         (placement demandé par Mathias 08/08). */}
+                    {/* Règle RATIO (20/08 — tableau croisé du directeur) : vraie
+                        largeur + scène proportionnelle, une seule référence par
+                        famille. Active par défaut ; Désactivée = ancienne règle
+                        (étalon figé + bascule XL) telle quelle. Portillon non
+                        concerné (largeur unique). */}
+                    {/* Une seule rangée d'en-tête (alignement demandé par Mathias
+                        20/08) : interrupteur « Règle ratio » à gauche (+ le
+                        commutateur Standard/XL du coulissant quand l'ancienne
+                        règle est active), « Réglages par défaut » à droite. */}
                     <div className="flex items-center justify-between gap-3 mb-3 max-w-[640px]">
-                      {selected === 'terminus' ? (
-                        <Seg
-                          value={vueXl ? 'xl' : 'std'}
-                          options={[
-                            { value: 'std', label: 'Standard' },
-                            { value: 'xl', label: 'XL' },
-                          ]}
-                          onChange={(v) => setVueXl(v === 'xl')}
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {cadEff.refWidthCm !== null && (
+                          <>
+                            <span className="text-sm font-bold">Règle ratio</span>
+                            <Seg
+                              value={cadEff.ratioActif ? 'on' : 'off'}
+                              options={[
+                                { value: 'on', label: 'Activée' },
+                                { value: 'off', label: 'Désactivée' },
+                              ]}
+                              onChange={(v) => setCadrage({ ratioActif: v === 'on' })}
+                              disabled={!reglages}
+                            />
+                          </>
+                        )}
+                        {selected === 'terminus' && !cadEff.ratioActif && (
+                          <Seg
+                            value={vueXl ? 'xl' : 'std'}
+                            options={[
+                              { value: 'std', label: 'Standard' },
+                              { value: 'xl', label: 'XL' },
+                            ]}
+                            onChange={(v) => setVueXl(v === 'xl')}
+                            disabled={!reglages}
+                          />
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isDaKey(selected) && (
+                          <button
+                            type="button"
+                            onClick={() => setVueGlobale(!vueGlobale)}
+                            title="Voir toutes les tailles de la liste du moteur, rendues avec le cadrage courant (comme la planche)"
+                            className={`rounded-[8px] px-3 py-1.5 text-xs font-bold border transition-colors ${
+                              vueGlobale
+                                ? 'bg-brand-green border-brand-green text-white'
+                                : 'bg-white border-border text-text-secondary hover:border-brand-green hover:text-brand-green'
+                            }`}
+                          >
+                            Vue globale
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setField('cadrageDa', undefined)}
                           disabled={!reglages}
-                        />
-                      ) : (
-                        <span />
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setField('cadrageDa', undefined)}
-                        disabled={!reglages}
-                        title="Efface les modifications : le moteur reprend ses réglages par défaut"
-                        className="bg-white border border-border text-text-secondary rounded-[8px] px-3 py-1.5 text-xs font-bold hover:border-brand-green hover:text-brand-green transition-colors disabled:opacity-50"
-                      >
-                        Réglages par défaut
-                      </button>
+                          title="Efface les modifications : le moteur reprend ses réglages par défaut"
+                          className="bg-white border border-border text-text-secondary rounded-[8px] px-3 py-1.5 text-xs font-bold hover:border-brand-green hover:text-brand-green transition-colors disabled:opacity-50"
+                        >
+                          Réglages par défaut
+                        </button>
+                      </div>
                     </div>
                     {/* Couleurs : ÉDITÉES AU CLIC sur l'aperçu (07/08 soir) —
-                        chaque partie ouvre son petit menu RAL/couleur libre. */}
-                    <ApercuCadrage
-                      moteur={isDaKey(selected) ? selected : 'janus'}
-                      cadrage={cadEff}
-                      vueXl={selected === 'terminus' && vueXl}
-                      onCouleur={(part, hex) => setCouleurPlan(part, hex)}
-                    />
+                        chaque partie ouvre son petit menu RAL/couleur libre.
+                        VUE GLOBALE (20/08 soir) : toutes les tailles de la liste
+                        du moteur en vignettes, cadrage courant — la planche,
+                        dans l'app, par type de produit. */}
+                    {vueGlobale && isDaKey(selected) ? (
+                      <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 max-w-[980px]">
+                        {taillesMesEffectives(selected, reglages?.taillesMes).map((t) => (
+                          <div key={`${t.w}x${t.h}`}>
+                            <div className="text-xs font-bold text-text-secondary mb-1">
+                              {t.w}×{t.h}
+                              {tailleDeborde(selected, cadEff, t) && (
+                                <span className="text-brand-red"> — sort du cadre</span>
+                              )}
+                            </div>
+                            <ApercuScene moteur={selected} cadrage={cadEff} taille={t} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <ApercuCadrage
+                        moteur={isDaKey(selected) ? selected : 'janus'}
+                        cadrage={cadEff}
+                        vueXl={vueXlEff}
+                        hauteurs={
+                          isDaKey(selected)
+                            ? [
+                                ...new Set(
+                                  taillesMesEffectives(selected, reglages?.taillesMes).map(
+                                    (t) => t.h
+                                  )
+                                ),
+                              ].sort((a, b) => a - b)
+                            : undefined
+                        }
+                        largeurs={
+                          isDaKey(selected)
+                            ? [
+                                ...new Set(
+                                  taillesMesEffectives(selected, reglages?.taillesMes).map(
+                                    (t) => t.w
+                                  )
+                                ),
+                              ].sort((a, b) => a - b)
+                            : undefined
+                        }
+                        onCouleur={(part, hex) => setCouleurPlan(part, hex)}
+                      />
+                    )}
 
                     {/* « Plan nu » retiré (07/08 soir) ; le titre « Resizing »
                         aussi — ces champs règlent le CADRAGE, pas le resizing
@@ -1469,24 +1877,59 @@ export default function MoteursPage() {
                         soir : « on garde ça ad vitam ») — figée dans la recette :
                         400 pour battant/coulissant, vraie largeur pour portillon,
                         600 en XL. Les champs restants ne touchent qu'au cadrage. */}
-                    <div className="flex items-end gap-4 flex-wrap mt-4">
-                      {/* Vue STANDARD : zoom + décalages de la scène standard.
-                          En vue XL du coulissant ces champs disparaissent (la
-                          scène XL a les siens ci-dessous). */}
-                      {!(selected === 'terminus' && vueXl) && (
-                        <>
-                          <div>
-                            <FieldLabel>Zoom caméra (%)</FieldLabel>
-                            <input
-                              type="number"
-                              min={25}
-                              max={400}
-                              value={cadEff.zoom}
-                              onChange={(e) => setCadrage({ zoom: Number(e.target.value) })}
-                              title="100 = neutre ; moins de 100 dézoome (la scène s'élargit)"
-                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
-                            />
-                          </div>
+                    {/* Réglages GROUPÉS (retour Mathias 20/08 soir : la rangée à
+                        plat mélangeait cadrage et échelle produit — « c'est le
+                        bordel ») : « Cadrage de la scène » d'abord, « Échelle du
+                        produit » (tournevis) ensuite. En vue XL du coulissant,
+                        la scène XL a son propre groupe. */}
+                    {!vueXlEff ? (
+                      <>
+                        <SubHeading>Cadrage de la scène</SubHeading>
+                        <div className="flex items-end gap-4 flex-wrap">
+                          {/* Règle ratio : ses deux curseurs. Rollback : le zoom
+                              caméra les remplace (le zoom est masqué en ratio —
+                              doublon du %, remarque Mathias 20/08). */}
+                          {cadEff.ratioActif && cadEff.refWidthCm !== null ? (
+                            <>
+                              <div>
+                                <FieldLabel>Portail dans l&apos;image (%)</FieldLabel>
+                                <input
+                                  type="number"
+                                  min={30}
+                                  max={95}
+                                  value={cadEff.ratioPortailPct}
+                                  onChange={(e) => setCadrage({ ratioPortailPct: Number(e.target.value) })}
+                                  title="Part de la largeur d'image occupée par le portail — identique pour toutes les tailles. Plus grand = produit plus gros, moins d'air (attention aux alertes hors cadre)."
+                                  className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                                />
+                              </div>
+                              <div>
+                                <FieldLabel>Sol visible (%)</FieldLabel>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={60}
+                                  value={cadEff.ratioSolPct}
+                                  onChange={(e) => setCadrage({ ratioSolPct: Number(e.target.value) })}
+                                  title="Part de la hauteur d'image occupée par le sol (trottoir/route) sous le pied du portail"
+                                  className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <div>
+                              <FieldLabel>Zoom caméra (%)</FieldLabel>
+                              <input
+                                type="number"
+                                min={25}
+                                max={400}
+                                value={cadEff.zoom}
+                                onChange={(e) => setCadrage({ zoom: Number(e.target.value) })}
+                                title="100 = neutre ; moins de 100 dézoome (la scène s'élargit)"
+                                className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                              />
+                            </div>
+                          )}
                           <div>
                             <FieldLabel>Décalage X (cm)</FieldLabel>
                             <input
@@ -1511,12 +1954,13 @@ export default function MoteursPage() {
                               className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
                             />
                           </div>
-                        </>
-                      )}
-                      {/* Vue XL du coulissant : SES réglages de scène — le seuil
-                          « XL à partir de » ferme la rangée (ordre Mathias). */}
-                      {selected === 'terminus' && vueXl && (
-                        <>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* Vue XL du coulissant : SES réglages de scène. */}
+                        <SubHeading>Scène XL</SubHeading>
+                        <div className="flex items-end gap-4 flex-wrap">
                           <div>
                             <FieldLabel>Zoom XL (%)</FieldLabel>
                             <input
@@ -1550,18 +1994,27 @@ export default function MoteursPage() {
                               className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
                             />
                           </div>
-                        </>
-                      )}
-                      {/* Plafond piliers RETIRÉ de l'UI (Mathias 07/08 soir) —
-                          figé dans la recette comme la largeur étalon (202 pour
-                          le portillon, aucun ailleurs). */}
-                      {/* Seuil alpha RETIRÉ de la carte (Mathias 07/08 soir :
-                          tournevis de dépannage, pas un réglage du quotidien —
-                          « ça va juste tout impacter ») : il vit sur sa valeur
-                          par défaut, réglable seulement en me le demandant. */}
-                      {/* Échelle PRODUIT (07/08 soir) : dilate le rectangle de
-                          pose sans toucher à l'échafaudage — largeur centrée,
-                          hauteur ancrée à la ligne de sol. */}
+                          <div>
+                            <FieldLabel>XL à partir de (cm)</FieldLabel>
+                            <input
+                              type="number"
+                              min={200}
+                              max={1000}
+                              value={cadEff.xlMinW}
+                              onChange={(e) => setCadrage({ xlMinW: Number(e.target.value) })}
+                              title="Largeur de produit à partir de laquelle la scène XL s'applique"
+                              className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    {/* Plafond piliers et seuil alpha : toujours HORS UI (décisions
+                        Mathias 07/08 soir) — figés dans les recettes. */}
+                    {/* Échelle PRODUIT (07/08 soir) : dilate le rectangle de pose
+                        sans toucher à l'échafaudage — tournevis, 100 = fidèle. */}
+                    <SubHeading>Échelle du produit (tournevis — 100 = fidèle)</SubHeading>
+                    <div className="flex items-end gap-4 flex-wrap">
                       <div>
                         <FieldLabel>Largeur produit (%)</FieldLabel>
                         <input
@@ -1586,21 +2039,6 @@ export default function MoteursPage() {
                           className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
                         />
                       </div>
-                      {/* « XL à partir de » EN DERNIER de la rangée (ordre Mathias). */}
-                      {selected === 'terminus' && vueXl && (
-                        <div>
-                          <FieldLabel>XL à partir de (cm)</FieldLabel>
-                          <input
-                            type="number"
-                            min={200}
-                            max={1000}
-                            value={cadEff.xlMinW}
-                            onChange={(e) => setCadrage({ xlMinW: Number(e.target.value) })}
-                            title="Largeur de produit à partir de laquelle la scène XL s'applique"
-                            className="w-24 border border-border bg-white rounded-[8px] px-2.5 py-1.5 text-sm focus:outline-none focus:border-brand-green transition-colors"
-                          />
-                        </div>
-                      )}
                     </div>
 
                     {selected === 'terminus' && (
@@ -1633,6 +2071,53 @@ export default function MoteursPage() {
 
                     {/* La rangée de pastilles a DISPARU (07/08 soir) : les
                         couleurs s'éditent au clic sur l'aperçu, directement. */}
+                  </Card>
+                  )}
+
+                  {/* ============ Tailles (20/08 — demande Mathias : le tableau
+                      croisé des tailles proposées, géré à la main, une taille
+                      hors tableau est refusée au lancement) ============ */}
+                  {cadEff && isDaKey(selected) && (
+                  <Card id={MOTEUR_ANCHOR('tailles')}>
+                    <CardTitle
+                      extra={
+                        <button
+                          type="button"
+                          onClick={() => setField('taillesMes', undefined)}
+                          disabled={!reglages}
+                          title="Efface les modifications : le moteur reprend les tailles du catalogue 2027"
+                          className="bg-white border border-border text-text-secondary rounded-[8px] px-3 py-1.5 text-xs font-bold hover:border-brand-green hover:text-brand-green transition-colors disabled:opacity-50"
+                        >
+                          Tailles du catalogue 2027
+                        </button>
+                      }
+                    >
+                      Tailles
+                    </CardTitle>
+                    <p className="text-[13px] text-text-secondary mb-4 max-w-[720px]">
+                      La liste des tailles proposées en mise en situation — ajoute ou retire, le
+                      tableau croisé en dessous se recompose tout seul. Une taille absente de la
+                      liste est <b className="text-text-primary">refusée au lancement</b> avec un
+                      message clair.
+                    </p>
+                    <ListeTailles
+                      moteur={isDaKey(selected) ? selected : 'janus'}
+                      cadrage={cadEff}
+                      tailles={taillesMesEffectives(
+                        isDaKey(selected) ? selected : 'janus',
+                        reglages?.taillesMes
+                      )}
+                      onChange={(t) => setField('taillesMes', t)}
+                    />
+                    <SubHeading>Vue d&apos;ensemble</SubHeading>
+                    <TableauCroiseTailles
+                      moteur={isDaKey(selected) ? selected : 'janus'}
+                      cadrage={cadEff}
+                      tailles={taillesMesEffectives(
+                        isDaKey(selected) ? selected : 'janus',
+                        reglages?.taillesMes
+                      )}
+                    />
                   </Card>
                   )}
 

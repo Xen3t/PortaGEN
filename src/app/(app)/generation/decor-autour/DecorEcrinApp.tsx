@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import BibliothequeDecors, { type MesDecor } from '@/components/BibliothequeDecors'
 import { CANONICAL_COLORIS, colorisDef } from '@/lib/catalogue/colorisPalette'
+import { COLORIS_AUCUN_RAL, isColorisAucunRal } from '@/lib/ralify'
 import { parseProduitFromFileName, parseSizeFromProductName } from '@/lib/productName'
 import { PictoIllu } from '../../Silhouette'
 
@@ -1047,6 +1048,30 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
     }
   }
 
+  /** Tailles hors tableau (21/08) : le serveur répond 409 + liste — une MODALE
+   *  de l'app (pas un dialogue navigateur, demande Mathias) propose TROIS
+   *  issues : enregistrer comme tailles officielles puis générer, générer
+   *  SANS enregistrer (gabarit ponctuel, le tableau ne bouge pas — demande
+   *  Mathias : jamais d'inscription forcée), ou annuler. */
+  type ChoixTailles = 'enregistrer' | 'temporaire' | false
+  const [confirmTailles, setConfirmTailles] = useState<{
+    tailles: { w: number; h: number }[]
+    resoudre: (choix: ChoixTailles) => void
+  } | null>(null)
+  function demanderTaillesInconnues(data: unknown): Promise<ChoixTailles> {
+    const tailles = (data as { taillesInconnues?: { w: number; h: number }[] })?.taillesInconnues
+    if (!Array.isArray(tailles) || tailles.length === 0) return Promise.resolve(false)
+    return new Promise((resolve) =>
+      setConfirmTailles({
+        tailles,
+        resoudre: (choix) => {
+          setConfirmTailles(null)
+          resolve(choix)
+        },
+      })
+    )
+  }
+
   // — génération : 1 job par image prête (pas encore lancée) —
   const aLancer = items.filter((i) => i.status === 'ready' && !i.jobId)
   async function generate() {
@@ -1054,28 +1079,39 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
     setLaunching(true)
     setNotice(null)
     try {
-      const res = await fetch('/api/banc-generation/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: aLancer.map((i) => ({
-            productPath: i.productPath,
-            w: i.w,
-            h: i.h,
-            coloris: i.coloris,
-            // Nom d'origine = clé de la bibliothèque de descriptions.
-            name: i.name,
-          })),
-          moteur: typo,
-          imageSize,
-          // Le LOT sert de batchId : au reload, /api/gamme/<lot> retrouve les jobs.
-          batchId: lotId ?? batchId,
-          produit,
-          // Décor choisi dans l'en-tête (08/08) — absent = défaut bibliothèque.
-          ...(decorId !== null ? { decorId } : {}),
-        }),
-      })
-      const data = await res.json().catch(() => null)
+      const lancer = (choix: ChoixTailles) =>
+        fetch('/api/banc-generation/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: aLancer.map((i) => ({
+              productPath: i.productPath,
+              w: i.w,
+              h: i.h,
+              coloris: i.coloris,
+              // Nom d'origine = clé de la bibliothèque de descriptions.
+              name: i.name,
+            })),
+            moteur: typo,
+            imageSize,
+            // Le LOT sert de batchId : au reload, /api/gamme/<lot> retrouve les jobs.
+            batchId: lotId ?? batchId,
+            produit,
+            // Décor choisi dans l'en-tête (08/08) — absent = défaut bibliothèque.
+            ...(decorId !== null ? { decorId } : {}),
+            ...(choix === 'enregistrer' ? { ajouterTailles: true } : {}),
+            ...(choix === 'temporaire' ? { tolererTailles: true } : {}),
+          }),
+        })
+      let res = await lancer(false)
+      let data = await res.json().catch(() => null)
+      // Taille hors tableau : l'utilisateur décide (enregistrer, ponctuel, ou rien).
+      if (res.status === 409) {
+        const choix = await demanderTaillesInconnues(data)
+        if (!choix) return
+        res = await lancer(choix)
+        data = await res.json().catch(() => null)
+      }
       if (!res.ok || !Array.isArray(data?.jobIds)) {
         setNotice(data?.error ?? 'Échec du lancement.')
         return
@@ -1101,26 +1137,38 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
   async function regen(it: Item) {
     if (!it.productPath || it.status === 'queued' || it.status === 'running' || !lotId) return
     try {
-      const res = await fetch('/api/banc-generation/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: [
-            { productPath: it.productPath, w: it.w, h: it.h, coloris: it.coloris, name: it.name },
-          ],
-          moteur: typo,
-          imageSize,
-          batchId: lotId,
-          produit,
-          // Regen = décor sélectionné AU MOMENT DU CLIC (08/08) : permet de
-          // comparer deux fonds sur la même MES via les versions.
-          ...(decorId !== null ? { decorId } : {}),
-          // Regen MANUELLE = SANS juge (règle Mathias 17/08 : « le juge c'est
-          // une fois au début, pas ensuite ») — l'utilisateur a repris la main.
-          regen: true,
-        }),
-      })
-      const data = await res.json().catch(() => null)
+      const lancer = (choix: ChoixTailles) =>
+        fetch('/api/banc-generation/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: [
+              { productPath: it.productPath, w: it.w, h: it.h, coloris: it.coloris, name: it.name },
+            ],
+            moteur: typo,
+            imageSize,
+            batchId: lotId,
+            produit,
+            // Regen = décor sélectionné AU MOMENT DU CLIC (08/08) : permet de
+            // comparer deux fonds sur la même MES via les versions.
+            ...(decorId !== null ? { decorId } : {}),
+            // Regen MANUELLE = SANS juge (règle Mathias 17/08 : « le juge c'est
+            // une fois au début, pas ensuite ») — l'utilisateur a repris la main.
+            regen: true,
+            ...(choix === 'enregistrer' ? { ajouterTailles: true } : {}),
+            ...(choix === 'temporaire' ? { tolererTailles: true } : {}),
+          }),
+        })
+      let res = await lancer(false)
+      let data = await res.json().catch(() => null)
+      // Taille hors tableau (21/08) : même demande qu'au lancement — un ↻ sur
+      // une vieille case peut précéder le tableau.
+      if (res.status === 409) {
+        const choix = await demanderTaillesInconnues(data)
+        if (!choix) return
+        res = await lancer(choix)
+        data = await res.json().catch(() => null)
+      }
       if (!res.ok || !Array.isArray(data?.jobIds) || data.jobIds.length === 0) {
         setNotice(data?.error ?? 'Relance impossible.')
         return
@@ -2011,8 +2059,15 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                               </div>
                             )}
                           </div>
-                          <div className="flex items-center gap-2 px-3 py-2.5">
-                            <b className="text-[13px] truncate">{labelOf(it)}</b>
+                          {/* Pied de carte en DEUX lignes (20/08, remarque Mathias :
+                              le nom tronqué « ARL… » était illisible) : le nom du
+                              produit a SA ligne pleine largeur au-dessus, coloris
+                              et actions en dessous. */}
+                          <div className="px-3 pt-2 pb-2.5">
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <b className="text-[13px] truncate" title={labelOf(it)}>
+                                {labelOf(it)}
+                              </b>
                             {it.description && (
                               <span
                                 title={
@@ -2029,6 +2084,8 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                                 />
                               </span>
                             )}
+                            </div>
+                            <div className="flex items-center gap-2">
                             {/* COLORIS détecté (18/08, demande Mathias) : pastille +
                                 libellé ; corrigeable au select tant que la case est
                                 prête (la correction redéroule RALify → description →
@@ -2036,21 +2093,29 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                             {it.coloris && (
                               <span
                                 title={
-                                  it.colorisSource === 'nom'
-                                    ? 'Coloris lu dans le nom du fichier'
-                                    : it.colorisSource === 'mesure'
-                                      ? 'Coloris MESURÉ sur l’image (aucun jeton dans le nom) — à vérifier'
-                                      : it.colorisSource === 'manuel'
-                                        ? 'Coloris corrigé à la main'
-                                        : it.colorisSource === 'defaut'
-                                          ? 'Coloris par défaut (aucun jeton dans le nom, mesure indisponible)'
-                                          : undefined
+                                  isColorisAucunRal(it.coloris)
+                                    ? 'Aucun RAL : le produit part tel quel, sans correction RALify'
+                                    : it.colorisSource === 'nom'
+                                      ? 'Coloris lu dans le nom du fichier'
+                                      : it.colorisSource === 'mesure'
+                                        ? 'Coloris MESURÉ sur l’image (aucun jeton dans le nom) — à vérifier'
+                                        : it.colorisSource === 'manuel'
+                                          ? 'Coloris corrigé à la main'
+                                          : it.colorisSource === 'defaut'
+                                            ? 'Coloris par défaut (aucun jeton dans le nom, mesure indisponible)'
+                                            : undefined
                                 }
                                 className="shrink-0 inline-flex items-center gap-1.5 border border-border bg-white rounded-[8px] px-1.5 py-[2px] text-[11px] font-bold text-text-secondary"
                               >
                                 <span
                                   className="inline-block w-2.5 h-2.5 rounded-full border border-border"
-                                  style={{ backgroundColor: colorisDef(it.coloris)?.swatch ?? '#9ca3af' }}
+                                  style={{
+                                    // « Aucun RAL » = pastille blanche (pas de teinte
+                                    // appliquée), pour ne pas la confondre avec Gris.
+                                    backgroundColor: isColorisAucunRal(it.coloris)
+                                      ? '#ffffff'
+                                      : (colorisDef(it.coloris)?.swatch ?? '#9ca3af'),
+                                  }}
                                 />
                                 {it.status === 'ready' && !it.jobId && it.productPath ? (
                                   <select
@@ -2062,6 +2127,9 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                                       new Set([
                                         ...CANONICAL_COLORIS.map((c) => c.label),
                                         ...paletteColoris.filter(Boolean),
+                                        // « Aucun RAL » (18/08, demande Mathias) : le
+                                        // choisir coupe tout traitement RALify.
+                                        COLORIS_AUCUN_RAL,
                                         it.coloris,
                                       ])
                                     ).map((c) => (
@@ -2160,6 +2228,7 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                                 )}
                               </span>
                             )}
+                            </div>
                           </div>
                         </div>
                       )
@@ -2212,6 +2281,62 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
           création en une phrase + consigne, maquette bibliotheque-decors-v1),
           intégrée ICI à la demande de Mathias (pas de page dédiée, pas d'entrée
           de nav). Défaut et suppression admin (l'API vérifie aussi). */}
+      {/* Modale « taille hors tableau » (21/08, demande Mathias : une popup de
+          l'app, pas un dialogue navigateur) : propose d'enregistrer la ou les
+          tailles comme officielles puis de lancer — Annuler = rien ne part. */}
+      {confirmTailles && (
+        <div
+          className="fixed inset-0 bg-[rgba(31,41,55,0.45)] z-[70] flex items-center justify-center p-6"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) confirmTailles.resoudre(false)
+          }}
+        >
+          <div className="bg-white rounded-[12px] shadow-lg w-[440px] max-w-full p-5">
+            <h2 className="text-[16px] font-bold mb-2">
+              {confirmTailles.tailles.length > 1 ? 'Tailles hors tableau' : 'Taille hors tableau'}
+            </h2>
+            <p className="text-[13.5px] text-text-secondary leading-relaxed">
+              {confirmTailles.tailles.length > 1 ? 'Les tailles ' : 'La taille '}
+              <b className="text-text-primary">
+                {confirmTailles.tailles.map((t) => `${t.w}×${t.h}`).join(', ')}
+              </b>
+              {confirmTailles.tailles.length > 1
+                ? ' ne font pas partie des tailles officielles du moteur.'
+                : ' ne fait pas partie des tailles officielles du moteur.'}
+            </p>
+            <p className="text-[13.5px] text-text-secondary leading-relaxed mt-1.5">
+              Tu peux générer <b className="text-text-primary">ponctuellement</b> (gabarit calculé
+              pour ces tailles, le tableau officiel ne bouge pas), ou{' '}
+              {confirmTailles.tailles.length > 1 ? 'les enregistrer' : 'l’enregistrer'} comme
+              taille{confirmTailles.tailles.length > 1 ? 's' : ''} officielle
+              {confirmTailles.tailles.length > 1 ? 's' : ''} (Admin → Réglages → Tailles).
+            </p>
+            <div className="flex justify-end gap-2.5 mt-4 flex-wrap">
+              <button
+                onClick={() => confirmTailles.resoudre(false)}
+                className="bg-white border border-border text-text-secondary rounded-[8px] px-4 py-2 text-sm font-bold hover:border-text-secondary transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={() => confirmTailles.resoudre('temporaire')}
+                title="Génère avec un gabarit calculé pour ces tailles, sans les inscrire dans le tableau"
+                className="bg-white border border-brand-green text-brand-green rounded-[8px] px-4 py-2 text-sm font-bold hover:bg-brand-green-light transition-colors"
+              >
+                Générer sans enregistrer
+              </button>
+              <button
+                onClick={() => confirmTailles.resoudre('enregistrer')}
+                title="Ajoute ces tailles au tableau officiel du moteur, puis génère"
+                className="bg-brand-green text-white rounded-[8px] px-4 py-2 text-sm font-bold hover:bg-brand-green-hover transition-colors"
+              >
+                Enregistrer et générer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {gererDecors && (
         <div
           className="fixed inset-0 bg-[rgba(31,41,55,0.45)] z-50 flex items-center justify-center p-6"

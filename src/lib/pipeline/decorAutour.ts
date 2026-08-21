@@ -110,6 +110,8 @@ function colorisPromptDescription(coloris?: string): string {
   if (c.includes('BLANC')) {
     return 'a pure white powder-coated finish'
   }
+  // Coloris inconnu — dont « Aucun RAL » (18/08) : on impose de garder la
+  // couleur telle qu'elle est sur le PNG posé, sans nommer de RAL.
   return 'exactly the colour and finish visible on the placed product'
 }
 

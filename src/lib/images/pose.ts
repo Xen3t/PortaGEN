@@ -95,7 +95,8 @@ export async function nettoyerProduit(
   input: Buffer | string,
   seuilAlpha = POSE_SEUIL_ALPHA_DEFAUT,
   reparePochesPieds = true,
-  reparePieds = true
+  reparePieds = true,
+  bboxSansPoussiere = false
 ): Promise<ProduitNettoye> {
   const { data, info } = await sharp(input, { limitInputPixels: false })
     .ensureAlpha()
@@ -130,6 +131,51 @@ export async function nettoyerProduit(
   }
   if (maxX === -1) {
     throw new Error(`Produit entièrement transparent au seuil alpha ${seuilAlpha}`)
+  }
+
+  // ANTI-POUSSIÈRE (21/08/2026, bug ARLBERG 300B180) : des pixels de détourage
+  // isolés ~100 px AU-DESSUS du produit entraient dans la boîte englobante —
+  // le produit posé était ÉCRASÉ de 11 % (161 cm au lieu de 180) et les
+  // piliers, corrects, paraissaient démesurés. Pour la BOÎTE uniquement, un
+  // pixel ne compte que s'il est au CŒUR de matière (ses 8 voisins opaques) :
+  // poussières et traînées de 1-2 px sont ignorées, une pointe fine ne perd
+  // que ±1 px de boîte (réintégré ci-dessous). Opt-in décor autour — les
+  // pipelines legacy gardent la boîte historique (jamais modifiés).
+  if (bboxSansPoussiere) {
+    let eX0 = W
+    let eX1 = -1
+    let eY0 = H
+    let eY1 = -1
+    for (let y = 1; y < H - 1; y++) {
+      const row = y * W
+      for (let x = 1; x < W - 1; x++) {
+        const i = row + x
+        if (data[i * ch + 3] === 0) continue
+        if (
+          data[(i - 1) * ch + 3] > 0 &&
+          data[(i + 1) * ch + 3] > 0 &&
+          data[(i - W) * ch + 3] > 0 &&
+          data[(i + W) * ch + 3] > 0 &&
+          data[(i - W - 1) * ch + 3] > 0 &&
+          data[(i - W + 1) * ch + 3] > 0 &&
+          data[(i + W - 1) * ch + 3] > 0 &&
+          data[(i + W + 1) * ch + 3] > 0
+        ) {
+          if (x < eX0) eX0 = x
+          if (x > eX1) eX1 = x
+          if (y < eY0) eY0 = y
+          if (y > eY1) eY1 = y
+        }
+      }
+    }
+    // ±1 px : réintègre le liseré rogné par l'érosion. Masque trop fin partout
+    // (aucun pixel « au cœur ») : repli sur la boîte brute — jamais d'échec.
+    if (eX1 >= 0) {
+      minX = Math.max(minX, eX0 - 1)
+      maxX = Math.min(maxX, eX1 + 1)
+      minY = Math.max(minY, eY0 - 1)
+      maxY = Math.min(maxY, eY1 + 1)
+    }
   }
 
   // Réparation des PIEDS : dans la BANDE BASSE du produit (les pieds vivent sous
@@ -380,9 +426,16 @@ export async function poserProduitSurCible(
   cible: { x: number; y: number; w: number; h: number },
   seuilAlpha = POSE_SEUIL_ALPHA_DEFAUT,
   reparePochesPieds = true,
-  reparePieds = true
+  reparePieds = true,
+  bboxSansPoussiere = false
 ): Promise<PoseResult> {
-  const produit = await nettoyerProduit(produitInput, seuilAlpha, reparePochesPieds, reparePieds)
+  const produit = await nettoyerProduit(
+    produitInput,
+    seuilAlpha,
+    reparePochesPieds,
+    reparePieds,
+    bboxSansPoussiere
+  )
   const etire = await sharp(produit.image)
     .resize(cible.w, cible.h, { fit: 'fill' })
     .png()
