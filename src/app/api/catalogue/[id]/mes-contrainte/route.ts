@@ -34,7 +34,7 @@ interface SizeNode {
 const LETTRE: Record<string, string> = { battant: 'B', coulissant: 'C', portillon: 'P' }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
 
   const { id } = await ctx.params

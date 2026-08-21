@@ -20,7 +20,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <header className="bg-white border-b border-border shadow-sm px-6 py-3 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-6">
           <BrandSwitch initialBrand={brand} />
-          <MainNav />
+          <MainNav isAdmin={user.role === 'admin'} />
         </div>
         <div className="flex items-center gap-3">
           <NotificationBell />

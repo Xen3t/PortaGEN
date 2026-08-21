@@ -33,7 +33,7 @@ interface SizeNode {
 }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   const product = getCatalogProduct(Number(id))
@@ -49,7 +49,7 @@ function findSource(product: ReturnType<typeof getCatalogProduct>, coloris: stri
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   const productId = Number(id)

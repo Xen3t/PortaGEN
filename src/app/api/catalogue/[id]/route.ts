@@ -43,7 +43,7 @@ function serialize(product: CatalogProductRow) {
  * décision Mathias 12/07/2026).
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   const product = getCatalogProduct(Number(id))
@@ -58,7 +58,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
  * retranchera au prochain rendu).
  */
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   const product = getCatalogProduct(Number(id))
@@ -75,7 +75,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
 /** Rescan de CE produit uniquement (bouton ↻ de la page produit). */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   const product = await rescanCatalogProduct(Number(id))

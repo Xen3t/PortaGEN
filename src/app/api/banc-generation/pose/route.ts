@@ -118,6 +118,10 @@ export async function POST(req: NextRequest) {
       produit: '',
       items: [],
     }
+    // Correction de catégorie (21/08) : le lot suit le moteur de la DERNIÈRE
+    // pose — sinon le rechargement de la page restaurerait l'ancienne
+    // catégorie depuis le manifeste.
+    manifest.moteur = moteur.key
     if (produit && !manifest.produit) manifest.produit = produit
     const groupe = Number(body.groupe)
     // Vues de contrôle (07/08) : originel + RALify persistés au manifeste —

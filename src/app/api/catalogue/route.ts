@@ -12,7 +12,7 @@ import { getServerRoot } from '@/lib/db/settings'
  * elle part à chaque navigation — le détail complet vit sur /api/catalogue/[id].
  */
 export async function GET(req: NextRequest) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   // MES générées PAR PORTAGEN, par gamme (badge des cartes, demande Mathias
   // 13/07/2026) : les jobs lancés depuis une fiche portent payload.catalogProductId ;
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   try {
     const report = await runCatalogScan()

@@ -25,7 +25,7 @@ import { moteurForFamily } from '@/lib/moteurs'
  * retrouver. Le studio de décor (existant) suit ensuite les tirages côté client.
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
 
   const { id } = await ctx.params

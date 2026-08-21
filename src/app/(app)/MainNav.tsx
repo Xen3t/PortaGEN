@@ -31,6 +31,9 @@ import { usePathname } from 'next/navigation'
  * demande explicite Mathias.
  */
 
+// Catalogue RÉSERVÉ AUX ADMINS (demande Mathias 21/08/2026) : l'entrée sort de
+// la nav des utilisateurs, les pages /catalogue redirigent et les routes
+// /api/catalogue/* sont verrouillées.
 const MAIN_LINKS = [
   { href: '/', label: 'Accueil', match: (p: string) => p === '/' },
   {
@@ -42,15 +45,16 @@ const MAIN_LINKS = [
     href: '/catalogue',
     label: 'Catalogue',
     match: (p: string) => p.startsWith('/catalogue'),
+    admin: true,
   },
 ]
 
-export default function MainNav() {
+export default function MainNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname()
 
   return (
     <nav className="flex items-center gap-1 text-sm font-semibold">
-      {MAIN_LINKS.map((l) => {
+      {MAIN_LINKS.filter((l) => !l.admin || isAdmin).map((l) => {
         const active = l.match(pathname)
         return (
           <Link

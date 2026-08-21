@@ -10,7 +10,7 @@ import { enqueueNewJob } from '@/lib/server/runner'
  * produit, le ratio et la qualité viennent du job « libre » racine.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const body = await req.json().catch(() => null)
   const sourceJobId = Number(body?.jobId)

@@ -8,7 +8,7 @@ import { listProductLaunches } from '@/lib/catalogue/launches'
  * lancement. Léger, relu par la grille en même temps que les générations.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   return NextResponse.json({ launches: listProductLaunches(Number(id)) })

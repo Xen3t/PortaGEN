@@ -9,7 +9,7 @@ import { enqueueNewJob } from '@/lib/server/runner'
  * MÊME batch — l'écran et la session suivent tout d'un bloc.
  */
 export async function POST(req: NextRequest) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const body = await req.json().catch(() => null)
   const ids: number[] = Array.isArray(body?.jobIds)

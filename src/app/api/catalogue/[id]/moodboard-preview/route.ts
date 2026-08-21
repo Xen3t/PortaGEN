@@ -18,7 +18,7 @@ import { config } from '@/lib/config'
 const CACHE_DIR = path.join(config.dataDir, 'cache', 'moodboard-preview')
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   const product = getCatalogProduct(Number(id))

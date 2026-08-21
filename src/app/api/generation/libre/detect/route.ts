@@ -31,7 +31,7 @@ const TYPO_KEYS = new Set([
 ])
 
 export async function POST(req: NextRequest) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
 
   const form = await req.formData().catch(() => null)

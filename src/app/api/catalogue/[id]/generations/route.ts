@@ -8,7 +8,7 @@ import { listProductGenerations } from '@/lib/catalogue/generations'
  * ne relit pas le résumé du scan et ne réchauffe pas les miniatures.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = requireApiUser(req)
+  const auth = requireApiUser(req, 'admin')
   if (auth instanceof NextResponse) return auth
   const { id } = await ctx.params
   return NextResponse.json({ generations: listProductGenerations(Number(id)) })

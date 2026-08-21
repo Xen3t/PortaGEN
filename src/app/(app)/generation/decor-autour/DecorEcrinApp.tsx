@@ -1370,17 +1370,16 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
     }
   }
 
-  // —— CORRECTION COLORIS (18/08, demande Mathias : « afficher/corriger le
-  // coloris ») : sur une case PRÊTE (pas encore générée), changer le coloris
-  // redéroule RALify → description → pose — les mêmes étapes que le dépôt, la
-  // case affiche chaque étape. Un ATHOS teck classé « Gris » repart donc avec
-  // son PNG non-RALifié et sa bonne fiche produit.
-  async function changerColoris(it: Item, nouveau: string) {
-    if (!it.productPath || !lotId || it.status !== 'ready' || it.jobId || nouveau === it.coloris)
-      return
+  // —— RE-PRÉPARATION d'une case prête : redéroule RALify → description → pose
+  // (les mêmes étapes que le dépôt, la case affiche chaque étape) avec le
+  // moteur et le coloris donnés. Sert à la correction de COLORIS (18/08) et à
+  // la correction de CATÉGORIE (21/08) — le moteur est un PARAMÈTRE : au
+  // changement de catégorie, l'état `typo` vient d'être posé et la fermeture
+  // de la fonction serait périmée.
+  async function repreparerItem(it: Item, moteur: Typo, coloris: string) {
     const patchItem = (key: string, patch: Partial<Item>) =>
       setItems((cur) => cur.map((i) => (i.key === key ? { ...i, ...patch } : i)))
-    patchItem(it.key, { coloris: nouveau, colorisSource: 'manuel', status: 'ralify' })
+    patchItem(it.key, { status: 'ralify' })
     const json = { 'Content-Type': 'application/json' }
     try {
       const r2 = await fetch('/api/banc-generation/ralify', {
@@ -1388,10 +1387,10 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
         headers: json,
         body: JSON.stringify({
           lot: lotId,
-          moteur: typo,
+          moteur,
           productPath: it.productPath,
           name: it.name,
-          coloris: nouveau,
+          coloris,
         }),
       })
       const d2 = await r2.json().catch(() => null)
@@ -1405,10 +1404,10 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
         headers: json,
         body: JSON.stringify({
           lot: lotId,
-          moteur: typo,
+          moteur,
           productPath: it.productPath,
           name: it.name,
-          coloris: nouveau,
+          coloris,
         }),
       })
       const d25 = await r25.json().catch(() => null)
@@ -1424,13 +1423,13 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
         headers: json,
         body: JSON.stringify({
           lot: lotId,
-          moteur: typo,
+          moteur,
           productPath: it.productPath,
           ralifyPath: d2?.ralifyPath ?? null,
           w: it.w,
           h: it.h,
           name: it.name,
-          coloris: nouveau,
+          coloris,
           produit: produitDe(it),
           groupe: it.groupe,
           originalPath: it.originalPath ?? null,
@@ -1449,6 +1448,37 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
         error: e instanceof Error ? e.message : String(e),
       })
     }
+  }
+
+  // —— CORRECTION COLORIS (18/08, demande Mathias : « afficher/corriger le
+  // coloris ») : sur une case PRÊTE (pas encore générée). Un ATHOS teck classé
+  // « Gris » repart donc avec son PNG non-RALifié et sa bonne fiche produit.
+  async function changerColoris(it: Item, nouveau: string) {
+    if (!it.productPath || !lotId || it.status !== 'ready' || it.jobId || nouveau === it.coloris)
+      return
+    setItems((cur) =>
+      cur.map((i) => (i.key === it.key ? { ...i, coloris: nouveau, colorisSource: 'manuel' } : i))
+    )
+    await repreparerItem(it, typo, nouveau)
+  }
+
+  // —— CORRECTION CATÉGORIE (21/08, demande Mathias : « détecté auto mais en
+  // cas d'erreur pouvoir changer à la main ») : le sélecteur de l'en-tête
+  // reste actif APRÈS dépôt. Changer la catégorie re-prépare toutes les cases
+  // prêtes (pas encore générées) avec le nouveau moteur — gabarits, cadrage,
+  // RALify et description DU moteur. Les cases déjà générées gardent leurs
+  // rendus (une regénération ↻ repartira avec la nouvelle catégorie).
+  /** Lot occupé = une case en préparation ou une génération en cours : la
+   *  catégorie ne se change pas pendant que ça travaille. */
+  const lotOccupe = items.some(
+    (i) => i.status === 'queued' || i.status === 'running' || enPrepa(i.status)
+  )
+  async function changerCategorie(nouveau: Typo) {
+    if (nouveau === typo || !lotId || lotOccupe) return
+    setTypo(nouveau)
+    setTypoDetected(true)
+    const cibles = items.filter((i) => i.status === 'ready' && !i.jobId && i.productPath)
+    await Promise.all(cibles.map((it) => repreparerItem(it, nouveau, it.coloris)))
   }
 
   // —— ÉDITION MANUELLE de la description produit (18/08, demande Mathias) :
@@ -1848,9 +1878,23 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
             </select>
           ) : (
             // TOUS les produits de la session avec leur COLORIS (08/08) :
-            // « Portillon · VELETA Gris, VELETA Noir ».
-            <span className="text-[13px] text-text-secondary">
-              {TYPO_INFO[typo].titre}
+            // « Portillon · VELETA Gris, VELETA Noir ». La catégorie reste un
+            // SÉLECTEUR après dépôt (21/08, demande Mathias : la détection auto
+            // peut se tromper) — la changer re-prépare les cases prêtes.
+            <span className="inline-flex items-center gap-1.5 text-[13px] text-text-secondary">
+              <select
+                value={typo}
+                disabled={lotOccupe}
+                onChange={(e) => void changerCategorie(e.target.value as Typo)}
+                title="Catégorie de la session — corrigeable : les cases prêtes sont re-préparées avec le nouveau moteur (gabarits, cadrage, prompts)"
+                className="text-[12px] font-semibold text-text-secondary border border-border rounded-full px-2.5 py-0.5 bg-white disabled:opacity-50"
+              >
+                {(Object.keys(TYPO_INFO) as Typo[]).map((t) => (
+                  <option key={t} value={t}>
+                    {TYPO_INFO[t].titre}
+                  </option>
+                ))}
+              </select>
               {(() => {
                 const noms = Array.from(
                   new Set(
@@ -1859,7 +1903,7 @@ export default function DecorEcrinApp({ isAdmin = false }: { isAdmin?: boolean }
                       .filter(Boolean)
                   )
                 )
-                return noms.length > 0 ? ` · ${noms.join(', ')}` : ''
+                return noms.length > 0 ? <span>{noms.join(', ')}</span> : null
               })()}
             </span>
           )}
